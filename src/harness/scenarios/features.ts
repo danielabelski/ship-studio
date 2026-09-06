@@ -182,6 +182,15 @@ export const featureScenarios: Scenario[] = [
   },
   {
     id: 'workflows-populated',
+    // Same as the Inbox above: the fixture existed, but nothing navigated to
+    // Workflows, so the capture showed the workspace instead of the list it
+    // describes. Requiring the running workflow's live region makes the
+    // "running is distinguishable from idle" claim something the run can
+    // actually fail on. Note it is NOT the row dot: a running workflow renders
+    // PixelLoaderRings instead, so `data-state="running"` on the dot is
+    // unreachable.
+    command: 'workflows.open',
+    requires: '[role="status"][aria-label$="is running"]',
     title: 'Workflows — several configured',
     looksRightWhen:
       'Trigger descriptions are legible, and a running workflow is distinguishable from an idle one.',
@@ -204,6 +213,14 @@ export const featureScenarios: Scenario[] = [
   },
   {
     id: 'inbox-populated',
+    // The fixture was here but nothing opened the Inbox, so this photographed
+    // the workspace with an unread badge on the bell and nothing else — no
+    // severities, no unread row, no detail pane, none of what the caption
+    // below claims to check. `requires` names a severity chip so a scenario
+    // that stops reaching the Inbox fails the run instead of passing on the
+    // screen behind it.
+    command: 'inbox.open',
+    requires: '.inbox-item-severity[data-severity="critical"]',
     title: 'Inbox — findings to triage',
     looksRightWhen:
       'Severities are distinguishable at a glance, unread stands out, and the detail pane renders markdown without breaking the layout.',
