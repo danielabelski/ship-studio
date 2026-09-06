@@ -29,6 +29,37 @@ import {
 
 const PROVIDERS: HostingProvider[] = ['vercel', 'cloudflare', 'netlify'];
 
+/**
+ * What an empty list actually means.
+ *
+ * It used to read "Nothing was returned for this account. Create a project on
+ * the provider first" — a statement about the user's account, made from the
+ * one fact we have, which is that a list came back empty. The two are not the
+ * same thing, and for both providers here the likelier cause is not an empty
+ * account at all:
+ *
+ * - **Cloudflare** lists Pages projects per account, and finds the accounts by
+ *   calling `/accounts`. A token without `Account Settings:Read` sees no
+ *   accounts, so it enumerates no projects — indistinguishable on the wire
+ *   from an account with nothing in it. The token modal warns about this when
+ *   creating the token; by the time you are here, that warning is long gone.
+ * - **Vercel** is asked for projects with no `teamId`, so a token whose work
+ *   lives in a team sees an empty personal scope.
+ *
+ * Neither is knowable from here, so the copy names the likely cause and stops
+ * short of asserting anything about the account. Sending someone away to
+ * "create a project first" when they have twenty is the worst outcome
+ * available.
+ */
+const EMPTY_LIST_CAUSE: Record<HostingProvider, string> = {
+  vercel:
+    "This lists the projects your token can see. A token that isn't scoped to your team won't see that team's projects, so this can mean the wrong token rather than an empty account.",
+  cloudflare:
+    'This lists the projects your token can see. Without the Account Settings:Read permission Cloudflare returns no accounts at all, so this can mean a missing permission rather than an empty account.',
+  netlify:
+    'This lists the sites your token can see, so this can mean the wrong token rather than an empty account.',
+};
+
 function ProviderMark({ provider }: { provider: HostingProvider }) {
   if (provider === 'vercel') return <VercelIcon size={14} />;
   if (provider === 'cloudflare') return <CloudflareIcon size={14} />;
@@ -191,20 +222,32 @@ export function HostingLinkPicker({
         {provider && !loading && projects ? (
           projects.length === 0 ? (
             <EmptyState
-              title={`No ${PROVIDER_LABELS[provider]} projects`}
-              description="Nothing was returned for this account. Create a project on the provider first, or try a different token."
+              title={`Nothing came back from ${PROVIDER_LABELS[provider]}`}
+              description={EMPTY_LIST_CAUSE[provider]}
             />
           ) : (
             <div className="connect-modal-list">
+              {/* Cloudflare uses the project *name* as its id and lists every
+                  account the token can see, so `choice.id` alone is not unique
+                  across accounts — React warned that it may duplicate or omit
+                  a row. The scope is what makes the pair distinct, exactly as
+                  it does in the label below. */}
               {projects.map((choice) => (
                 <Button
-                  key={choice.id}
+                  key={`${choice.scope_id ?? ''}:${choice.id}`}
                   variant="secondary"
                   width="fill"
                   disabled={saving}
                   onClick={() => void link(choice)}
                 >
-                  {choice.name}
+                  {/* The scope, when the provider gave us one. Cloudflare
+                      enumerates every account a token can see, so two accounts
+                      owning a project of the same name is reachable — and a
+                      list printing only the name offers two identical rows,
+                      one of which links this repo to the wrong account's
+                      project. Vercel and Netlify never send a scope name, so
+                      this reads exactly as before for them. */}
+                  {choice.scope_name ? `${choice.name} — ${choice.scope_name}` : choice.name}
                 </Button>
               ))}
             </div>

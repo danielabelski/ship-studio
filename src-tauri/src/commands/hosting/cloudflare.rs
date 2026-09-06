@@ -522,10 +522,28 @@ pub async fn verify_token(token: &str) -> Result<Option<String>, HostingHttpErro
             .await?
             .into_result()?;
 
-    match verify.status.as_deref() {
-        Some("active") | None => Ok(None),
+    token_status_result(verify.status.as_deref())
+}
+
+/// Read the verify endpoint's `status` field.
+///
+/// Split out so the decision is testable without a live account — the HTTP
+/// half of `verify_token` is not, and this is the half that decides whether a
+/// credential is trusted.
+///
+/// Fails closed on a missing status. `None` used to be folded in with
+/// `"active"`, which meant a response that never said the token was usable was
+/// read as saying so — assuming the answer we wanted from the absence of one.
+/// Cloudflare documents `status` on this endpoint, so its absence means the
+/// shape changed, and the honest report of that is "we could not tell".
+fn token_status_result(status: Option<&str>) -> Result<Option<String>, HostingHttpError> {
+    match status {
+        Some("active") => Ok(None),
         Some(other) => Err(HostingHttpError::Malformed {
             message: format!("Cloudflare reports this token is {other}"),
+        }),
+        None => Err(HostingHttpError::Malformed {
+            message: "Cloudflare didn't say whether this token is active".into(),
         }),
     }
 }
@@ -533,6 +551,37 @@ pub async fn verify_token(token: &str) -> Result<Option<String>, HostingHttpErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_active_token_verifies() {
+        assert!(token_status_result(Some("active")).is_ok());
+    }
+
+    #[test]
+    fn a_token_cloudflare_calls_anything_else_is_refused() {
+        let err = token_status_result(Some("disabled")).unwrap_err();
+        match err {
+            HostingHttpError::Malformed { message } => assert!(message.contains("disabled")),
+            other => panic!("expected Malformed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_missing_status_is_not_read_as_active() {
+        // The defect this replaced: `Some("active") | None => Ok(None)`, i.e.
+        // a response that never said the token was usable was taken to say so.
+        // A verifier that cannot fail is not a verifier.
+        let err = token_status_result(None).unwrap_err();
+        match err {
+            HostingHttpError::Malformed { message } => {
+                assert!(
+                    message.contains("didn't say"),
+                    "unhelpful message: {message}"
+                )
+            }
+            other => panic!("expected Malformed, got {other:?}"),
+        }
+    }
 
     #[test]
     fn a_failure_in_any_stage_decides_the_outcome() {

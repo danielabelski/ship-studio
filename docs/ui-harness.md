@@ -143,7 +143,11 @@ subject and assert it.
 ## Fixtures that fail
 
 A scenario's `commands` may hold a function, and a function that throws rejects
-the call — `rejectsWith('…')` from `src/harness/reject.ts`.
+the call — `rejectsWith('…')` from `src/harness/reject.ts`. The same module has
+`neverAnswers()` for a call that does not come back, which is the only way to
+photograph a state that exists *while* a command is in flight ("Saving…",
+"Loading your Vercel projects…") — a fixture that resolves has left that state
+before the page settles.
 
 This matters more than it sounds. Several of this app's surfaces are only
 reachable through a failed call, so a fixture layer that can only resolve
@@ -159,6 +163,36 @@ Cmd+K palette **cannot** open that panel. Its `when` predicate reads
 appears once you no longer need it, and its handler then re-sets a flag that is
 already true. That is a product bug, reported separately; it is recorded here
 so nobody spends an afternoon assuming their fixture is at fault.
+
+## Surfaces more than one click in
+
+`openSelector` reaches a popover in one click. A scenario that needs more says
+so with `steps`, run in order after it:
+
+```ts
+steps: [
+  { click: '.hosting-row-action button' },              // open the modal
+  { fill: '.connect-modal-field input', value: 'tok' }, // type a token
+  { click: '.connect-modal-actions button:last-of-type' },
+]
+```
+
+Each step waits for its selector before acting, so a step that depends on the
+previous one's render is not a race. `fill` writes through React's own value
+setter and dispatches `input`: assigning `el.value` updates the DOM and leaves
+React's state alone, which photographs a filled field above a still-disabled
+Save button — a screen the app cannot actually produce.
+
+**A step that never finds its control fails the capture**, and the sequence
+stops there rather than clicking whatever happens to match on the wrong screen.
+This is separate from `requires` on purpose: `requires` catches the *first*
+step, and cannot catch a later one, because by then the surface it asserts is
+already on screen. A token that never got typed still yields a perfectly good
+picture of the modal.
+
+Without this the whole hosting connect flow was unreachable — its modal opens
+from a button inside the push popover — which is how it came to be the first
+screen a new user touches with no scenario at all.
 
 ## Text being cut off
 
@@ -224,6 +258,7 @@ Fixture layering:
 | `app.ts` | Dashboard and onboarding scenarios |
 | `features.ts` | Populated branches, PRs, conflicts, workflows, inbox |
 | `hosting.ts` | The ten push-popover deployment states |
+| `hostingConnect.ts` | The connect flow: the token modal and the link picker |
 
 Put a fixture in `base.ts` if the surface opens from the dashboard *and* from a
 project — Help, Skills and MCP all do, and a fixture that exists only in the

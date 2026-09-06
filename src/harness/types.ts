@@ -15,6 +15,23 @@ export type CommandHandler = (args: Record<string, unknown>) => unknown;
  */
 export type CommandMap = Record<string, unknown>;
 
+/**
+ * One interaction the harness performs before capturing.
+ *
+ * `fill` writes through React's own value setter and dispatches `input`, which
+ * is what a controlled component listens for — assigning `el.value` directly
+ * updates the DOM and leaves React's state (and therefore the disabled Save
+ * button) untouched, which would photograph a state the app never has.
+ */
+export interface ScenarioStep {
+  /** Click this once it exists. */
+  click?: string;
+  /** Type into this input once it exists. */
+  fill?: string;
+  /** The text `fill` types. */
+  value?: string;
+}
+
 export interface Scenario {
   /** URL slug: `?scenario=<id>`. */
   id: string;
@@ -37,6 +54,27 @@ export interface Scenario {
    * knows which control it is about.
    */
   openSelector?: string;
+  /**
+   * Further interaction after `openSelector`, in order, once the app has
+   * settled.
+   *
+   * `openSelector` reaches a popover in one click, which is as far as most
+   * surfaces are. A connect flow is not one of them: its modal opens from a
+   * button *inside* the popover, and its interesting states (a token typed but
+   * not saved, a save in flight, a provider chosen and its projects loading)
+   * exist only after two or three interactions. Without this the whole flow is
+   * unreachable by the harness, which is how it ended up with no coverage at
+   * all.
+   *
+   * Each step waits for its selector to appear before acting, so a step
+   * depending on the previous one's render is not a race. A step whose
+   * selector never appears is logged and recorded in `window.__harness.steps`
+   * — and, because the states these reach are exactly the ones a `requires`
+   * selector describes, a missed step shows up as a failed capture rather
+   * than as a tidy screenshot of the wrong screen.
+   */
+  steps?: ScenarioStep[];
+
   /**
    * Capture only this element. A scenario about a popover is reviewed on the
    * popover, not on 1400px of surrounding workspace that the harness cannot
