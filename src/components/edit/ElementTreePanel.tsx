@@ -18,6 +18,8 @@ import { Tabs, TabsList, TabsPanel, TabsTab } from '../primitives/Tabs';
 import { IconButton } from '../primitives/IconButton';
 import { ToggleButton } from '../primitives/ToggleButton';
 import { Tooltip } from '../primitives/Tooltip';
+import { useCopyToClipboard } from '../../hooks/useCopyToClipboard';
+import { useOptionalToast } from '../../contexts/ToastContext';
 import type { ElementTreeNode } from '../../hooks/useElementTree';
 import type { ElementSignature } from '../../lib/edit';
 import {
@@ -77,6 +79,14 @@ function buildAncestors(root: ElementTreeNode): Map<number, number[]> {
   return out;
 }
 
+/** The CSS-selector-shaped string the tree row's own label is built from
+ *  (tag + every class, dot-joined) — what "Copy selector" puts on the
+ *  clipboard, so pasting it into a chat matches what was right-clicked. */
+function elementSelector(tag: string, cls: string): string {
+  const classes = cls.trim().split(/\s+/).filter(Boolean);
+  return classes.length > 0 ? `${tag}.${classes.join('.')}` : tag;
+}
+
 function RowLabel({ node, showTagIcons }: { node: ElementTreeNode; showTagIcons: boolean }) {
   const firstClass = node.cls.split(/\s+/)[0] ?? '';
   const elementIcon = showTagIcons ? getElementIcon(node.tag) : undefined;
@@ -118,9 +128,15 @@ export function ElementTreePanel({
   const [ctxMenu, setCtxMenu] = useState<{
     nodeId: number;
     tag: string;
+    cls: string;
     x: number;
     y: number;
   } | null>(null);
+  const { showToast } = useOptionalToast();
+  const { copy: copySelector } = useCopyToClipboard({
+    onCopy: () => showToast('Selector copied', 'success'),
+    onError: () => showToast('Could not copy the selector', 'error'),
+  });
   const [insertFor, setInsertFor] = useState<{
     nodeId: number;
     tag: string;
@@ -206,7 +222,13 @@ export function ElementTreePanel({
             ((e) => {
               e.preventDefault();
               onSelect(node.id); // select first, so the canvas shows the target
-              setCtxMenu({ nodeId: node.id, tag: node.tag, x: e.clientX, y: e.clientY });
+              setCtxMenu({
+                nodeId: node.id,
+                tag: node.tag,
+                cls: node.cls,
+                x: e.clientX,
+                y: e.clientY,
+              });
             })
           }
           onMouseEnter={() => onHover(node.id)}
@@ -381,6 +403,9 @@ export function ElementTreePanel({
             }}
             onDelete={() => {
               if (ctxMenu) structure.selectAndRun(ctxMenu.nodeId, structure.remove);
+            }}
+            onCopy={() => {
+              if (ctxMenu) void copySelector(elementSelector(ctxMenu.tag, ctxMenu.cls));
             }}
             onClose={() => setCtxMenu(null)}
           />

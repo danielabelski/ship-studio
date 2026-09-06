@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { DuplicateIcon, PlusIcon, TrashIcon } from '@/components/icons';
+import { CopyIcon, DuplicateIcon, PlusIcon, TrashIcon } from '@/components/icons';
 
 interface Props {
   /** Cursor position (viewport coords); null = closed. */
@@ -15,12 +15,23 @@ interface Props {
   onInsert: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** Copies something useful about the selected element (e.g. its selector)
+   *  to the clipboard. Omitted hides the menu item entirely rather than
+   *  showing an action with nothing to copy. */
+  onCopy?: () => void;
   onClose: () => void;
 }
 
 const MENU_W = 176;
 
-export function ElementTreeContextMenu({ pos, onInsert, onDuplicate, onDelete, onClose }: Props) {
+export function ElementTreeContextMenu({
+  pos,
+  onInsert,
+  onDuplicate,
+  onDelete,
+  onCopy,
+  onClose,
+}: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -68,6 +79,7 @@ export function ElementTreeContextMenu({ pos, onInsert, onDuplicate, onDelete, o
     >
       {item('Insert element…', <PlusIcon size={12} />, onInsert)}
       {item('Duplicate', <DuplicateIcon size={12} />, onDuplicate)}
+      {onCopy && item('Copy selector', <CopyIcon size={12} />, onCopy)}
       {item('Delete', <TrashIcon size={12} />, onDelete, true)}
     </div>,
     document.body
