@@ -52,7 +52,25 @@ var txtEditing=false,txtEl=null,txtRealEl=null,txtOrig='',txtOrigHtml='',txtPrev
    headings/paragraphs; longer text falls back to class-anchored resolution. */
 var SS_TEXT_CAP=2000;
 
-function mk(c){var d=document.createElement('div');d.style.cssText='position:fixed;pointer-events:none;z-index:2147483646;border:1.5px solid '+c+';box-sizing:border-box;border-radius:0px';d.setAttribute('data-ss-overlay','1');document.body.appendChild(d);return d;}
+/* Hover/selection boxes are drawn INSIDE the page, so on the breakpoint canvas
+   the surface's scale transform is applied to them along with everything else —
+   and a 1.5px outline becomes 0.4px at 25% and 4.5px at 300%. The host tells the
+   frame the canvas scale (`ss:canvasScale`) and the width is divided by it, so
+   what lands on screen is 1.5px at every zoom. This is the in-page counterpart
+   of `.preview-canvas-outline`, which gets the same guarantee by living in the
+   canvas's UNSCALED overlay layer; these boxes cannot, because only the page
+   knows where its own elements are. Outside a canvas the scale is 1 and the
+   arithmetic is a no-op. */
+var SS_BOX_BORDER_PX=1.5,ssBoxScale=1;
+
+function ssBoxBorder(){return (SS_BOX_BORDER_PX/(ssBoxScale>0?ssBoxScale:1))+'px';}
+
+/* Re-widen every box that already exists. Called on each scale change, which
+   only happens when a zoom SETTLES — this is a style write per box, not work
+   inside a gesture. */
+function ssScaleBoxes(){var w=ssBoxBorder();if(hoverBox)hoverBox.style.borderWidth=w;for(var i=0;i<selBoxes.length;i++)if(selBoxes[i])selBoxes[i].style.borderWidth=w;}
+
+function mk(c){var d=document.createElement('div');d.style.cssText='position:fixed;pointer-events:none;z-index:2147483646;border:'+ssBoxBorder()+' solid '+c+';box-sizing:border-box;border-radius:0px';d.setAttribute('data-ss-overlay','1');document.body.appendChild(d);return d;}
 
 function ensureHover(){if(!hoverBox||!hoverBox.isConnected)hoverBox=mk('#007DF0');}
 
@@ -1307,7 +1325,31 @@ else if(d.type==='ss:canvas'){
     try{window.dispatchEvent(new Event('resize'));}catch(err){}
     ssPageH=0;ssPageSeen=0;ssPageAgreed=0;ssPageWrites=0;
     ssPageCommitted=[];ssPageLocked=false;ssReportPage();
-  }else{ssHoldStill(false);ssBackground(false);}
+  }else{ssHoldStill(false);ssBackground(false);ssBoxScale=1;ssScaleBoxes();}
+}
+/* The canvas's zoom, so the hover/selection boxes can cancel it out of their
+   own border width. Deliberately NOT folded into `ss:canvas`: that message
+   re-runs the whole take-over (unit rewriting, root pinning, and a RESET of the
+   page-height settling state), and doing that on every zoom step would re-open
+   the height feedback loop the visited-list guards against. This one only
+   touches the boxes. */
+else if(d.type==='ss:canvasScale'){
+  var sc=typeof d.scale==='number'&&d.scale>0?d.scale:1;
+  if(sc===ssBoxScale)return;
+  ssBoxScale=sc;ssScaleBoxes();
+}
+/* Nothing is selected any more — the user clicked the canvas background. The
+   only way to reach "no selection" used to be turning edit mode off, so an
+   outline sat over the design for as long as you were editing it. Text being
+   typed is committed, exactly as clicking elsewhere in the page commits it. The
+   reply is what lets the host's panels, toolbar and tree let go too. */
+else if(d.type==='ss:deselect'){
+  if(!active)return;
+  endText(true);
+  restoreSel();
+  place(hoverBox,null);
+  for(var di=0;di<selBoxes.length;di++)place(selBoxes[di],null);
+  try{window.parent.postMessage({type:'ss:deselect'},'*');}catch(err){}
 }
 else if(d.type==='ss:deactivate'){endText(false);finalizePending();hideFmtBar();active=false;cascadeMode=false;clearRulePreview(null);restoreSel();for(var ck in pvDecls){if(String(ck).indexOf('cls:')===0)delete pvDecls[ck];}rebuildSheet();place(hoverBox,null);for(var i=0;i<selBoxes.length;i++)place(selBoxes[i],null);var de=document.documentElement;de.style.cursor='';de.style.userSelect='';de.style.webkitUserSelect='';}
 

@@ -84,5 +84,15 @@ describe('useElementTree', () => {
 
     expect(result.current.selectedId).toBe(7);
     expect(result.current.affectedIds).toEqual([8, 9]);
+
+    // Clicking the canvas background drops the selection: the tree is still the
+    // tree, but no row in it is the selected one any more.
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', { source: previewWindow, data: { type: 'ss:deselect' } })
+      );
+    });
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.affectedIds).toEqual([]);
   });
 });

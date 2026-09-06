@@ -125,6 +125,11 @@ export function useElementTree({ iframeRef, enabled }: UseElementTreeParams) {
             ? d.affectedNodeIds.filter((id): id is number => typeof id === 'number')
             : []
         );
+      } else if (d.type === 'ss:deselect') {
+        // The selection was dropped (a click on the canvas background). The tree
+        // is still the tree; nothing in it is the selected row any more.
+        setSelectedId(null);
+        setAffectedIds([]);
       }
     };
     window.addEventListener('message', onMessage);

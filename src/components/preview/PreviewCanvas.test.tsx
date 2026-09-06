@@ -455,6 +455,84 @@ describe('PreviewCanvas', () => {
     expect(post).toHaveBeenCalledWith({ type: 'ss:canvas', on: true, vh: 900 }, '*');
   });
 
+  it('tells each frame the canvas scale, so its own outlines can cancel it out', () => {
+    // A frame draws the hover/selection box INSIDE the page, where the scale
+    // transform gets at it — a 1.5px outline lands as 0.4px at Fit. Only the
+    // page knows where its elements are, so it is told the scale and divides.
+    const { container, rerender, props } = renderCanvas();
+    const frame = container.querySelector<HTMLIFrameElement>('iframe[data-frame-id="desktop"]')!;
+    const post = vi.fn();
+    Object.defineProperty(frame, 'contentWindow', {
+      configurable: true,
+      value: { postMessage: post },
+    });
+
+    const fitted = (1200 - CANVAS_PADDING_PX * 2) / 3751;
+    fireEvent.load(frame);
+    expect(post).toHaveBeenCalledWith({ type: 'ss:canvasScale', scale: fitted }, '*');
+
+    // And again when the zoom changes, which is the only time it can change.
+    post.mockClear();
+    const before = [...container.querySelectorAll('iframe')];
+    rerender(<PreviewCanvas {...props} zoom={0.35} />);
+    // The guard that makes the assertion below mean what it says: a zoom that
+    // changed the mount window would register frames, and registration
+    // broadcasts the scale for its own reasons — so this would pass with no
+    // scale-change announcement at all.
+    expect([...container.querySelectorAll('iframe')]).toEqual(before);
+    expect(post).toHaveBeenCalledWith({ type: 'ss:canvasScale', scale: 0.35 }, '*');
+  });
+
+  describe('clicking the background', () => {
+    /** The canvas viewport, which is what a background press lands on. */
+    const backgroundOf = (container: HTMLElement) =>
+      container.querySelector<HTMLElement>('.preview-canvas')!;
+
+    it('deselects — the only way to "nothing selected" without leaving edit mode', () => {
+      const onBackgroundClick = vi.fn();
+      const { container } = renderCanvas({ onBackgroundClick });
+      const background = backgroundOf(container);
+      fireEvent.mouseDown(background, { button: 0, clientX: 400, clientY: 300 });
+      // A couple of pixels of wobble is still a click, not a drag.
+      fireEvent.mouseUp(background, { button: 0, clientX: 402, clientY: 301 });
+      expect(onBackgroundClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not deselect when the press was a drag', () => {
+      const onBackgroundClick = vi.fn();
+      const { container } = renderCanvas({ onBackgroundClick });
+      const background = backgroundOf(container);
+      fireEvent.mouseDown(background, { button: 0, clientX: 400, clientY: 300 });
+      fireEvent.mouseUp(background, { button: 0, clientX: 460, clientY: 300 });
+      expect(onBackgroundClick).not.toHaveBeenCalled();
+    });
+
+    it('does not deselect when the canvas moved under a pointer that did not', async () => {
+      // The pointer arm alone would miss this: the camera moves on a wheel too,
+      // and "the canvas moved" is the thing that must not read as a click.
+      const onBackgroundClick = vi.fn();
+      const { container } = renderCanvas({ onBackgroundClick });
+      const background = backgroundOf(container);
+      fireEvent.mouseDown(background, { button: 0, clientX: 400, clientY: 300 });
+      const before = cameraOf(container).x;
+      await panCanvas(container, 120, 0);
+      expect(cameraOf(container).x).not.toBe(before);
+      fireEvent.mouseUp(background, { button: 0, clientX: 400, clientY: 300 });
+      expect(onBackgroundClick).not.toHaveBeenCalled();
+    });
+
+    it('leaves a click on a frame to the frame', () => {
+      // Clicking an inactive frame activates it and selects what was pointed
+      // at; deselecting first would undo the click that was just spent.
+      const onBackgroundClick = vi.fn();
+      const { container } = renderCanvas({ onBackgroundClick });
+      const target = container.querySelector<HTMLElement>('.preview-canvas-activate')!;
+      fireEvent.mouseDown(target, { button: 0, clientX: 400, clientY: 300, bubbles: true });
+      fireEvent.mouseUp(target, { button: 0, clientX: 400, clientY: 300, bubbles: true });
+      expect(onBackgroundClick).not.toHaveBeenCalled();
+    });
+  });
+
   it('takes it back when a frame goes away', () => {
     const { container, unmount } = renderCanvas();
     const posts = [...container.querySelectorAll<HTMLIFrameElement>('iframe')].map((frame) => {
