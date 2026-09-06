@@ -118,6 +118,13 @@ fn browser_install_error(output: &std::process::Output) -> CommandError {
         "getaddrinfo",
         "unable to verify the first certificate",
         "self-signed certificate",
+        // playwright-core's own internal HTTP client downloading the browser
+        // build has its own 30s per-request timeout — much shorter than the
+        // 600s BROWSER_INSTALL_TIMEOUT_SECS ceiling around the whole install
+        // command — and reports it as "Error: Request to <url> timed out
+        // after 30000ms", which contains none of the Node error-code
+        // substrings above (issue #885).
+        "timed out after",
     ];
     if NETWORK_SIGNATURES.iter().any(|s| combined.contains(s)) {
         return CommandError::expected(
@@ -1143,6 +1150,24 @@ mod capture_error_tests {
     fn network_install_failure_is_expected_with_connection_guidance() {
         let err = browser_install_error(&failed_output(
             "Error: getaddrinfo ENOTFOUND cdn.playwright.dev",
+        ));
+        match err {
+            CommandError::Expected { message } => {
+                assert!(message.contains("internet connection"), "got: {message}")
+            }
+            other => panic!("expected Expected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cdn_download_timeout_install_failure_is_expected_with_connection_guidance() {
+        // Issue #885: playwright-core's own internal HTTP client timing out
+        // downloading the browser build from cdn.playwright.dev — a genuine
+        // network condition, but reported as "Error: Request to <url> timed
+        // out after 30000ms", which none of the Node error-code substrings
+        // (ECONNRESET, ETIMEDOUT, ...) match.
+        let err = browser_install_error(&failed_output(
+            "Error: Request to https://cdn.playwright.dev/builds/cft/153.0.8010.12/win64/chrome-win64.zip timed out after 30000ms",
         ));
         match err {
             CommandError::Expected { message } => {
