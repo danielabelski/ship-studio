@@ -572,91 +572,81 @@ pub async fn list_projects() -> Result<Vec<ProjectInfo>, CommandError> {
     Ok(projects)
 }
 
-/// Returns enhanced project list for dashboard with git info
-#[tauri::command]
-#[tracing::instrument]
-pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandError> {
-    let shipstudio_dir = crate::utils::projects_root()?;
-    // Account resolution must never break the dashboard: degrade to "no active
-    // account" (everything visible) on failure rather than erroring the whole list.
-    let active_account_id = crate::commands::accounts::get_active_account_id().unwrap_or_default();
-    // Live workspace list, read once so the visibility check stays IO-free per project.
-    let accounts = crate::commands::setup::read_app_state().accounts;
-    let removed_projects = load_removed_projects_config()?;
+/// Everything the dashboard scan reads *once* rather than per project:
+/// workspace visibility inputs, the removed-project registry and the external
+/// project registry. Split out so the per-project loop stays IO-free apart
+/// from the project directory itself, and so tests can drive the scan with
+/// deterministic inputs instead of the machine's real app state.
+struct DashboardScanInputs {
+    active_account_id: String,
+    accounts: Vec<crate::types::Account>,
+    removed_projects: RemovedProjectsConfig,
+    /// Registered external project directories, in registry order.
+    external_paths: Vec<PathBuf>,
+}
 
-    if !shipstudio_dir.exists() {
-        return Ok(Vec::new());
+impl DashboardScanInputs {
+    /// Read the real app-level inputs. Blocking filesystem work — call from a
+    /// blocking context, never on a tokio worker thread.
+    fn read() -> Result<Self, CommandError> {
+        Ok(Self {
+            // Account resolution must never break the dashboard: degrade to "no active
+            // account" (everything visible) on failure rather than erroring the whole list.
+            active_account_id: crate::commands::accounts::get_active_account_id()
+                .unwrap_or_default(),
+            accounts: crate::commands::setup::read_app_state().accounts,
+            removed_projects: load_removed_projects_config()?,
+            external_paths: crate::commands::external_projects::load_config()
+                .map(|c| c.projects.iter().map(|p| PathBuf::from(&p.path)).collect())
+                .unwrap_or_default(),
+        })
     }
+}
 
-    // First pass: cheap filesystem-only collection. Git metadata is filled in
-    // afterwards, concurrently and time-bounded, so one slow/hung repo can't
-    // stall the whole dashboard (issue #168).
+/// First pass of the dashboard scan: filesystem-only collection of every
+/// visible project under `root` plus the registered external projects.
+///
+/// Entirely synchronous — every `std::fs` call in the dashboard scan lives
+/// here, so the caller can run the whole pass inside a single
+/// `spawn_blocking` instead of scattering blocking opens across tokio worker
+/// threads. Returns the projects in display order (locals in directory order,
+/// then externals) alongside the matching per-project paths the git pass
+/// needs, in the same order.
+fn collect_dashboard_projects(
+    root: &Path,
+    inputs: &DashboardScanInputs,
+) -> Result<(Vec<DashboardProject>, Vec<PathBuf>), CommandError> {
     let mut projects = Vec::new();
     let mut scan_paths: Vec<PathBuf> = Vec::new();
-    let entries = read_projects_dir(&shipstudio_dir)?;
 
-    for entry in entries {
+    if !root.exists() {
+        return Ok((projects, scan_paths));
+    }
+
+    for entry in read_projects_dir(root)? {
         let entry = entry.map_err(|e| {
             format!(
                 "Failed to read an entry in projects folder {}: {e}",
-                shipstudio_dir.display()
+                root.display()
             )
         })?;
         let path = entry.path();
         if is_valid_project(&path) {
             let canonical = canonical_or_original(&path);
-            if removed_projects.contains_path(&canonical) {
+            if inputs.removed_projects.contains_path(&canonical) {
                 warn_project_excluded(&path, "listed in removed-projects.json registry");
                 continue;
             }
 
-            let thumbnail_path = path.join(".shipstudio").join("thumbnail.png");
-            let thumbnail = if thumbnail_path.exists() {
-                Some(thumbnail_path.to_string_lossy().to_string())
-            } else {
-                None
-            };
-
-            let metadata_path = path.join(".shipstudio").join("project.json");
-            let metadata = if metadata_path.exists() {
-                std::fs::read_to_string(&metadata_path)
-                    .ok()
-                    .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
-            } else {
-                None
-            };
-
-            if !project_visible_for_account(metadata.as_ref(), &active_account_id, &accounts) {
-                warn_project_excluded(
-                    &path,
-                    "belongs to a different workspace (account visibility filter)",
-                );
+            let Some(project) = build_dashboard_project(
+                &path,
+                entry.file_name().to_string_lossy().to_string(),
+                false,
+                inputs,
+            ) else {
                 continue;
-            }
-
-            let last_opened = metadata.as_ref().and_then(|m| m.last_opened);
-            let auto_accept_mode = metadata.as_ref().and_then(|m| m.auto_accept_mode);
-            let hide_main_branch_warning =
-                metadata.as_ref().and_then(|m| m.hide_main_branch_warning);
-            let workspace_subpath = metadata.as_ref().and_then(|m| m.workspace_subpath.clone());
-
-            // Ensure .shipstudio/ is gitignored
-            let _ = ensure_gitignore_has_shipstudio_sync(&path);
-
-            projects.push(DashboardProject {
-                name: entry.file_name().to_string_lossy().to_string(),
-                path: path.to_string_lossy().to_string(),
-                thumbnail,
-                last_opened,
-                // Filled in by the concurrent git scan below.
-                git_branch: None,
-                uncommitted_count: None,
-                auto_accept_mode,
-                hide_main_branch_warning,
-                is_external: false,
-                workspace_subpath,
-                worktree_count: count_managed_worktrees(&path),
-            });
+            };
+            projects.push(project);
             scan_paths.push(path);
         } else if path.is_dir() && !entry.file_name().to_string_lossy().starts_with('.') {
             warn_project_excluded(&path, "not recognized as a project (no project markers)");
@@ -664,73 +654,107 @@ pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandEr
     }
 
     // Append external projects
-    if let Ok(ext_config) = crate::commands::external_projects::load_config() {
-        for ext in &ext_config.projects {
-            let path = std::path::PathBuf::from(&ext.path);
-            if path.exists() && is_valid_project(&path) {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "external".to_string());
-
-                let thumbnail_path = path.join(".shipstudio").join("thumbnail.png");
-                let thumbnail = if thumbnail_path.exists() {
-                    Some(thumbnail_path.to_string_lossy().to_string())
-                } else {
-                    None
-                };
-
-                let metadata_path = path.join(".shipstudio").join("project.json");
-                let metadata = if metadata_path.exists() {
-                    std::fs::read_to_string(&metadata_path)
-                        .ok()
-                        .and_then(|contents| {
-                            serde_json::from_str::<ProjectMetadata>(&contents).ok()
-                        })
-                } else {
-                    None
-                };
-
-                if !project_visible_for_account(metadata.as_ref(), &active_account_id, &accounts) {
-                    warn_project_excluded(
-                        &path,
-                        "external project belongs to a different workspace (account visibility filter)",
-                    );
-                    continue;
-                }
-
-                let last_opened = metadata.as_ref().and_then(|m| m.last_opened);
-                let auto_accept_mode = metadata.as_ref().and_then(|m| m.auto_accept_mode);
-                let hide_main_branch_warning =
-                    metadata.as_ref().and_then(|m| m.hide_main_branch_warning);
-                let workspace_subpath = metadata.as_ref().and_then(|m| m.workspace_subpath.clone());
-
-                // Ensure .shipstudio/ is gitignored
-                let _ = ensure_gitignore_has_shipstudio_sync(&path);
-
-                projects.push(DashboardProject {
-                    name,
-                    path: path.to_string_lossy().to_string(),
-                    thumbnail,
-                    last_opened,
-                    // Filled in by the concurrent git scan below.
-                    git_branch: None,
-                    uncommitted_count: None,
-                    auto_accept_mode,
-                    hide_main_branch_warning,
-                    is_external: true,
-                    workspace_subpath,
-                    worktree_count: count_managed_worktrees(&path),
-                });
-                scan_paths.push(path);
-            } else {
-                warn_project_excluded(
-                    &path,
-                    "registered external project is missing or not recognized as a project",
-                );
-            }
+    for path in &inputs.external_paths {
+        if path.exists() && is_valid_project(path) {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "external".to_string());
+            let Some(project) = build_dashboard_project(path, name, true, inputs) else {
+                continue;
+            };
+            projects.push(project);
+            scan_paths.push(path.clone());
+        } else {
+            warn_project_excluded(
+                path,
+                "registered external project is missing or not recognized as a project",
+            );
         }
     }
+
+    Ok((projects, scan_paths))
+}
+
+/// Build one dashboard row from a project directory. `None` when the project
+/// belongs to a different workspace (the row is excluded and warned about).
+///
+/// Git metadata is left as `None` here and filled in by the git pass.
+fn build_dashboard_project(
+    path: &Path,
+    name: String,
+    is_external: bool,
+    inputs: &DashboardScanInputs,
+) -> Option<DashboardProject> {
+    let thumbnail_path = path.join(".shipstudio").join("thumbnail.png");
+    let thumbnail = if thumbnail_path.exists() {
+        Some(thumbnail_path.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    let metadata_path = path.join(".shipstudio").join("project.json");
+    let metadata = if metadata_path.exists() {
+        std::fs::read_to_string(&metadata_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
+    } else {
+        None
+    };
+
+    if !project_visible_for_account(
+        metadata.as_ref(),
+        &inputs.active_account_id,
+        &inputs.accounts,
+    ) {
+        warn_project_excluded(
+            path,
+            if is_external {
+                "external project belongs to a different workspace (account visibility filter)"
+            } else {
+                "belongs to a different workspace (account visibility filter)"
+            },
+        );
+        return None;
+    }
+
+    // Ensure .shipstudio/ is gitignored
+    let _ = ensure_gitignore_has_shipstudio_sync(path);
+
+    Some(DashboardProject {
+        name,
+        path: path.to_string_lossy().to_string(),
+        thumbnail,
+        last_opened: metadata.as_ref().and_then(|m| m.last_opened),
+        // Filled in by the git scan.
+        git_branch: None,
+        uncommitted_count: None,
+        auto_accept_mode: metadata.as_ref().and_then(|m| m.auto_accept_mode),
+        hide_main_branch_warning: metadata.as_ref().and_then(|m| m.hide_main_branch_warning),
+        is_external,
+        workspace_subpath: metadata.as_ref().and_then(|m| m.workspace_subpath.clone()),
+        worktree_count: count_managed_worktrees(path),
+    })
+}
+
+/// Order the dashboard: most recently opened first, never-opened last by name.
+fn sort_dashboard_projects(projects: &mut [DashboardProject]) {
+    projects.sort_by(|a, b| match (a.last_opened, b.last_opened) {
+        (Some(a_time), Some(b_time)) => b_time.cmp(&a_time),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.name.cmp(&b.name),
+    });
+}
+
+/// The whole dashboard scan for one projects root, with the app-level inputs
+/// supplied by the caller. Split from the command so tests and the timing
+/// harness can scan a synthetic tree.
+async fn scan_dashboard_projects_in(
+    root: &Path,
+    inputs: &DashboardScanInputs,
+) -> Result<Vec<DashboardProject>, CommandError> {
+    let (mut projects, scan_paths) = collect_dashboard_projects(root, inputs)?;
 
     // Second pass: concurrent, time-bounded git scans (one entry per project,
     // in the same order projects were pushed above). A repo that errors or
@@ -741,14 +765,17 @@ pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandEr
         project.uncommitted_count = uncommitted_count;
     }
 
-    projects.sort_by(|a, b| match (a.last_opened, b.last_opened) {
-        (Some(a_time), Some(b_time)) => b_time.cmp(&a_time),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => a.name.cmp(&b.name),
-    });
-
+    sort_dashboard_projects(&mut projects);
     Ok(projects)
+}
+
+/// Returns enhanced project list for dashboard with git info
+#[tauri::command]
+#[tracing::instrument]
+pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandError> {
+    let root = crate::utils::projects_root()?;
+    let inputs = DashboardScanInputs::read()?;
+    scan_dashboard_projects_in(&root, &inputs).await
 }
 
 /// Scans a project's pages/routes directory for page routes.
@@ -1743,4 +1770,469 @@ mod tests {
     // Tests for `is_retryable_delete_error` / `remove_dir_all_robust` /
     // `remove_file_robust` moved to `crate::utils` alongside the extracted
     // helpers (issue #696).
+}
+
+/// Tests and the timing harness for the dashboard scan.
+///
+/// The scan's defect was never visible on an idle machine: blocking `std::fs`
+/// work executed directly on tokio worker threads only starves the runtime
+/// once the workers are contended. So the harness measures two things, not
+/// one — wall time *and* how late an unrelated 10ms heartbeat task runs while
+/// the scan is in flight. The second number is the actual bug.
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    // ---------- synthetic tree ----------
+
+    /// Build `n` project directories that look like the real thing: a
+    /// package.json, a `.shipstudio/project.json` with a `last_opened`, a
+    /// `.gitignore` that already ignores `.shipstudio/` (the steady state on a
+    /// real machine), and a real, clean git repository.
+    fn synthetic_root(n: usize) -> (tempfile::TempDir, tempfile::TempDir) {
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // The template lives outside the scanned root — it is itself a valid
+        // project directory, and one extra row would quietly make every "164"
+        // in a report a lie.
+        let template = make_template_repo(scratch.path());
+        for i in 0..n {
+            let dir = tmp.path().join(format!("project-{i:04}"));
+            make_synthetic_project(&dir, Some(1_700_000_000_000 + i as u64), Some(&template));
+        }
+        (tmp, scratch)
+    }
+
+    /// One synthetic project directory. `last_opened` of `None` writes no
+    /// metadata file at all (the never-opened case). `template` is a `.git`
+    /// directory to clone by copy — forking `git init` + `git commit` a few
+    /// hundred times makes the harness setup slower than the thing it
+    /// measures, and a copied `.git` behaves identically for both the
+    /// `.git/HEAD` read and `git status`.
+    fn make_synthetic_project(dir: &Path, last_opened: Option<u64>, template: Option<&Path>) {
+        std::fs::create_dir_all(dir).expect("project dir");
+        std::fs::write(dir.join("package.json"), TEMPLATE_PACKAGE_JSON).expect("package.json");
+        std::fs::write(dir.join(".gitignore"), TEMPLATE_GITIGNORE).expect("gitignore");
+        if let Some(ts) = last_opened {
+            let meta = dir.join(".shipstudio");
+            std::fs::create_dir_all(&meta).expect("meta dir");
+            std::fs::write(
+                meta.join("project.json"),
+                format!(
+                    r#"{{"_description":"Ship Studio project","schema_version":4,"last_opened":{ts}}}"#
+                ),
+            )
+            .expect("project.json");
+        }
+        match template {
+            Some(git) => copy_dir(git, &dir.join(".git")),
+            None => make_git_repo_here(dir),
+        }
+    }
+
+    const TEMPLATE_PACKAGE_JSON: &str = r#"{"name":"synthetic","version":"1.0.0"}"#;
+    const TEMPLATE_GITIGNORE: &str = "node_modules\n.shipstudio/\n";
+
+    /// A real repository with one commit, whose `.git` is copied into every
+    /// synthetic project. Returns the path of that `.git` directory.
+    fn make_template_repo(under: &Path) -> PathBuf {
+        let dir = under.join(".template");
+        std::fs::create_dir_all(&dir).expect("template dir");
+        std::fs::write(dir.join("package.json"), TEMPLATE_PACKAGE_JSON).expect("package.json");
+        std::fs::write(dir.join(".gitignore"), TEMPLATE_GITIGNORE).expect("gitignore");
+        make_git_repo_here(&dir);
+        dir.join(".git")
+    }
+
+    /// `git init` + one commit, in `dir`. Panics loudly rather than silently
+    /// producing a repo-less directory, which would make the harness measure
+    /// something other than what it claims to.
+    fn make_git_repo_here(dir: &Path) {
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run(&["init", "-q", "-b", "main"]);
+        run(&["config", "user.email", "harness@example.invalid"]);
+        run(&["config", "user.name", "Harness"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        run(&["add", "-A"]);
+        run(&["commit", "-q", "-m", "initial"]);
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).expect("copy dest");
+        for entry in std::fs::read_dir(from).expect("read_dir").flatten() {
+            let src = entry.path();
+            let dst = to.join(entry.file_name());
+            if src.is_dir() {
+                copy_dir(&src, &dst);
+            } else {
+                std::fs::copy(&src, &dst).expect("copy file");
+            }
+        }
+    }
+
+    /// Scan inputs with nothing hidden and no external projects, so a test
+    /// scan never depends on the developer's own app state.
+    fn empty_inputs() -> DashboardScanInputs {
+        DashboardScanInputs {
+            active_account_id: crate::commands::accounts::DEFAULT_ACCOUNT_ID.to_string(),
+            accounts: Vec::new(),
+            removed_projects: RemovedProjectsConfig::default(),
+            external_paths: Vec::new(),
+        }
+    }
+
+    // ---------- exclusion-warning capture ----------
+
+    /// Records every `warn_project_excluded` event as `(path, reason)` so a
+    /// test can assert the scan still reports exactly the same exclusions.
+    #[derive(Clone, Default)]
+    struct ExclusionCapture {
+        events: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    #[derive(Default)]
+    struct FieldGrab {
+        path: Option<String>,
+        reason: Option<String>,
+        message: Option<String>,
+    }
+
+    impl tracing::field::Visit for FieldGrab {
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            match field.name() {
+                "path" => self.path = Some(value.to_string()),
+                "reason" => self.reason = Some(value.to_string()),
+                "message" => self.message = Some(value.to_string()),
+                _ => {}
+            }
+        }
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            let rendered = format!("{value:?}");
+            let rendered = rendered.trim_matches('"').to_string();
+            match field.name() {
+                "path" => self.path = Some(rendered),
+                "reason" => self.reason = Some(rendered),
+                "message" => self.message = Some(rendered),
+                _ => {}
+            }
+        }
+    }
+
+    impl<S> tracing_subscriber::Layer<S> for ExclusionCapture
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut grab = FieldGrab::default();
+            event.record(&mut grab);
+            if grab.message.as_deref() == Some("project directory excluded from dashboard list") {
+                if let (Some(path), Some(reason)) = (grab.path, grab.reason) {
+                    self.events
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push((path, reason));
+                }
+            }
+        }
+    }
+
+    /// Run `f` with exclusion warnings captured, returning them in order.
+    fn capture_exclusions<T>(f: impl FnOnce() -> T) -> (T, Vec<(String, String)>) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let capture = ExclusionCapture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        let out = tracing::subscriber::with_default(subscriber, f);
+        let events = capture
+            .events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        (out, events)
+    }
+
+    fn block_on<F: std::future::Future>(workers: usize, fut: F) -> F::Output {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(workers)
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(fut)
+    }
+
+    // ---------- behaviour pinning ----------
+
+    #[test]
+    fn scan_lists_every_project_in_last_opened_order_with_git_metadata() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        // Two opened projects (newest first) and one never opened (last).
+        make_synthetic_project(&root.join("older"), Some(1_000), None);
+        make_synthetic_project(&root.join("newer"), Some(2_000), None);
+        make_synthetic_project(&root.join("never"), None, None);
+
+        let projects = block_on(2, async {
+            scan_dashboard_projects_in(root, &empty_inputs())
+                .await
+                .expect("scan")
+        });
+
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["newer", "older", "never"]);
+        // Every field the dashboard renders comes back populated.
+        assert!(projects.iter().all(|p| !p.is_external));
+        assert!(projects.iter().all(|p| p.thumbnail.is_none()));
+        assert_eq!(
+            projects
+                .iter()
+                .map(|p| p.git_branch.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                Some("main".to_string()),
+                Some("main".to_string()),
+                Some("main".to_string())
+            ],
+        );
+        assert_eq!(projects[0].last_opened, Some(2_000));
+        assert_eq!(projects[2].last_opened, None);
+    }
+
+    #[test]
+    fn scan_reports_the_same_exclusions_it_always_did() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        make_synthetic_project(&root.join("kept"), Some(1), None);
+        make_synthetic_project(&root.join("hidden"), Some(2), None);
+        // A directory with no project markers at all.
+        std::fs::create_dir_all(root.join("not-a-project")).expect("dir");
+        // Hidden directories are skipped silently, as before.
+        std::fs::create_dir_all(root.join(".cache")).expect("dir");
+
+        let mut inputs = empty_inputs();
+        inputs.removed_projects.projects.push(RemovedProject {
+            path: root.join("hidden").to_string_lossy().to_string(),
+            removed_at: 0,
+        });
+        // A registered external project that no longer exists on disk.
+        let gone = root.join("gone-external");
+        inputs.external_paths.push(gone.clone());
+
+        let (projects, exclusions) = capture_exclusions(|| {
+            block_on(2, async {
+                scan_dashboard_projects_in(root, &inputs)
+                    .await
+                    .expect("scan")
+            })
+        });
+
+        assert_eq!(
+            projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            vec!["kept"]
+        );
+
+        let mut got: Vec<(String, String)> = exclusions;
+        got.sort();
+        let mut want = vec![
+            (
+                root.join("hidden").display().to_string(),
+                "listed in removed-projects.json registry".to_string(),
+            ),
+            (
+                root.join("not-a-project").display().to_string(),
+                "not recognized as a project (no project markers)".to_string(),
+            ),
+            (
+                gone.display().to_string(),
+                "registered external project is missing or not recognized as a project".to_string(),
+            ),
+        ];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn scan_of_a_missing_root_is_empty_not_an_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let missing = tmp.path().join("nope");
+        let projects = block_on(2, async {
+            scan_dashboard_projects_in(&missing, &empty_inputs())
+                .await
+                .expect("scan")
+        });
+        assert!(projects.is_empty());
+    }
+
+    // ---------- timing harness ----------
+
+    /// How many projects the harness builds by default — the size of the
+    /// reporter's real `~/ShipStudio`. Override with `SCAN_HARNESS_N`.
+    const HARNESS_PROJECT_COUNT: usize = 164;
+    /// Worker threads for the harness runtime, and the number of simultaneous
+    /// dashboard calls. Three of each reproduces the reported failure exactly:
+    /// three concurrent `get_dashboard_projects` calls with three tokio worker
+    /// threads blocked in `std::fs::read_to_string`, leaving nothing to run
+    /// the rest of the app.
+    const HARNESS_WORKERS: usize = 3;
+    const HARNESS_CONCURRENT_CALLS: usize = 3;
+
+    /// Ticks every 10ms and records the worst lateness. This is the number the
+    /// defect is actually about: a scan that blocks the tokio workers shows up
+    /// here as a long gap, and every other task in the app is stalled for
+    /// exactly that long. Wall time alone would not show it.
+    async fn heartbeat(stop: Arc<std::sync::atomic::AtomicBool>) -> Duration {
+        let mut worst = Duration::ZERO;
+        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let at = Instant::now();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let late = at.elapsed().saturating_sub(Duration::from_millis(10));
+            if late > worst {
+                worst = late;
+            }
+        }
+        worst
+    }
+
+    fn loadavg() -> String {
+        std::process::Command::new("uptime")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    }
+
+    fn harness_n() -> usize {
+        std::env::var("SCAN_HARNESS_N")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(HARNESS_PROJECT_COUNT)
+    }
+
+    /// ```text
+    /// cargo test --release --lib dashboard_scan_timing -- --ignored --nocapture
+    /// SCAN_HARNESS_N=2000 cargo test --release --lib dashboard_scan_timing -- --ignored --nocapture
+    /// ```
+    ///
+    /// Builds a synthetic tree of N real git projects and issues
+    /// [`HARNESS_CONCURRENT_CALLS`] simultaneous dashboard scans on a
+    /// [`HARNESS_WORKERS`]-worker runtime, with a 10ms heartbeat task running
+    /// alongside. Reports the load average, because none of these numbers mean
+    /// anything without it.
+    #[test]
+    #[ignore = "timing harness — run explicitly with --ignored --nocapture"]
+    fn dashboard_scan_timing() {
+        let n = harness_n();
+        let before_load = loadavg();
+        let (tmp, _scratch) = synthetic_root(n);
+        let root = tmp.path().to_path_buf();
+
+        let (burst, worst_late, counts) = block_on(HARNESS_WORKERS, async {
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let hb = tokio::spawn(heartbeat(stop.clone()));
+            // Let the heartbeat establish a baseline before the burst.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            let t0 = Instant::now();
+            let mut handles = Vec::new();
+            for _ in 0..HARNESS_CONCURRENT_CALLS {
+                let root = root.clone();
+                handles.push(tokio::spawn(async move {
+                    scan_dashboard_projects_in(&root, &empty_inputs())
+                        .await
+                        .expect("scan")
+                        .len()
+                }));
+            }
+            let mut counts = Vec::new();
+            for h in handles {
+                counts.push(h.await.expect("join"));
+            }
+            let burst = t0.elapsed();
+
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let worst = hb.await.expect("heartbeat");
+            (burst, worst, counts)
+        });
+
+        // A harness that silently scanned an empty tree would report a
+        // wonderful number about nothing.
+        assert!(
+            counts.iter().all(|c| *c == n),
+            "expected {n}, got {counts:?}"
+        );
+
+        println!("\n=== dashboard scan timing harness ===");
+        println!("projects            : {n}");
+        println!("concurrent calls    : {HARNESS_CONCURRENT_CALLS}");
+        println!("tokio worker threads: {HARNESS_WORKERS}");
+        println!("load before         : {before_load}");
+        println!("load after          : {}", loadavg());
+        println!("burst wall time     : {burst:?}   <- what the user waits");
+        println!("worst heartbeat late: {worst_late:?}   <- runtime starvation");
+        println!("=====================================\n");
+    }
+
+    /// ```text
+    /// cargo test --release --lib dashboard_scan_phases -- --ignored --nocapture
+    /// ```
+    ///
+    /// Splits one scan into its two passes so the timing harness's numbers can
+    /// be attributed: the synchronous filesystem collection, and the git pass
+    /// that forks per project.
+    #[test]
+    #[ignore = "timing harness — run explicitly with --ignored --nocapture"]
+    fn dashboard_scan_phases() {
+        let n = harness_n();
+        let (tmp, _scratch) = synthetic_root(n);
+        let root = tmp.path().to_path_buf();
+
+        let (fs_pass, git_pass, total, count) = block_on(HARNESS_WORKERS, async {
+            let inputs = empty_inputs();
+            let t0 = Instant::now();
+            let (mut projects, paths) =
+                collect_dashboard_projects(&root, &inputs).expect("collect");
+            let fs_pass = t0.elapsed();
+
+            let t1 = Instant::now();
+            let git = scan_git_info(paths).await;
+            let git_pass = t1.elapsed();
+            for (p, (b, c)) in projects.iter_mut().zip(git) {
+                p.git_branch = b;
+                p.uncommitted_count = c;
+            }
+            let count = projects.len();
+            // Assert on what the pass produced, not merely that it ran.
+            assert!(
+                projects
+                    .iter()
+                    .all(|p| p.git_branch.as_deref() == Some("main")),
+                "git pass produced no branches — the harness would be timing nothing"
+            );
+            (fs_pass, git_pass, t0.elapsed(), count)
+        });
+
+        assert_eq!(count, n);
+        println!("\n=== dashboard scan phase split ===");
+        println!("projects   : {n}");
+        println!("load       : {}", loadavg());
+        println!("fs pass    : {fs_pass:?}");
+        println!("git pass   : {git_pass:?}");
+        println!("total      : {total:?}");
+        println!("==================================\n");
+    }
 }
