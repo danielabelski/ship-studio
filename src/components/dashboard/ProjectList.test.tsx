@@ -7,7 +7,7 @@
  * pin the two ways out of the spinner: a rejection, and a hang.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const mocks = vi.hoisted(() => ({
@@ -162,7 +162,9 @@ describe('ProjectList loading state', () => {
 
     expect(await screen.findByText(SPINNER_LABEL)).toBeInTheDocument();
 
-    await vi.advanceTimersByTimeAsync(41_000);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(41_000);
+    });
 
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     expect(screen.getByRole('alert')).toHaveTextContent(/timed out after 40000ms/i);
