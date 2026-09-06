@@ -80,11 +80,19 @@ fn cache(key: (String, HostingProvider, String), status: &ProviderStatus) {
         _ => ACTIVE_TTL,
     };
     if let Ok(mut c) = STATUS_CACHE.lock() {
+        // Keyed by commit SHA, so every push adds a new entry that nothing
+        // ever removed on its own — `invalidate_project` only fires on a
+        // link/credential change, not on expiry. Sweep everything past its
+        // TTL on every write (same opportunistic pattern as `GitCache` in
+        // `cache.rs`) so a long-running process doesn't accumulate one
+        // `ProviderStatus` per commit ever checked, forever.
+        let now = Instant::now();
+        c.retain(|_, entry| entry.expires_at > now);
         c.insert(
             key,
             CacheEntry {
                 status: status.clone(),
-                expires_at: Instant::now() + ttl,
+                expires_at: now + ttl,
             },
         );
     }

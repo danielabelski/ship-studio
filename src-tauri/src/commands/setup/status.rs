@@ -36,7 +36,11 @@ const NETWORK_PROBE_TIMEOUT_SECS: u64 = 8;
 /// it exits successfully. Any failure — non-zero exit, spawn error, or timeout —
 /// degrades to `None` so a single wedged tool can never block the remaining
 /// checks (the item just reports as not ready / version unknown).
-async fn probe_stdout(binary: &Path, args: &[&str], timeout_secs: u64) -> Option<String> {
+pub(crate) async fn probe_stdout(
+    binary: &Path,
+    args: &[&str],
+    timeout_secs: u64,
+) -> Option<String> {
     let label = format!("{} {}", binary.display(), args.join(" "));
     let mut std_cmd = create_command(binary);
     std_cmd.args(args);

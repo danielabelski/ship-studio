@@ -92,8 +92,21 @@ pub async fn agent_command_auth_status_with_timeout(
     }
 }
 
+/// Timeout for each agent's `--version` / auth-status probe. Was previously a
+/// bare, un-bounded `Command::output()` — a single wedged CLI (network auth
+/// hang, waiting on stdin, …) could block this whole command for tens of
+/// seconds, measured on a real log at 3-15s typically and up to 41s in the
+/// worst observed case. Matches `LOCAL_PROBE_TIMEOUT_SECS` in `status.rs`.
+const AGENT_PROBE_TIMEOUT_SECS: u64 = 5;
+
 /// Return the status of every known agent in a single call.
 /// Avoids the N round-trips the dashboard would otherwise need.
+///
+/// Every agent's version + auth probe runs concurrently and bounded by
+/// [`AGENT_PROBE_TIMEOUT_SECS`] (mirroring `get_full_setup_status`'s
+/// `agents_fut`) rather than sequentially with unbounded subprocess calls —
+/// with N agents installed the old code paid roughly N times the per-agent
+/// spawn cost, in series, with no ceiling on any single one.
 #[tauri::command]
 #[tracing::instrument]
 pub async fn get_agents_status() -> Vec<AgentStatus> {
@@ -105,28 +118,38 @@ pub async fn get_agents_status() -> Vec<AgentStatus> {
     // Claude's auth can't be inferred from config files (its macOS login is a
     // global keychain entry that ignores CLAUDE_CONFIG_DIR), so resolve the real
     // per-workspace identity once up front and fold it into the Claude row below.
-    let claude_identity = resolve_claude_identity(&active_account_id).await;
+    // Joined with the per-agent probes below rather than awaited first, so its
+    // own subprocess call overlaps with theirs instead of stacking in series.
+    let claude_identity_fut = resolve_claude_identity(&active_account_id);
 
-    ALL_AGENTS
-        .iter()
-        .map(|agent| {
+    let agent_rows_fut =
+        futures_util::future::join_all(ALL_AGENTS.iter().map(|agent| async move {
             let binary_path = find_binary_by_name(agent.binary_name);
             let installed = binary_path.is_some();
 
-            let version = binary_path.as_ref().and_then(|p| {
-                create_command(p)
-                    .args([agent.version_flag])
-                    .output()
-                    .ok()
-                    .and_then(|o| {
-                        if o.status.success() {
-                            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-                        } else {
-                            None
-                        }
-                    })
-            });
+            let version = match &binary_path {
+                Some(p) => {
+                    super::status::probe_stdout(p, &[agent.version_flag], AGENT_PROBE_TIMEOUT_SECS)
+                        .await
+                }
+                None => None,
+            };
 
+            let is_claude = agent.id == "claude-code";
+            let command_auth = if !is_claude && installed {
+                agent_command_auth_status_with_timeout(agent, AGENT_PROBE_TIMEOUT_SECS).await
+            } else {
+                None
+            };
+
+            (agent, binary_path, installed, version, command_auth)
+        }));
+
+    let (claude_identity, agent_probes) = tokio::join!(claude_identity_fut, agent_rows_fut);
+
+    agent_probes
+        .into_iter()
+        .map(|(agent, _binary_path, installed, version, command_auth)| {
             let is_claude = agent.id == "claude-code";
             let (authed, auth_email, needs_reconnect) = if is_claude {
                 // Real per-workspace identity, not file existence.
@@ -137,7 +160,7 @@ pub async fn get_agents_status() -> Vec<AgentStatus> {
                 )
             } else if !installed {
                 (false, None, false)
-            } else if let Some(authed) = agent_command_auth_status(agent) {
+            } else if let Some(authed) = command_auth {
                 // Keychain-based agents (Cursor): ask the CLI, not the filesystem.
                 (authed, None, false)
             } else {
