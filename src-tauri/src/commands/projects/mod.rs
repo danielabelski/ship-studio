@@ -32,7 +32,8 @@ use crate::errors::CommandError;
 use crate::external_command::run_with_timeout;
 use crate::types::{DashboardProject, PageInfo, ProjectInfo, ProjectMetadata, ProjectType};
 use crate::utils::{
-    create_command, is_retryable_delete_error, remove_dir_all_robust, validate_project_path,
+    canonicalize_tagged, create_command, is_retryable_delete_error, remove_dir_all_robust,
+    validate_project_path,
 };
 use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -1001,10 +1002,10 @@ pub async fn delete_project(path: String) -> Result<(), CommandError> {
     // Canonicalize FIRST (resolves symlinks and `..`) so the containment check
     // below can't be defeated by a lexical path like `~/ShipStudio/../../.ssh`.
     // `Path::starts_with` is purely lexical and would otherwise pass such a path
-    // straight through to `remove_dir_all`.
-    let canonical = dunce::canonicalize(&path).map_err(|e| CommandError::Io {
-        message: format!("Couldn't resolve project path {path}: {e}"),
-    })?;
+    // straight through to `remove_dir_all`. `canonicalize_tagged` classifies a
+    // vanished folder as `CommandError::Expected` instead of a raw IO error —
+    // the project was already gone from disk, not an app malfunction (#877).
+    let canonical = canonicalize_tagged(&path, "delete_project")?;
 
     // Check if this is an external project. A by-design guard with a
     // user-side path forward, not a malfunction — Expected keeps it out of
@@ -1185,9 +1186,9 @@ pub async fn rename_project(
     // lexical, so checking the raw `old_path` would let `~/ShipStudio/../../foo`
     // escape the sandbox and rename arbitrary directories. State stores are
     // still keyed by the original `old_path` string the frontend passed.
-    let project_path = dunce::canonicalize(&old_path).map_err(|e| CommandError::Io {
-        message: format!("Couldn't resolve project path {old_path}: {e}"),
-    })?;
+    // `canonicalize_tagged` classifies a vanished folder as
+    // `CommandError::Expected` instead of a raw IO error (#877).
+    let project_path = canonicalize_tagged(&old_path, "rename_project")?;
     let project_path = project_path.as_path();
 
     // Reject external projects (their folders live outside ~/ShipStudio). A
@@ -1743,4 +1744,32 @@ mod tests {
     // Tests for `is_retryable_delete_error` / `remove_dir_all_robust` /
     // `remove_file_robust` moved to `crate::utils` alongside the extracted
     // helpers (issue #696).
+
+    /// Issue #877: a project folder that's already gone from disk (deleted,
+    /// renamed, or moved outside Ship Studio) must classify as `Expected`
+    /// with plain-English guidance, not a raw IO error built from the
+    /// `dunce::canonicalize` failure text.
+    #[tokio::test]
+    async fn delete_project_on_a_vanished_folder_is_expected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gone = tmp.path().join("never-existed");
+
+        let err = delete_project(gone.to_string_lossy().to_string())
+            .await
+            .expect_err("a missing folder must fail");
+
+        assert!(
+            matches!(err, CommandError::Expected { .. }),
+            "expected CommandError::Expected, got {err:?}"
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("no longer exists"),
+            "message should explain the folder is gone, got: {message}"
+        );
+        assert!(
+            !message.contains("os error"),
+            "message should not leak the raw OS error, got: {message}"
+        );
+    }
 }
