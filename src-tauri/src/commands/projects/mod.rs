@@ -1941,6 +1941,7 @@ mod tests {
 /// and its shape: blocking work on the workers makes every other task in the
 /// app wait for it, and the same three concurrent calls used to do the same
 /// scan three times.
+#[cfg(test)]
 mod scan_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
