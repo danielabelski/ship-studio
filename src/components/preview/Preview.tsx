@@ -781,6 +781,18 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     }
   }, [canvasMode, canvasFrameEl, activeEditMode]);
 
+  // Clicking the canvas background drops the element selection. Until now the
+  // only way to get the outline off the design was to leave edit mode, which
+  // also takes away the panel you were working in.
+  const deselectOnCanvas = useCallback(() => {
+    if (!activeEditMode) return;
+    try {
+      canvasFrameEl?.contentWindow?.postMessage({ type: 'ss:deselect' }, '*');
+    } catch {
+      // The frame may have gone away between the click and this call.
+    }
+  }, [activeEditMode, canvasFrameEl]);
+
   // Imperative opener for the toolbar's insert palette (Cmd+K "Insert element…").
   const openInsertMenuRef = useRef<(() => void) | null>(null);
   const toggleActiveEditor =
@@ -1809,6 +1821,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               onActivateFrame={activateCanvasFrame}
               onActiveFrameElement={setCanvasFrameEl}
               onStageHeightChange={setCanvasFrameStageHeight}
+              onBackgroundClick={deselectOnCanvas}
               activeFrameOverlay={(scale) => (
                 <>
                   {comments.pins(scale, {

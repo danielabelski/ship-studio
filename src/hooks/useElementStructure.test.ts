@@ -117,6 +117,28 @@ describe('useElementStructure', () => {
     expect(result.current.selection?.rect).toEqual(moved);
   });
 
+  it('lets the selection go when the frame reports it was dropped', async () => {
+    // Clicking the canvas background deselects. The toolbar this hook drives is
+    // drawn OVER the frame from the selection's rect, so a stale one leaves the
+    // insert/duplicate/delete controls floating over nothing.
+    const { result, iframeRef } = setup();
+    const source = iframeRef.current!.contentWindow as unknown as MessageEventSource;
+
+    await dispatch({ type: 'ss:select', signature: SIG, count: 3, nodeId: 7 }, source);
+    expect(result.current.selection).not.toBeNull();
+
+    await dispatch({ type: 'ss:deselect' }, source);
+    expect(result.current.selection).toBeNull();
+  });
+
+  it('ignores a deselect that did not come from the preview iframe', async () => {
+    const { result, iframeRef } = setup();
+    const source = iframeRef.current!.contentWindow as unknown as MessageEventSource;
+    await dispatch({ type: 'ss:select', signature: SIG, count: 1, nodeId: 7 }, source);
+    await dispatch({ type: 'ss:deselect' }, window);
+    expect(result.current.selection).not.toBeNull();
+  });
+
   it('ignores messages that are not from the preview iframe', async () => {
     const { result } = setup();
     await dispatch({ type: 'ss:select', signature: SIG, count: 1 }, window);

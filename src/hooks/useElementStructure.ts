@@ -37,6 +37,7 @@ import {
 import { resolveElementHtml } from '../lib/edit-html';
 import { asCommandError, formatCommandError } from '../lib/errors';
 import { useFrameRebind } from './useFrameRebind';
+import { useSelectionCleared } from './useSelectionCleared';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 
@@ -150,14 +151,17 @@ export function useElementStructure({ iframeRef, projectPath, enabled, onToast }
     [iframeRef]
   );
 
-  // Moved to another preview frame (the breakpoint canvas): the toolbar's
-  // selection box belongs to the frame we left.
-  useFrameRebind(iframeRef, () => {
+  // Nothing is selected any more — either the editor moved to another preview
+  // frame (the breakpoint canvas), so the toolbar's selection box belongs to the
+  // frame we left, or the user clicked the canvas background and dropped it.
+  const forgetSelection = useCallback(() => {
     setSelection(null);
     setTextEditing(false);
     pendingReselectRef.current = null;
     pendingActionRef.current = null;
-  });
+  }, []);
+  useFrameRebind(iframeRef, forgetSelection);
+  useSelectionCleared(iframeRef, forgetSelection);
 
   // Drop all transient state when edit mode closes.
   useEffect(() => {
