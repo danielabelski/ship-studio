@@ -266,7 +266,9 @@ pub async fn capture_project_thumbnail(
 
     // Quick health check: verify the dev server is still responding before launching Playwright.
     // This reduces (but doesn't eliminate) race conditions where the server dies mid-capture.
-    if !super::dev_server_listening(&url) {
+    // Retries once after a short backoff (issue #711/#614) — a dev server
+    // that's still starting up can miss the first probe and answer the next.
+    if !super::dev_server_listening_with_retry(&url).await {
         tracing::warn!("Dev server health check failed for {}", url);
         return Err(("Dev server not responding, skipping thumbnail capture".to_string()).into());
     }
