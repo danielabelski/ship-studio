@@ -1269,7 +1269,7 @@ pub fn claude_connect_start(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| format!("openpty: {e}"))?;
+        .map_err(crate::commands::pty_session::openpty_error)?;
     let writer = pair
         .master
         .take_writer()
@@ -1646,7 +1646,7 @@ pub fn workspace_connect_start(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| format!("openpty: {e}"))?;
+        .map_err(crate::commands::pty_session::openpty_error)?;
     let writer = pair
         .master
         .take_writer()

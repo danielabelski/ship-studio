@@ -84,6 +84,12 @@ impl SessionBuffer {
     }
 }
 
+/// The writer half of a session's PTY master.
+///
+/// `Option` because it is released the moment the session's child exits —
+/// see [`Session::release_pty_handles`].
+type SessionWriter = Mutex<Option<Box<dyn std::io::Write + Send>>>;
+
 struct Session {
     pid: u32,
     project_path: Option<String>,
@@ -92,10 +98,42 @@ struct Session {
     attached: AtomicBool,
     exit_code: Mutex<Option<i32>>,
     buffer: Mutex<SessionBuffer>,
-    writer: Mutex<Box<dyn std::io::Write + Send>>,
+    /// `None` once the session has exited (issue #540).
+    writer: SessionWriter,
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
-    master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
+    /// `None` once the session has exited (issue #540).
+    master: Mutex<Option<Box<dyn portable_pty::MasterPty + Send>>>,
     created_at_ms: u64,
+}
+
+impl Session {
+    /// Close this session's PTY master and writer, freeing the underlying
+    /// pseudo-terminal.
+    ///
+    /// Sessions are deliberately long-lived — an exited one stays registered
+    /// so its scrollback can still be replayed and its exit code reported —
+    /// but until this existed, an exited session also kept its `MasterPty`
+    /// (and the writer dup'd from it) alive in the registry forever. A
+    /// pseudo-terminal is a *system-wide* resource on macOS, capped by
+    /// `kern.tty.ptmx_max` (511 by default), and `/dev/ptmx` answers ENXIO —
+    /// "Device not configured" — once that cap is reached. So an app session
+    /// that opened and abandoned enough agent/terminal tabs eventually made
+    /// every new `openpty` fail, for Ship Studio *and* everything else on the
+    /// machine (issue #540).
+    ///
+    /// Nothing needs these handles after exit: `pty_session_write` and
+    /// `pty_session_resize` both refuse a dead session before touching them,
+    /// and `pty_session_attach`/`pty_session_list` only read the buffer, pid,
+    /// and exit code. The reader thread holds its own dup and closes it when
+    /// its read returns EOF/EIO.
+    fn release_pty_handles(&self) {
+        // Take-then-drop: the `Box` is dropped after the lock is released, so
+        // a slow close can't block a concurrent write/resize probe.
+        let writer = self.writer.lock().ok().and_then(|mut w| w.take());
+        let master = self.master.lock().ok().and_then(|mut m| m.take());
+        drop(writer);
+        drop(master);
+    }
 }
 
 static REGISTRY: LazyLock<Mutex<HashMap<String, Arc<Session>>>> =
@@ -159,7 +197,7 @@ fn handle_dsr_intercept(
     chunk: &[u8],
     carry: &mut Vec<u8>,
     attached: &AtomicBool,
-    writer: &Mutex<Box<dyn std::io::Write + Send>>,
+    writer: &SessionWriter,
 ) {
     const QUERY: &[u8] = b"\x1b[6n";
     let mut scan = std::mem::take(carry);
@@ -172,12 +210,57 @@ fn handle_dsr_intercept(
     if queries == 0 || attached.load(Ordering::Relaxed) {
         return;
     }
-    if let Ok(mut w) = writer.lock() {
-        for _ in 0..queries {
-            let _ = w.write_all(b"\x1b[1;1R");
+    // `Some` only while the session is live — an exited session's writer has
+    // already been released (issue #540), and there is nothing to answer.
+    if let Ok(mut guard) = writer.lock() {
+        if let Some(w) = guard.as_mut() {
+            for _ in 0..queries {
+                let _ = w.write_all(b"\x1b[1;1R");
+            }
+            let _ = w.flush();
         }
-        let _ = w.flush();
     }
+}
+
+/// True when an `openpty` failure is the OS refusing to hand out another
+/// pseudo-terminal because the system-wide pool is exhausted.
+///
+/// macOS caps live PTYs at `kern.tty.ptmx_max` (511 by default) and reports
+/// the cap by failing the `/dev/ptmx` open with ENXIO, which renders as
+/// "Device not configured" (issue #540). Linux reports its own `pty.max`
+/// against `/dev/pts` as ENOSPC. Matching on the raw OS code keeps this
+/// working under a localized error string.
+pub fn is_pty_pool_exhausted(message: &str) -> bool {
+    // ENXIO (6) on macOS; ENOSPC (28) on Linux when `pty.max` is reached.
+    message.contains("(os error 6)")
+        || message.contains("code: 6,")
+        || message.contains("(os error 28)")
+        || message.contains("code: 28,")
+}
+
+/// Turn an `openpty` failure into a `CommandError`, giving the exhausted-pool
+/// case an actionable message instead of a raw `Os { code: 6, … }` dump.
+///
+/// A blown system-wide PTY cap is an environment state with a user-side fix
+/// (close terminals), not an app malfunction, so it classifies `Expected` —
+/// mirroring how `external_command` treats process-table pressure. The
+/// `warn!` records how many sessions this app itself was holding, so if the
+/// leak that [`Session::release_pty_handles`] fixed ever regresses, the log
+/// says so outright rather than leaving it to be inferred.
+pub fn openpty_error(error: impl std::fmt::Display) -> CommandError {
+    let message = format!("openpty: {error}");
+    if is_pty_pool_exhausted(&message) {
+        let held = REGISTRY.lock().map(|m| m.len()).unwrap_or(0);
+        tracing::warn!(
+            sessions_held = held,
+            "openpty failed: the system pseudo-terminal pool is exhausted"
+        );
+        return CommandError::expected(
+            "Your system has run out of pseudo-terminals, so a new terminal couldn't be \
+             opened. Close some terminal tabs (here and in other apps), then try again.",
+        );
+    }
+    CommandError::from(message)
 }
 
 #[derive(Serialize)]
@@ -258,7 +341,7 @@ pub async fn pty_session_open(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| format!("openpty: {e}"))?;
+        .map_err(openpty_error)?;
 
     let writer = pair
         .master
@@ -343,9 +426,9 @@ pub async fn pty_session_open(
         attached: AtomicBool::new(false),
         exit_code: Mutex::new(None),
         buffer: Mutex::new(SessionBuffer::new()),
-        writer: Mutex::new(writer),
+        writer: Mutex::new(Some(writer)),
         child_killer: Mutex::new(child_killer),
-        master: Mutex::new(pair.master),
+        master: Mutex::new(Some(pair.master)),
         created_at_ms: now_ms(),
     });
 
@@ -421,6 +504,11 @@ pub async fn pty_session_open(
             if let Ok(mut slot) = session_for_waiter.exit_code.lock() {
                 *slot = Some(code);
             }
+            // The child is gone, so nothing will read or write this PTY
+            // again. Close it now instead of holding it for the (unbounded)
+            // lifetime of the registry entry — the pseudo-terminal pool is
+            // system-wide and small (issue #540).
+            session_for_waiter.release_pty_handles();
             let _ = app_for_waiter.emit(
                 "pty-session-exit",
                 serde_json::json!({
@@ -459,10 +547,16 @@ pub fn pty_session_write(session_id: String, data: Vec<u8>) -> Result<(), Comman
     if !session.alive.load(std::sync::atomic::Ordering::Relaxed) {
         return Err(CommandError::expected("terminal session has ended"));
     }
-    let mut w = session
+    let mut guard = session
         .writer
         .lock()
         .map_err(|e| format!("writer lock poisoned: {e}"))?;
+    // Released the instant the child exited (issue #540). The `alive` check
+    // above catches this in every ordinary case; this covers the narrow race
+    // where the child exits between that load and this lock.
+    let Some(w) = guard.as_mut() else {
+        return Err(CommandError::expected("terminal session has ended"));
+    };
     w.write_all(&data).map_err(|e| {
         // Benign race — a write landing just as the PTY's process exits — not
         // a malfunction; keep it out of telemetry (issue #323). Unix surfaces
@@ -516,10 +610,14 @@ pub fn pty_session_resize(session_id: String, cols: u16, rows: u16) -> Result<()
         return Err(CommandError::expected("terminal session has ended"));
     }
     let (rows, cols) = clamp_pty_size(rows, cols);
-    let master = session
+    let guard = session
         .master
         .lock()
         .map_err(|e| format!("master lock poisoned: {e}"))?;
+    // Same released-on-exit race as `pty_session_write` (issue #540).
+    let Some(master) = guard.as_ref() else {
+        return Err(CommandError::expected("terminal session has ended"));
+    };
     master
         .resize(PtySize {
             rows,
@@ -560,6 +658,11 @@ pub fn pty_session_kill(session_id: String) -> Result<(), CommandError> {
         let _ = killer.kill();
     }
     session.alive.store(false, Ordering::Relaxed);
+    // Don't wait for the waiter thread to notice: the tab is closed and the
+    // registry entry is already gone, so release the pseudo-terminal now
+    // (issue #540). Closing the master also hangs up anything the kill
+    // signal didn't reach.
+    session.release_pty_handles();
     Ok(())
 }
 
@@ -595,6 +698,7 @@ pub fn kill_all_sessions_sync() -> u32 {
             .output();
 
         session.alive.store(false, Ordering::Relaxed);
+        session.release_pty_handles();
         count += 1;
     }
     count
@@ -688,6 +792,158 @@ pub fn pty_session_list(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #540: an exited session must not keep its pseudo-terminal open.
+    /// PTYs are a small, system-wide pool (macOS `kern.tty.ptmx_max`, 511 by
+    /// default), and exhausting it makes `openpty` fail with ENXIO.
+    #[cfg(unix)]
+    mod pty_handle_release {
+        use super::*;
+
+        /// Is this descriptor still open in this process? `/dev/fd/<n>` is
+        /// the portable (macOS + Linux) way to ask; it stats as a bad file
+        /// descriptor once the fd is closed.
+        fn fd_is_open(fd: std::os::unix::io::RawFd) -> bool {
+            std::fs::metadata(format!("/dev/fd/{fd}")).is_ok()
+        }
+
+        /// Build a registry `Session` around a real PTY whose child has
+        /// already exited — exactly the state the waiter thread observes.
+        fn exited_session() -> Arc<Session> {
+            let pair = native_pty_system()
+                .openpty(PtySize {
+                    rows: 24,
+                    cols: 80,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .expect("openpty");
+            let writer = pair.master.take_writer().expect("take_writer");
+            let mut child = pair
+                .slave
+                .spawn_command(CommandBuilder::new("/usr/bin/true"))
+                .expect("spawn");
+            drop(pair.slave);
+            let killer = child.clone_killer();
+            let _ = child.wait();
+
+            Arc::new(Session {
+                pid: 0,
+                project_path: None,
+                tab_session_id: None,
+                alive: AtomicBool::new(false),
+                attached: AtomicBool::new(false),
+                exit_code: Mutex::new(Some(0)),
+                buffer: Mutex::new(SessionBuffer::new()),
+                writer: Mutex::new(Some(writer)),
+                child_killer: Mutex::new(killer),
+                master: Mutex::new(Some(pair.master)),
+                created_at_ms: 0,
+            })
+        }
+
+        #[test]
+        fn releasing_an_exited_session_closes_its_pty() {
+            let session = exited_session();
+            let master_fd = session
+                .master
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|m| m.as_raw_fd())
+                .expect("a unix MasterPty exposes its fd");
+            assert!(fd_is_open(master_fd), "the PTY master starts open");
+
+            session.release_pty_handles();
+
+            assert!(
+                !fd_is_open(master_fd),
+                "an exited session must not keep its pseudo-terminal open (issue #540)"
+            );
+            // The record itself survives — scrollback replay and the exit code
+            // still work after the PTY is gone.
+            assert_eq!(*session.exit_code.lock().unwrap(), Some(0));
+            assert!(session.writer.lock().unwrap().is_none());
+            assert!(session.master.lock().unwrap().is_none());
+        }
+
+        /// Repeated releases are a no-op, so kill + waiter both calling it
+        /// (which is the normal ordering) can't double-close an fd.
+        #[test]
+        fn releasing_twice_is_a_no_op() {
+            let session = exited_session();
+            session.release_pty_handles();
+            session.release_pty_handles();
+            assert!(session.master.lock().unwrap().is_none());
+        }
+
+        /// Writing to a released session reports the session as ended rather
+        /// than panicking on the missing writer.
+        #[test]
+        fn write_to_a_released_session_reports_it_ended() {
+            let session_id = "test-released-write".to_string();
+            let session = exited_session();
+            session.release_pty_handles();
+            // `alive` stays true so the write reaches the writer lock — the
+            // narrow race the `None` branch exists for.
+            session.alive.store(true, Ordering::Relaxed);
+            REGISTRY
+                .lock()
+                .unwrap()
+                .insert(session_id.clone(), session.clone());
+
+            let err = pty_session_write(session_id.clone(), b"hi".to_vec())
+                .expect_err("a released PTY has nothing to write to");
+            assert!(
+                matches!(err, CommandError::Expected { .. }),
+                "must not page telemetry, got: {err:?}"
+            );
+            assert!(err.to_string().contains("session has ended"), "got: {err}");
+
+            REGISTRY.lock().unwrap().remove(&session_id);
+        }
+    }
+
+    mod openpty_classification {
+        use super::*;
+
+        /// macOS reports an exhausted PTY pool as ENXIO (6) from `/dev/ptmx`;
+        /// Linux as ENOSPC (28). Both must become the actionable message
+        /// rather than a raw `Os { code: 6, … }` dump (issue #540).
+        #[test]
+        fn pool_exhaustion_becomes_an_actionable_expected_error() {
+            for raw in [
+                "failed to openpty: Os { code: 6, kind: Uncategorized, message: \"Device not configured\" }",
+                "failed to openpty: Device not configured (os error 6)",
+                "failed to openpty: No space left on device (os error 28)",
+            ] {
+                assert!(is_pty_pool_exhausted(raw), "must classify: {raw}");
+                let err = openpty_error(raw);
+                assert!(
+                    matches!(err, CommandError::Expected { .. }),
+                    "pool exhaustion is an environment state, got: {err:?}"
+                );
+                assert!(
+                    err.to_string().contains("run out of pseudo-terminals"),
+                    "message must say what happened, got: {err}"
+                );
+            }
+        }
+
+        /// Anything else keeps its raw text and stays a malfunction, so a
+        /// genuinely new openpty failure still reaches telemetry.
+        #[test]
+        fn other_openpty_failures_are_unchanged() {
+            let raw = "failed to openpty: Permission denied (os error 13)";
+            assert!(!is_pty_pool_exhausted(raw));
+            let err = openpty_error(raw);
+            assert!(
+                !matches!(err, CommandError::Expected { .. }),
+                "got: {err:?}"
+            );
+            assert!(err.to_string().contains("Permission denied"), "got: {err}");
+        }
+    }
 
     #[test]
     fn ring_buffer_append_within_limit() {
@@ -871,7 +1127,7 @@ mod tests {
         let writer: Box<dyn std::io::Write + Send> = Box::new(DummyWriter {
             data: written.clone(),
         });
-        let writer_mutex = Mutex::new(writer);
+        let writer_mutex = Mutex::new(Some(writer));
 
         let attached = AtomicBool::new(false);
         let mut carry: Vec<u8> = Vec::new();
