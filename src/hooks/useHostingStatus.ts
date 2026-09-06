@@ -23,6 +23,7 @@ import { usePolling } from './usePolling';
 import { getHostingStatus, deriveSectionState, isActive, shouldPoll } from '../lib/hosting';
 import type { HostingStatus, SectionState } from '../lib/hosting';
 import { logger } from '../lib/logger';
+import { asCommandError, formatCommandError } from '../lib/errors';
 
 /** While something is moving. */
 const ACTIVE_INTERVAL_MS = 4000;
@@ -71,6 +72,22 @@ export function useHostingStatus({ projectPath, open, pushedAt }: Options): Resu
   const [entry, setEntry] = useState<{ path: string; status: HostingStatus } | null>(null);
   const status = entry?.path === projectPath ? entry.status : null;
 
+  /**
+   * Why the command rejected, when it has never succeeded for this project.
+   *
+   * `get_hosting_status` does not only fail transiently: it rejects outright
+   * for a folder that isn't a git repo, a repo with no commits yet, and a
+   * detached HEAD — all of which a user reaches normally, the last one by
+   * restoring a snapshot. Without this the status stayed `null`, the reducer
+   * kept answering `checking`, and the row showed a spinner forever, retrying
+   * a call that was never going to succeed.
+   *
+   * Stored with its project for the same reason the status is: one project's
+   * failure must not caption another's row.
+   */
+  const [failure, setFailure] = useState<{ path: string; message: string } | null>(null);
+  const error = failure?.path === projectPath ? failure.message : undefined;
+
   const windowActive = useWindowActive();
   const mounted = useRef(true);
 
@@ -82,7 +99,17 @@ export function useHostingStatus({ projectPath, open, pushedAt }: Options): Resu
   }, []);
 
   const fetchOnce = useCallback(async () => {
-    const next = await getHostingStatus(projectPath);
+    let next: HostingStatus;
+    try {
+      next = await getHostingStatus(projectPath);
+    } catch (err) {
+      // Recorded before rethrowing, so the poller still backs off (a rejection
+      // can be transient) while the row stops claiming to be loading.
+      if (mounted.current) {
+        setFailure({ path: projectPath, message: formatCommandError(asCommandError(err)) });
+      }
+      throw err;
+    }
 
     // Defensive: a malformed or absent payload must back the poller off, not
     // throw a TypeError out of a render-adjacent callback. The command always
@@ -94,6 +121,7 @@ export function useHostingStatus({ projectPath, open, pushedAt }: Options): Resu
 
     if (!mounted.current) return next;
     setEntry({ path: projectPath, status: next });
+    setFailure(null);
 
     // A transport failure is reported inside the payload rather than thrown,
     // so re-throw it here to engage the poller's backoff instead of retrying
@@ -111,6 +139,7 @@ export function useHostingStatus({ projectPath, open, pushedAt }: Options): Resu
   const state = deriveSectionState(status, {
     pushedAt,
     stalenessMs: SETTLED_INTERVAL_MS * 2,
+    error,
   });
 
   const enabled = open && windowActive && Boolean(projectPath) && shouldPoll(state.kind);

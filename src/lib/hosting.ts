@@ -251,7 +251,20 @@ export type SectionStateKind =
   | 'token_rejected'
   | 'no_link'
   | 'offline'
-  | 'rate_limited';
+  | 'rate_limited'
+  /**
+   * We could not even ask. `get_hosting_status` rejected, so there is no
+   * status to reduce and there never will be until something changes.
+   *
+   * This exists because `checking` had no exit for that case. `status` stayed
+   * `null`, the reducer kept answering `checking`, and the row sat on a
+   * pulsing spinner saying "Checking your host…" forever — on any project the
+   * command rejects for, which is every folder that isn't a git repo, every
+   * repo with no commits yet, and every detached HEAD (where a snapshot
+   * restore leaves you). A spinner is a promise that an answer is coming; that
+   * one was never going to arrive.
+   */
+  | 'unavailable';
 
 export interface SectionState {
   kind: SectionStateKind;
@@ -266,6 +279,8 @@ export interface SectionState {
   transportError?: string;
   retryAfterSecs?: number;
   tokenSource?: TokenSource;
+  /** Why we couldn't ask at all. Set only on `unavailable`. */
+  unavailableReason?: string;
   /**
    * The answer hasn't been rechecked recently.
    *
@@ -285,6 +300,13 @@ export interface DeriveContext {
   now?: number;
   /** How long an answer may sit before the UI admits it hasn't rechecked. */
   stalenessMs?: number;
+  /**
+   * The command's own message, when `get_hosting_status` rejected and we have
+   * never had an answer for this project. Already a humanised sentence — the
+   * failures that reach here are `Expected` errors ("This project has no
+   * commits yet."), so it is shown rather than translated.
+   */
+  error?: string;
 }
 
 function phaseToKind(phase: DeploymentPhase): SectionStateKind {
@@ -328,6 +350,16 @@ export function deriveSectionState(
   ctx: DeriveContext = {}
 ): SectionState {
   const now = ctx.now ?? Date.now();
+
+  // Before `checking`: a spinner is a promise that an answer is coming, and
+  // once the command has rejected with nothing cached, none is. `checking` is
+  // for a request in flight, not for one that already failed.
+  // Before `checking`: a spinner is a promise that an answer is coming, and
+  // once the command has rejected with nothing cached, none is. `checking` is
+  // for a request in flight, not for one that already failed.
+  if (!status && ctx.error) {
+    return { kind: 'unavailable', unavailableReason: ctx.error };
+  }
 
   if (!status) return { kind: 'checking' };
   if (status.providers.length === 0) return { kind: 'no_link' };

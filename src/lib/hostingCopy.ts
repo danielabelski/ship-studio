@@ -323,6 +323,20 @@ export function copyFor(
         action: 'Retry',
       };
 
+    case 'unavailable':
+      return {
+        // Not the commit subject: when this state is reached we never got a
+        // commit back either, so `titleFor` would be filling line 1 with
+        // "Your latest push" — a guess about the thing we just admitted we
+        // could not look up.
+        title: 'Deployment status unavailable',
+        status: "Couldn't look it up",
+        // The command's own sentence. These are `Expected` errors written for
+        // a person ("This project has no commits yet."), so the honest move is
+        // to repeat it rather than to summarise it into something vaguer.
+        hint: state.unavailableReason,
+      };
+
     case 'rate_limited':
       return {
         title,

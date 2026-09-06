@@ -100,6 +100,116 @@ describe('DeploymentsModal', () => {
     expect(screen.getByText('Deployments')).toBeInTheDocument();
   });
 
+  /** A linked Vercel project, with `deployments` as the returned list. */
+  function withDeployments(deployments: unknown[]) {
+    mockIPC((cmd) => {
+      if (cmd === 'get_hosting_status') {
+        return {
+          ...UNLINKED,
+          providers: [
+            {
+              link: { provider: 'vercel', project_id: 'prj_1', source: 'vercel_cli_file' },
+              auth: { kind: 'ok' },
+              fetched_at: Date.now(),
+              from_cache: false,
+            },
+          ],
+        };
+      }
+      if (cmd === 'list_recent_deployments') return deployments;
+      if (cmd === 'get_deployment_log') {
+        return { deployment_id: 'dpl_1', lines: [], truncated: false };
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+  }
+
+  /**
+   * `created_at` is `0` whenever the adapter could not read a timestamp —
+   * both Cloudflare and Netlify parse an ISO string with
+   * `iso_to_ms(...).unwrap_or(0)`. Handing that to `formatRelativeTime` turned
+   * "we don't know when" into a confident age measured from 1970.
+   */
+  it('says nothing about when a deployment ran rather than dating it to 1970', async () => {
+    withDeployments([
+      {
+        id: 'dpl_1',
+        status_label: 'Ready',
+        phase: { phase: 'ready' },
+        environment: 'production',
+        commit_sha: 'abc1234',
+        commit_message: 'Fix the nav',
+        urls: { aliases: [] },
+        created_at: 0,
+      },
+    ]);
+
+    renderModal();
+
+    await waitFor(() => {
+      expect(screen.getByText('Fix the nav')).toBeInTheDocument();
+    });
+
+    // ~20,000 days since the epoch. Any "N days ago" here is fabricated.
+    expect(document.body.textContent).not.toMatch(/\d{4,} days ago/);
+    expect(document.body.textContent).not.toMatch(/yesterday/i);
+  });
+
+  /**
+   * `list_recent` never fetches the project's domain for any provider, so
+   * `urls.primary` in this panel is always the per-build permalink. The button
+   * called it "Open site" regardless — including on a failed build, which
+   * serves no site at all.
+   */
+  it('does not call a build permalink the site', async () => {
+    withDeployments([
+      {
+        id: 'dpl_1',
+        status_label: 'Error',
+        phase: { phase: 'failed' },
+        environment: 'production',
+        commit_sha: 'abc1234',
+        commit_message: 'Fix the nav',
+        urls: { aliases: [], deployment: 'https://acme-9f3c1ab.vercel.app', primary: null },
+        created_at: Date.now() - 60_000,
+      },
+    ]);
+
+    renderModal();
+
+    await waitFor(() => {
+      expect(screen.getByText('Fix the nav')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: 'Open site' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open deployment' })).toBeInTheDocument();
+  });
+
+  it('calls the domain the site only when this deployment is the one serving it', async () => {
+    withDeployments([
+      {
+        id: 'dpl_1',
+        status_label: 'Ready',
+        phase: { phase: 'ready' },
+        environment: 'production',
+        commit_sha: 'abc1234',
+        commit_message: 'Fix the nav',
+        urls: {
+          aliases: [],
+          site: 'https://acme.com',
+          deployment: 'https://acme-9f3c1ab.vercel.app',
+        },
+        created_at: Date.now() - 60_000,
+      },
+    ]);
+
+    renderModal();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Open site' })).toBeInTheDocument();
+    });
+  });
+
   it('lists what the provider returned once there is a provider', async () => {
     mockIPC((cmd) => {
       if (cmd === 'get_hosting_status') {
