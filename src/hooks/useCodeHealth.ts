@@ -18,7 +18,7 @@ import {
   getFixPrompt,
 } from '../lib/health';
 import { logger } from '../lib/logger';
-import { asCommandError, formatCommandError } from '../lib/errors';
+import { asCommandError, formatCommandError, isExpectedCommandError } from '../lib/errors';
 
 export type CheckStatus = 'idle' | 'running' | 'pass' | 'fail' | 'missing';
 
@@ -223,7 +223,17 @@ export function useCodeHealth({
             },
           },
         }));
-        onToast?.(`${CATEGORY_LABELS[category]} failed: ${message}`, 'error');
+        // The backend can reject the run itself before the script gets a
+        // chance to pass or fail — e.g. the project's package manager isn't
+        // installed (issue #488). That's an environment gap, not something
+        // gone wrong in Ship Studio, and comes back as a typed Expected
+        // CommandError; an 'error' toast re-reports it to telemetry the same
+        // way #761 fixed for the "script ran, found violations" branch above
+        // (issue #786).
+        onToast?.(
+          `${CATEGORY_LABELS[category]} failed: ${message}`,
+          isExpectedCommandError(e) ? 'info' : 'error'
+        );
         return 'fail';
       }
     },

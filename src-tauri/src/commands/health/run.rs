@@ -49,7 +49,7 @@ pub async fn run_health_script(
     // (issue #488, same class as the git fix in #296/#297).
     let Some(resolved_pm) = crate::utils::find_executable(pm_cmd) else {
         return Err(crate::errors::CommandError::expected(format!(
-            "This project uses {pm_cmd}, but it isn't installed or not on PATH, so health              checks can't run. Install {pm_cmd}, then try again."
+            "This project uses {pm_cmd}, but it isn't installed or not on PATH, so health checks can't run. Install {pm_cmd}, then try again."
         )));
     };
 
