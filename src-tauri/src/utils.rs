@@ -632,14 +632,19 @@ pub fn git_environment_gap(stderr: &str) -> Option<crate::errors::CommandError> 
 
 /// Classify a git process that died with an empty stderr from its exit code
 /// alone. On Windows, a process that fails to start or crashes exits with an
-/// NTSTATUS code and prints nothing; the two seen in the wild are a Git
-/// component failing to load (`STATUS_DLL_INIT_FAILED`, issue #850) and git
-/// segfaulting (`STATUS_ACCESS_VIOLATION`, issue #853). Both are the Git
-/// installation or something interfering with it (antivirus, a broken
-/// update), not an app malfunction. Returns `None` for any other code.
+/// NTSTATUS code and prints nothing; the ones seen in the wild are a Git
+/// component failing to load (`STATUS_DLL_INIT_FAILED`, issue #850), git
+/// segfaulting (`STATUS_ACCESS_VIOLATION`, issue #853), and git being denied
+/// a memory commit (`STATUS_COMMITMENT_LIMIT`, issue #888) — the same
+/// pagefile-exhaustion condition `git_environment_gap`'s "paging file is too
+/// small" branch handles, just arriving here because this occurrence had no
+/// stderr at all. All three are the Git installation, something interfering
+/// with it (antivirus, a broken update), or a Windows-level resource limit —
+/// not an app malfunction. Returns `None` for any other code.
 pub fn git_exit_code_gap(exit_code: Option<i32>) -> Option<crate::errors::CommandError> {
     const STATUS_DLL_INIT_FAILED: i32 = 0xC0000142_u32 as i32; // -1073741502
     const STATUS_ACCESS_VIOLATION: i32 = 0xC0000005_u32 as i32; // -1073741819
+    const STATUS_COMMITMENT_LIMIT: i32 = 0xC000012D_u32 as i32; // -1073741523
     match exit_code {
         Some(STATUS_DLL_INIT_FAILED) => Some(crate::errors::CommandError::expected(
             "Git failed to start correctly on Windows — a component of the Git installation \
@@ -650,6 +655,11 @@ pub fn git_exit_code_gap(exit_code: Option<i32>) -> Option<crate::errors::Comman
             "Git crashed on Windows (an access violation). This is usually antivirus \
              interference or a corrupted Git install: add Git to your antivirus exclusions or \
              reinstall Git for Windows, then try again.",
+        )),
+        Some(STATUS_COMMITMENT_LIMIT) => Some(crate::errors::CommandError::expected(
+            "Windows ran out of virtual memory while git was working (the paging file is too \
+             small). Close some other apps or increase the paging file size (Settings → System → \
+             About → Advanced system settings → Performance → Virtual memory), then try again.",
         )),
         _ => None,
     }
@@ -1720,6 +1730,18 @@ mod tests {
             assert!(git_exit_code_gap(Some(128)).is_none());
             assert!(git_exit_code_gap(Some(1)).is_none());
             assert!(git_exit_code_gap(None).is_none());
+        }
+
+        #[test]
+        fn windows_commitment_limit_exit_code_is_an_environment_gap() {
+            // STATUS_COMMITMENT_LIMIT (issue #888): git.exe denied a memory
+            // commit by Windows, dies with empty stderr and this NTSTATUS
+            // exit code. Must get the same pagefile wording as
+            // `git_environment_gap`'s stderr-text branch (issue #835), since
+            // this is the same OS condition arriving with no stderr at all.
+            let err = git_exit_code_gap(Some(-1073741523)).expect("classified");
+            assert!(matches!(err, CommandError::Expected { .. }));
+            assert!(err.to_string().contains("paging file"), "got: {err}");
         }
     }
 
