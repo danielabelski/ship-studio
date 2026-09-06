@@ -2804,6 +2804,33 @@
       "consumerCount": 1
     },
     {
+      "name": "--canvas-label-font-size",
+      "definitionFile": "src/styles/global/tokens-components.css",
+      "layer": "components",
+      "owner": "global/component",
+      "status": "canonical",
+      "pluginStable": false,
+      "consumerCount": 1
+    },
+    {
+      "name": "--canvas-label-dim-font-size",
+      "definitionFile": "src/styles/global/tokens-components.css",
+      "layer": "components",
+      "owner": "global/component",
+      "status": "canonical",
+      "pluginStable": false,
+      "consumerCount": 1
+    },
+    {
+      "name": "--canvas-label-tracking",
+      "definitionFile": "src/styles/global/tokens-components.css",
+      "layer": "components",
+      "owner": "global/component",
+      "status": "canonical",
+      "pluginStable": false,
+      "consumerCount": 1
+    },
+    {
       "name": "--color-white",
       "definitionFile": "src/styles/global/tokens-core.css",
       "layer": "core",
@@ -3809,7 +3836,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 2
+      "consumerCount": 1
     },
     {
       "name": "--tracking-micro",
@@ -3818,7 +3845,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 4
+      "consumerCount": 3
     },
     {
       "name": "--surface-app",
