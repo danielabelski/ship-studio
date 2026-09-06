@@ -10,7 +10,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { asCommandError, formatCommandError } from './errors';
+import { asCommandError, formatCommandError, isExpectedCommandError } from './errors';
 
 /** Represents an MCP server configured for an agent. */
 export interface McpServer {
@@ -107,16 +107,28 @@ const MCP_EXPECTED_FAILURE_PHRASES = [
 
 /**
  * True when an `mcp add/remove/list` failure is one the backend already
- * classified `Expected` with its own guidance (see
- * {@link MCP_EXPECTED_FAILURE_PHRASES}). These are the user's environment,
- * organization, or agent CLI — routing them to `logger.error` auto-files a bug
- * report for something Ship Studio can't fix (issues #755, #763, #799, #800),
- * so callers log them at warn level and surface them as information, following
- * the #655 precedent above.
+ * classified `Expected`. Most branches of `classify_mcp_failure`
+ * (src-tauri/src/commands/mcp.rs) append one of the guidance phrases in
+ * {@link MCP_EXPECTED_FAILURE_PHRASES}, so those are matched first — but the
+ * "already exists" branch (a benign race with a concurrent registration,
+ * issue #292) returns the bare message with no such phrase, so it fell
+ * through to `logger.error` and got auto-filed as a bug (issue #884).
+ * Falling back to the generic {@link isExpectedCommandError} flag (which
+ * reads the `expected: true` tag directly instead of re-matching wording)
+ * catches that case and any future `Expected` branch that doesn't append a
+ * unique phrase either.
+ *
+ * These are the user's environment, organization, or agent CLI — routing
+ * them to `logger.error` auto-files a bug report for something Ship Studio
+ * can't fix (issues #755, #763, #799, #800), so callers log them at warn
+ * level and surface them as information, following the #655 precedent above.
  */
 export function isMcpExpectedFailure(value: unknown): boolean {
   const message = formatCommandError(asCommandError(value)).toLowerCase();
-  return MCP_EXPECTED_FAILURE_PHRASES.some((phrase) => message.includes(phrase));
+  return (
+    MCP_EXPECTED_FAILURE_PHRASES.some((phrase) => message.includes(phrase)) ||
+    isExpectedCommandError(value)
+  );
 }
 
 /**
