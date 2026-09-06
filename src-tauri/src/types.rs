@@ -96,9 +96,19 @@ pub struct PageInfo {
 // read it, and its shape could not answer the question the hosting UI actually
 // asks — it carried no commit SHA, no provider, and no deployment id, so it
 // could not tell you whether *your* push went live. It was removed in schema
-// v4 in favour of `hosting` (see `commands::hosting::model`). Old files keep
-// the stale key on disk until their next write, which is harmless: unknown
-// fields are ignored on read.
+// v4 in favour of `hosting` (see `commands::hosting::model`).
+//
+// What happens to an existing v3 file, verified end to end by
+// `migrating_a_real_v3_file_keeps_everything_and_invents_nothing` in
+// `commands::projects::metadata`: it parses, `migrate()` stamps it v4, and
+// every other field survives. The `publish` key is **not** dropped — it is
+// caught by the `extra` catch-all below and written back verbatim, so it stays
+// on disk indefinitely rather than "until the next write". That is inert
+// today, because nothing in Rust or TypeScript reads it, but it is the reason
+// `publish` must never be reintroduced as a field name: a future struct member
+// with that name would silently inherit a dead deployment URL and state from
+// before the upgrade, which is exactly the "never assume data" failure v4 was
+// meant to end.
 
 /// Information about stashed changes from a branch switch
 #[derive(Serialize, Deserialize, Clone, Default)]
