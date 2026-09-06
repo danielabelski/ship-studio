@@ -96,6 +96,11 @@ export const featureScenarios: Scenario[] = [
   },
   {
     id: 'branches-many',
+    // Nothing opened the branches menu, so this photographed the workspace —
+    // no branch list, no ahead/behind counts, none of what the caption checks.
+    // `prs-open` beside it already did this correctly; this one did not.
+    command: 'branch.switch',
+    requires: '.branches-menu-branch-row',
     title: 'Branches — a busy repo',
     looksRightWhen:
       'Long branch names truncate rather than overflow; ahead/behind counts read clearly; the current branch is unmistakable.',
