@@ -6,6 +6,20 @@ The latest entry is rendered inside the in-app update dialog, so write user-
 facing language — what changed, in plain English — not commit subjects.
 -->
 
+## What's New in v1.2.0
+
+- **Breakpoint canvas** - See every breakpoint at once, side by side, each showing the whole page at its own device width and an honest viewport height. Pan and zoom it like a design canvas; click a frame's label to drop into that size and work there. Editing, inspection and screenshots follow whichever frame is active
+- **Comments on the preview** - Pin a note to the element it is about, collect a few, and hand them all to your agent in one go instead of describing them one at a time
+- **Hosting status, built into the app** - The Vercel plugin is replaced by a native hosting section that supports Vercel, Cloudflare Pages and Netlify. It answers one question honestly: did *the commit you just pushed* deploy? It shows the provider's own status word, the site's address, and when a build fails, the error line — so you don't have to open the dashboard to find out why
+- **The dashboard opens fast** - Scanning your projects no longer blocks on filesystem work or rewrites every project's `.gitignore` on each load. Measured 2.06s to 0.38s for three projects opening at once, and a scan that fails now says so with a retry instead of spinning forever
+- **Comments on a breakpoint canvas actually work** - An invisible layer was swallowing every click, so on the canvas you could never pick an element or write a note
+- **Dialogs open on the thing you came to type in**, not on the close button — pressing Enter at a field you thought was focused no longer dismisses the dialog
+- **A push error no longer prints your account id** into the Push popover
+- **The app explains a failed start** - If the bundle never runs, or it runs but its stylesheet doesn't load, you get a short message and where to find your logs, instead of a dark window with nothing in it
+- **Quieter, smaller logs** - Span-close noise is gone (it was 91% of the volume) and log retention is capped at 14 days
+- **Opt-in Spotify widget** in the sidebar and a new Experimental tab in Settings (macOS)
+- **~20 reported issues fixed** across git, GitHub, MCP, plugins, mobile, the terminal, and the visual editor — mostly routine environment states (permission prompts, vanished folders, network blips, index.lock contention) that used to file themselves as bugs and now explain themselves instead
+
 ## What's New in v1.1.0
 
 - **Workflows & Inbox** - Standing instructions your own agent runs in a project, on demand or on a schedule, with findings filed to a new Inbox. Start from templates (Security sweep, Secrets & env drift, PR review pass, Accessibility pass, Design-system drift) or just describe one to your agent. Read-only by default and enforced by the agent CLI; runs use your own subscription; nothing runs while Ship Studio is closed

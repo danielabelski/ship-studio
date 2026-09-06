@@ -26,6 +26,22 @@ interface ChangelogEntry {
 // Keep ~15 most recent versions for the sidebar
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.2.0', // v1.2.0
+    items: [
+      "New: the breakpoint canvas — see every breakpoint at once, side by side, each showing the whole page at its own device width and an honest viewport height, instead of one size at a time. Pan and zoom it like a design canvas, and click a frame's label to drop into that size and work there; editing, inspection and screenshots follow whichever frame is active",
+      'New: comments on the preview — pin a note to the element it is about, collect a few, and hand them all to your agent at once instead of describing them one at a time',
+      "New: hosting status is built into the app and now covers Vercel, Cloudflare Pages and Netlify. It answers one question honestly — did the commit you just pushed deploy? — showing the provider's own status word, the site's address, and when a build fails, the error line, so you don't have to open the provider's dashboard to find out why. The Vercel plugin is superseded and says so",
+      "The dashboard opens fast: scanning your projects no longer blocks on filesystem work or rewrites every project's .gitignore on each load — measured 2.06s down to 0.38s for three projects opening at once — and a scan that fails now says so with a retry instead of spinning forever",
+      'Comments on a breakpoint canvas work at all: an invisible layer was swallowing every click, so on the canvas you could never pick an element or write a note',
+      'Dialogs open on the thing you came to type in rather than the close button, so pressing Enter at a field you thought was focused no longer dismisses the dialog',
+      'A push error no longer prints your account id into the Push popover',
+      "The app explains a failed start: if it never runs, or runs but its styles don't load, you get a short message and where to find your logs instead of a dark window with nothing in it",
+      'Quieter, smaller logs — span-close noise (91% of the volume) is gone and log retention is capped at 14 days',
+      'Opt-in Spotify now-playing widget in the sidebar, and a new Experimental tab in Settings (macOS)',
+      '~20 reported issues fixed across git, GitHub, MCP, plugins, mobile, the terminal and the visual editor — mostly routine environment states (permission prompts, vanished folders, network blips, index.lock contention) that used to file themselves as bug reports and now explain themselves instead',
+    ],
+  },
+  {
     version: '1.1.0', // v1.1.0
     items: [
       'New: Workflows — standing instructions your own agent runs in a project, on demand or on a schedule, with what it finds filed to a new Inbox on the dashboard. Start from templates like Security sweep, Secrets & env drift, PR review pass, Accessibility pass, and Design-system drift, or describe one to your agent in the terminal and it writes the workflow for you',
