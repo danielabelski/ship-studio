@@ -635,6 +635,8 @@ pub fn run() {
             commands::plugins::read_plugin_manifest,
             commands::plugins::toggle_plugin,
             commands::plugins::exec_plugin_shell,
+            commands::plugins::plugin_fs_exists,
+            commands::plugins::plugin_fs_read_text,
             commands::plugins::read_plugin_storage,
             commands::plugins::write_plugin_storage,
             commands::plugins::link_dev_plugin,

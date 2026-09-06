@@ -109,7 +109,7 @@ hooks and ships themed UI components so plugins match the app without any CSS.
 
 ```tsx
 import {
-  useProject, useShell, useToast, usePluginStorage,
+  useProject, useShell, useFs, useToast, usePluginStorage,
   useAppActions, useTheme, useInvoke,
   Button, Input, Select, Modal, Spinner, Badge, Stack, Text,
 } from '@shipstudio/plugin-sdk';
@@ -118,6 +118,7 @@ function MyToolbarButton() {
   const project = useProject();       // { name, path, currentBranch, hasUncommittedChanges, devServerUrl? } | null
   const toast = useToast();           // (message, type?: 'success' | 'error') => void
   const shell = useShell();           // { exec(command, args, { timeout? }) }
+  const fs = useFs();                 // { exists(path), readText(path) } — cross-platform, no shelling out
   const storage = usePluginStorage(); // { read(), write(data) }
   const actions = useAppActions();    // showToast, refreshGitStatus, refreshBranches, focusTerminal, openUrl
   const invoke = useInvoke();         // { call(command, args?) } — gated by required_commands
@@ -148,6 +149,16 @@ export const slots = { toolbar: MyToolbarButton };
   directory with the app's extended PATH. Default timeout 120s. Returns
   `{ stdout, stderr, exit_code }`. A missing binary fails with a clear error
   naming your plugin and the command.
+- **`fs.exists(path)` / `fs.readText(path)`** — cross-platform file
+  existence/read, scoped to the project directory. `path` is relative to the
+  project root, exactly like `shell.exec`'s working directory. `readText`
+  resolves to `null` (not a rejection) when the file doesn't exist.
+  **Use these instead of `shell.exec('test', ['-f', path])` or
+  `shell.exec('cat', [path])`** — `test` and `cat` aren't on PATH by default
+  on Windows, so any plugin shelling out to them for a file check fails
+  outright there, and no amount of `try`/`catch` fixes that (only using a
+  primitive that doesn't depend on a POSIX shell does). This was a recurring
+  bug class across several bundled plugins before `fs.*` existed.
 - **`actions`** — `showToast(msg, type?)`, `refreshGitStatus()`,
   `refreshBranches()`, `focusTerminal()`, `openUrl(url)`.
 - **`theme`** — 14 color values as `var(--…)` strings (`bgPrimary`,

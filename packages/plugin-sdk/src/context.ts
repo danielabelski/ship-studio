@@ -38,6 +38,19 @@ export interface PluginContextValue {
     read: () => Promise<Record<string, unknown>>;
     write: (data: Record<string, unknown>) => Promise<void>;
   };
+  /**
+   * Cross-platform filesystem access scoped to the project directory. Use
+   * this instead of `shell.exec('test', ['-f', path])` or
+   * `shell.exec('cat', [path])` — those POSIX binaries aren't on PATH by
+   * default on Windows, so any plugin shelling out to them for a file check
+   * fails outright there.
+   */
+  fs: {
+    /** Whether `path` (relative to the project root) exists. */
+    exists: (path: string) => Promise<boolean>;
+    /** UTF-8 contents of `path` (relative to the project root), or `null` if it doesn't exist. */
+    readText: (path: string) => Promise<string | null>;
+  };
   invoke: {
     call: <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
   };
