@@ -334,6 +334,13 @@
   gap: 16px;
 }
 
+.project-list-load-error {
+  max-width: 480px;
+  margin: 0;
+  text-align: center;
+  color: var(--text-muted);
+}
+
 .project-list-cleanup-status {
   font-size: var(--font-size-body-md);
   color: var(--text-muted);

@@ -55,7 +55,7 @@ pub struct ProjectInfo {
 }
 
 /// Enhanced project info for dashboard display
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct DashboardProject {
     pub name: String,
     pub path: String,

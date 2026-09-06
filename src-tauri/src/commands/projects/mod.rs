@@ -52,6 +52,24 @@ const GIT_SCAN_TIMEOUT_SECS: u64 = 3;
 /// git processes at once.
 const GIT_SCAN_CONCURRENCY: usize = 16;
 
+/// Ceiling for the *whole* git pass, across every project. Without it the
+/// worst case is `projects / GIT_SCAN_CONCURRENCY * GIT_SCAN_TIMEOUT_SECS` —
+/// half a minute for a few hundred repos — because each project only bounds
+/// itself. Projects not reached before the deadline degrade to "no git info",
+/// exactly like a project that timed out on its own.
+const GIT_SCAN_TOTAL_BUDGET_SECS: u64 = 6;
+
+/// [`GIT_SCAN_TOTAL_BUDGET_SECS`] as a `Duration`.
+fn git_scan_budget() -> std::time::Duration {
+    std::time::Duration::from_secs(GIT_SCAN_TOTAL_BUDGET_SECS)
+}
+
+/// Ceiling for one whole `get_dashboard_projects` call. The filesystem pass
+/// runs on the blocking pool, where a wedged network mount can hang a thread
+/// indefinitely; this is what turns that into an error the dashboard can show
+/// instead of a spinner that never stops.
+const DASHBOARD_SCAN_BUDGET_SECS: u64 = 25;
+
 /// Run a short, time-bounded scan command and return its output, degrading to
 /// `None` on spawn failure or timeout. The child is killed on timeout so a
 /// hung git process is never left orphaned.
@@ -79,34 +97,53 @@ async fn run_scan_command(
     .ok()
 }
 
-/// Helper to get git branch for a project (time-bounded; `None` on timeout).
-async fn get_git_branch(project_path: &Path) -> Option<String> {
-    let output = run_scan_command(
-        "git",
-        &["rev-parse", "--abbrev-ref", "HEAD"],
-        project_path,
-        GIT_SCAN_TIMEOUT_SECS,
-    )
-    .await?;
-
-    if !output.status.success() {
+/// Resolve the checked-out branch by reading `.git/HEAD` directly — one small
+/// file read instead of a `git rev-parse` fork per project per dashboard load.
+/// Those forks are the ones that logged 733 three-second timeouts in a day.
+///
+/// Handles worktree and submodule `.git` *files* (`gitdir: <path>`). Returns
+/// `None` for a detached HEAD and for a directory with no `.git` of its own,
+/// which is also what `get_uncommitted_count` has always required — so the two
+/// halves of a row's git info now agree about what counts as a repo.
+fn branch_from_head_file(project_path: &Path) -> Option<String> {
+    let dot_git = project_path.join(".git");
+    let git_dir = if dot_git.is_file() {
+        let contents = std::fs::read_to_string(&dot_git).ok()?;
+        let target = Path::new(contents.strip_prefix("gitdir:")?.trim());
+        if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            project_path.join(target)
+        }
+    } else if dot_git.is_dir() {
+        dot_git
+    } else {
         return None;
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let name = head.trim().strip_prefix("ref: refs/heads/")?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
     }
-
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if branch == "HEAD" || branch.is_empty() {
-        return None;
-    }
-
-    Some(branch)
 }
 
 /// Helper to count uncommitted changes (tracked files only; time-bounded,
-/// `None` on timeout).
+/// `None` on timeout). Results — failures included — are cached in `GIT_CACHE`
+/// for 30s, so the repeat dashboard loads that used to re-fork `git status`
+/// for every project hit the cache instead. Git write operations invalidate
+/// the entry through the existing `invalidate`/`invalidate_status` paths, so a
+/// commit or a branch switch is reflected immediately.
 async fn get_uncommitted_count(project_path: &Path) -> Option<u32> {
     let git_dir = project_path.join(".git");
     if !git_dir.exists() {
         return None;
+    }
+
+    let cache_key = project_path.to_string_lossy().to_string();
+    if let Some(cached) = crate::cache::GIT_CACHE.get_scan_status(&cache_key) {
+        return cached;
     }
 
     // Use -uno to ignore untracked files like .DS_Store
@@ -116,26 +153,39 @@ async fn get_uncommitted_count(project_path: &Path) -> Option<u32> {
         project_path,
         GIT_SCAN_TIMEOUT_SECS,
     )
-    .await?;
+    .await;
 
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let count = stdout.lines().filter(|l| !l.trim().is_empty()).count() as u32;
-        return Some(count);
-    }
-    None
+    let count = output.filter(|o| o.status.success()).map(|o| {
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        stdout.lines().filter(|l| !l.trim().is_empty()).count() as u32
+    });
+    crate::cache::GIT_CACHE.set_scan_status(&cache_key, count);
+    count
 }
 
-/// Collects git metadata (current branch + uncommitted count) for many
-/// projects concurrently. Each git call is bounded by
-/// [`GIT_SCAN_TIMEOUT_SECS`]; a slow or hung repo degrades to `(None, None)`
-/// instead of blocking the whole dashboard. Results are returned in input
-/// order.
-async fn scan_git_info(paths: Vec<PathBuf>) -> Vec<(Option<String>, Option<u32>)> {
+/// Counts uncommitted changes for many projects concurrently. Each git call
+/// is bounded by [`GIT_SCAN_TIMEOUT_SECS`] and the pass as a whole by
+/// [`GIT_SCAN_TOTAL_BUDGET_SECS`], so neither one slow repo nor several
+/// hundred of them can hold the dashboard. Results are returned in input
+/// order, `None` where the count could not be had.
+async fn scan_uncommitted_counts(
+    paths: Vec<PathBuf>,
+    budget: std::time::Duration,
+) -> Vec<Option<u32>> {
+    let deadline = tokio::time::Instant::now() + budget;
     stream::iter(paths)
-        .map(
-            |path| async move { tokio::join!(get_git_branch(&path), get_uncommitted_count(&path)) },
-        )
+        .map(|path| async move {
+            match tokio::time::timeout_at(deadline, get_uncommitted_count(&path)).await {
+                Ok(count) => count,
+                Err(_) => {
+                    tracing::debug!(
+                        project = %path.display(),
+                        "dashboard git scan budget exhausted; reporting no git status"
+                    );
+                    None
+                }
+            }
+        })
         .buffered(GIT_SCAN_CONCURRENCY)
         .collect()
         .await
@@ -151,41 +201,6 @@ fn warn_project_excluded(path: &Path, reason: &str) {
         reason,
         "project directory excluded from dashboard list"
     );
-}
-
-/// Sync helper for ensuring .shipstudio/ is in gitignore
-fn ensure_gitignore_has_shipstudio_sync(project: &std::path::Path) -> Result<(), String> {
-    let gitignore_path = project.join(".gitignore");
-    let entry = ".shipstudio/";
-
-    let content = if gitignore_path.exists() {
-        std::fs::read_to_string(&gitignore_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    let already_ignored = content.lines().any(|line| {
-        let trimmed = line.trim();
-        trimmed == entry
-            || trimmed == ".shipstudio"
-            || trimmed == "/.shipstudio/"
-            || trimmed == "/.shipstudio"
-    });
-
-    if already_ignored {
-        return Ok(());
-    }
-
-    let new_content = if content.is_empty() {
-        format!("# ShipStudio metadata\n{entry}\n")
-    } else if content.ends_with('\n') {
-        format!("{content}\n# ShipStudio metadata\n{entry}\n")
-    } else {
-        format!("{content}\n\n# ShipStudio metadata\n{entry}\n")
-    };
-
-    std::fs::write(&gitignore_path, new_content).ok();
-    Ok(())
 }
 
 /// Check if a directory is a valid project.
@@ -573,91 +588,81 @@ pub async fn list_projects() -> Result<Vec<ProjectInfo>, CommandError> {
     Ok(projects)
 }
 
-/// Returns enhanced project list for dashboard with git info
-#[tauri::command]
-#[tracing::instrument]
-pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandError> {
-    let shipstudio_dir = crate::utils::projects_root()?;
-    // Account resolution must never break the dashboard: degrade to "no active
-    // account" (everything visible) on failure rather than erroring the whole list.
-    let active_account_id = crate::commands::accounts::get_active_account_id().unwrap_or_default();
-    // Live workspace list, read once so the visibility check stays IO-free per project.
-    let accounts = crate::commands::setup::read_app_state().accounts;
-    let removed_projects = load_removed_projects_config()?;
+/// Everything the dashboard scan reads *once* rather than per project:
+/// workspace visibility inputs, the removed-project registry and the external
+/// project registry. Split out so the per-project loop stays IO-free apart
+/// from the project directory itself, and so tests can drive the scan with
+/// deterministic inputs instead of the machine's real app state.
+struct DashboardScanInputs {
+    active_account_id: String,
+    accounts: Vec<crate::types::Account>,
+    removed_projects: RemovedProjectsConfig,
+    /// Registered external project directories, in registry order.
+    external_paths: Vec<PathBuf>,
+}
 
-    if !shipstudio_dir.exists() {
-        return Ok(Vec::new());
+impl DashboardScanInputs {
+    /// Read the real app-level inputs. Blocking filesystem work — call from a
+    /// blocking context, never on a tokio worker thread.
+    fn read() -> Result<Self, CommandError> {
+        Ok(Self {
+            // Account resolution must never break the dashboard: degrade to "no active
+            // account" (everything visible) on failure rather than erroring the whole list.
+            active_account_id: crate::commands::accounts::get_active_account_id()
+                .unwrap_or_default(),
+            accounts: crate::commands::setup::read_app_state().accounts,
+            removed_projects: load_removed_projects_config()?,
+            external_paths: crate::commands::external_projects::load_config()
+                .map(|c| c.projects.iter().map(|p| PathBuf::from(&p.path)).collect())
+                .unwrap_or_default(),
+        })
     }
+}
 
-    // First pass: cheap filesystem-only collection. Git metadata is filled in
-    // afterwards, concurrently and time-bounded, so one slow/hung repo can't
-    // stall the whole dashboard (issue #168).
+/// First pass of the dashboard scan: filesystem-only collection of every
+/// visible project under `root` plus the registered external projects.
+///
+/// Entirely synchronous — every `std::fs` call in the dashboard scan lives
+/// here, so the caller can run the whole pass inside a single
+/// `spawn_blocking` instead of scattering blocking opens across tokio worker
+/// threads. Returns the projects in display order (locals in directory order,
+/// then externals) alongside the matching per-project paths the git pass
+/// needs, in the same order.
+fn collect_dashboard_projects(
+    root: &Path,
+    inputs: &DashboardScanInputs,
+) -> Result<(Vec<DashboardProject>, Vec<PathBuf>), CommandError> {
     let mut projects = Vec::new();
     let mut scan_paths: Vec<PathBuf> = Vec::new();
-    let entries = read_projects_dir(&shipstudio_dir)?;
 
-    for entry in entries {
+    if !root.exists() {
+        return Ok((projects, scan_paths));
+    }
+
+    for entry in read_projects_dir(root)? {
         let entry = entry.map_err(|e| {
             format!(
                 "Failed to read an entry in projects folder {}: {e}",
-                shipstudio_dir.display()
+                root.display()
             )
         })?;
         let path = entry.path();
         if is_valid_project(&path) {
             let canonical = canonical_or_original(&path);
-            if removed_projects.contains_path(&canonical) {
+            if inputs.removed_projects.contains_path(&canonical) {
                 warn_project_excluded(&path, "listed in removed-projects.json registry");
                 continue;
             }
 
-            let thumbnail_path = path.join(".shipstudio").join("thumbnail.png");
-            let thumbnail = if thumbnail_path.exists() {
-                Some(thumbnail_path.to_string_lossy().to_string())
-            } else {
-                None
-            };
-
-            let metadata_path = path.join(".shipstudio").join("project.json");
-            let metadata = if metadata_path.exists() {
-                std::fs::read_to_string(&metadata_path)
-                    .ok()
-                    .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
-            } else {
-                None
-            };
-
-            if !project_visible_for_account(metadata.as_ref(), &active_account_id, &accounts) {
-                warn_project_excluded(
-                    &path,
-                    "belongs to a different workspace (account visibility filter)",
-                );
+            let Some(project) = build_dashboard_project(
+                &path,
+                entry.file_name().to_string_lossy().to_string(),
+                false,
+                inputs,
+            ) else {
                 continue;
-            }
-
-            let last_opened = metadata.as_ref().and_then(|m| m.last_opened);
-            let auto_accept_mode = metadata.as_ref().and_then(|m| m.auto_accept_mode);
-            let hide_main_branch_warning =
-                metadata.as_ref().and_then(|m| m.hide_main_branch_warning);
-            let workspace_subpath = metadata.as_ref().and_then(|m| m.workspace_subpath.clone());
-
-            // Ensure .shipstudio/ is gitignored
-            let _ = ensure_gitignore_has_shipstudio_sync(&path);
-
-            projects.push(DashboardProject {
-                name: entry.file_name().to_string_lossy().to_string(),
-                path: path.to_string_lossy().to_string(),
-                thumbnail,
-                last_opened,
-                // Filled in by the concurrent git scan below.
-                git_branch: None,
-                uncommitted_count: None,
-                auto_accept_mode,
-                hide_main_branch_warning,
-                is_external: false,
-                workspace_subpath,
-                worktree_count: count_managed_worktrees(&path),
-            });
+            };
+            projects.push(project);
             scan_paths.push(path);
         } else if path.is_dir() && !entry.file_name().to_string_lossy().starts_with('.') {
             warn_project_excluded(&path, "not recognized as a project (no project markers)");
@@ -665,91 +670,212 @@ pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandEr
     }
 
     // Append external projects
-    if let Ok(ext_config) = crate::commands::external_projects::load_config() {
-        for ext in &ext_config.projects {
-            let path = std::path::PathBuf::from(&ext.path);
-            if path.exists() && is_valid_project(&path) {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "external".to_string());
-
-                let thumbnail_path = path.join(".shipstudio").join("thumbnail.png");
-                let thumbnail = if thumbnail_path.exists() {
-                    Some(thumbnail_path.to_string_lossy().to_string())
-                } else {
-                    None
-                };
-
-                let metadata_path = path.join(".shipstudio").join("project.json");
-                let metadata = if metadata_path.exists() {
-                    std::fs::read_to_string(&metadata_path)
-                        .ok()
-                        .and_then(|contents| {
-                            serde_json::from_str::<ProjectMetadata>(&contents).ok()
-                        })
-                } else {
-                    None
-                };
-
-                if !project_visible_for_account(metadata.as_ref(), &active_account_id, &accounts) {
-                    warn_project_excluded(
-                        &path,
-                        "external project belongs to a different workspace (account visibility filter)",
-                    );
-                    continue;
-                }
-
-                let last_opened = metadata.as_ref().and_then(|m| m.last_opened);
-                let auto_accept_mode = metadata.as_ref().and_then(|m| m.auto_accept_mode);
-                let hide_main_branch_warning =
-                    metadata.as_ref().and_then(|m| m.hide_main_branch_warning);
-                let workspace_subpath = metadata.as_ref().and_then(|m| m.workspace_subpath.clone());
-
-                // Ensure .shipstudio/ is gitignored
-                let _ = ensure_gitignore_has_shipstudio_sync(&path);
-
-                projects.push(DashboardProject {
-                    name,
-                    path: path.to_string_lossy().to_string(),
-                    thumbnail,
-                    last_opened,
-                    // Filled in by the concurrent git scan below.
-                    git_branch: None,
-                    uncommitted_count: None,
-                    auto_accept_mode,
-                    hide_main_branch_warning,
-                    is_external: true,
-                    workspace_subpath,
-                    worktree_count: count_managed_worktrees(&path),
-                });
-                scan_paths.push(path);
-            } else {
-                warn_project_excluded(
-                    &path,
-                    "registered external project is missing or not recognized as a project",
-                );
-            }
+    for path in &inputs.external_paths {
+        if path.exists() && is_valid_project(path) {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "external".to_string());
+            let Some(project) = build_dashboard_project(path, name, true, inputs) else {
+                continue;
+            };
+            projects.push(project);
+            scan_paths.push(path.clone());
+        } else {
+            warn_project_excluded(
+                path,
+                "registered external project is missing or not recognized as a project",
+            );
         }
     }
 
-    // Second pass: concurrent, time-bounded git scans (one entry per project,
-    // in the same order projects were pushed above). A repo that errors or
-    // times out simply keeps `git_branch: None` / `uncommitted_count: None`.
-    let git_info = scan_git_info(scan_paths).await;
-    for (project, (git_branch, uncommitted_count)) in projects.iter_mut().zip(git_info) {
-        project.git_branch = git_branch;
-        project.uncommitted_count = uncommitted_count;
+    Ok((projects, scan_paths))
+}
+
+/// Build one dashboard row from a project directory. `None` when the project
+/// belongs to a different workspace (the row is excluded and warned about).
+///
+/// Git metadata is left as `None` here and filled in by the git pass.
+fn build_dashboard_project(
+    path: &Path,
+    name: String,
+    is_external: bool,
+    inputs: &DashboardScanInputs,
+) -> Option<DashboardProject> {
+    let thumbnail_path = path.join(".shipstudio").join("thumbnail.png");
+    let thumbnail = if thumbnail_path.exists() {
+        Some(thumbnail_path.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    let metadata_path = path.join(".shipstudio").join("project.json");
+    let metadata = if metadata_path.exists() {
+        std::fs::read_to_string(&metadata_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
+    } else {
+        None
+    };
+
+    if !project_visible_for_account(
+        metadata.as_ref(),
+        &inputs.active_account_id,
+        &inputs.accounts,
+    ) {
+        warn_project_excluded(
+            path,
+            if is_external {
+                "external project belongs to a different workspace (account visibility filter)"
+            } else {
+                "belongs to a different workspace (account visibility filter)"
+            },
+        );
+        return None;
     }
 
+    // Deliberately NOT ensuring `.shipstudio/` is gitignored here. Listing the
+    // dashboard used to read — and sometimes write — a `.gitignore` in every
+    // one of the user's repositories on every render. Rendering a list must not
+    // mutate the things it lists. The write already happens where it belongs:
+    // at project creation (`useProjectCreation`) and on every project open
+    // (`useProjectLifecycle`), both through the `ensure_gitignore_has_shipstudio`
+    // command, which is where a project that predates the entry gets fixed.
+
+    Some(DashboardProject {
+        name,
+        path: path.to_string_lossy().to_string(),
+        thumbnail,
+        last_opened: metadata.as_ref().and_then(|m| m.last_opened),
+        // Read straight off `.git/HEAD` — no subprocess, so it belongs in this
+        // synchronous pass. Only the uncommitted count still needs git itself.
+        git_branch: branch_from_head_file(path),
+        uncommitted_count: None,
+        auto_accept_mode: metadata.as_ref().and_then(|m| m.auto_accept_mode),
+        hide_main_branch_warning: metadata.as_ref().and_then(|m| m.hide_main_branch_warning),
+        is_external,
+        workspace_subpath: metadata.as_ref().and_then(|m| m.workspace_subpath.clone()),
+        worktree_count: count_managed_worktrees(path),
+    })
+}
+
+/// Order the dashboard: most recently opened first, never-opened last by name.
+fn sort_dashboard_projects(projects: &mut [DashboardProject]) {
     projects.sort_by(|a, b| match (a.last_opened, b.last_opened) {
         (Some(a_time), Some(b_time)) => b_time.cmp(&a_time),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => a.name.cmp(&b.name),
     });
+}
 
+/// The whole dashboard scan for one projects root, with the app-level inputs
+/// supplied by the caller. Split from the command so tests and the timing
+/// harness drive exactly the code the command runs.
+///
+/// The filesystem pass runs on the blocking pool. It has to: it is on the
+/// order of a hundred `std::fs` calls per project, and running them on a tokio
+/// worker parks that worker for the whole scan. With three simultaneous
+/// dashboard calls that was three workers parked at once, and nothing left to
+/// run the rest of the app — which is exactly what a `sample` of the wedged
+/// process showed.
+async fn scan_dashboard_projects_in(
+    root: PathBuf,
+    inputs: DashboardScanInputs,
+) -> Result<Vec<DashboardProject>, CommandError> {
+    let (mut projects, scan_paths) =
+        tokio::task::spawn_blocking(move || collect_dashboard_projects(&root, &inputs))
+            .await
+            .map_err(|e| CommandError::from(format!("Dashboard scan panicked: {e}")))??;
+
+    // Second pass: concurrent, time-bounded `git status` (one entry per
+    // project, in the same order projects were pushed above). A repo that
+    // errors or times out simply keeps `uncommitted_count: None`.
+    let counts = scan_uncommitted_counts(scan_paths, git_scan_budget()).await;
+    for (project, uncommitted_count) in projects.iter_mut().zip(counts) {
+        project.uncommitted_count = uncommitted_count;
+    }
+
+    sort_dashboard_projects(&mut projects);
     Ok(projects)
+}
+
+/// The most recent run of a coalesced operation, with the instant that run
+/// *started*.
+struct Coalesced<T> {
+    started_at: std::time::Instant,
+    value: T,
+}
+
+/// Run `work`, unless an equivalent run that started after `arrived_at` has
+/// already produced an answer — in which case take that answer instead.
+///
+/// This is coalescing, not caching, and the distinction is the whole point: a
+/// caller is only ever handed a result from a run that began *after the caller
+/// asked*, so it can never see something staler than a scan of its own would
+/// have been. Three simultaneous dashboard loads therefore cost one scan, and
+/// a load issued a moment after a project was deleted still rescans.
+///
+/// The lock is held across the work, so callers queue rather than pile on.
+async fn coalesce<T, E, F, Fut>(
+    slot: &tokio::sync::Mutex<Option<Coalesced<T>>>,
+    arrived_at: std::time::Instant,
+    work: F,
+) -> Result<T, E>
+where
+    T: Clone,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+{
+    let mut guard = slot.lock().await;
+    if let Some(last) = guard.as_ref() {
+        if last.started_at >= arrived_at {
+            return Ok(last.value.clone());
+        }
+    }
+    let started_at = std::time::Instant::now();
+    let value = work().await?;
+    *guard = Some(Coalesced {
+        started_at,
+        value: value.clone(),
+    });
+    Ok(value)
+}
+
+/// Coalescing slot for [`get_dashboard_projects`]. Three concurrent identical
+/// calls used to run the same expensive scan three times over.
+static DASHBOARD_SCAN_GATE: tokio::sync::Mutex<Option<Coalesced<Vec<DashboardProject>>>> =
+    tokio::sync::Mutex::const_new(None);
+
+/// Returns enhanced project list for dashboard with git info
+#[tauri::command]
+#[tracing::instrument]
+pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandError> {
+    let arrived_at = std::time::Instant::now();
+    coalesce(&DASHBOARD_SCAN_GATE, arrived_at, || async {
+        let scan = async {
+            let root = crate::utils::projects_root()?;
+            // Reading app state, the removed-project registry and the
+            // external-project registry is three more file opens — off the
+            // runtime with everything else.
+            let inputs = tokio::task::spawn_blocking(DashboardScanInputs::read)
+                .await
+                .map_err(|e| CommandError::from(format!("Dashboard scan panicked: {e}")))??;
+            scan_dashboard_projects_in(root, inputs).await
+        };
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(DASHBOARD_SCAN_BUDGET_SECS),
+            scan,
+        )
+        .await
+        .map_err(|_| {
+            CommandError::expected(format!(
+                "Reading your projects folder took longer than {DASHBOARD_SCAN_BUDGET_SECS}s and was stopped. This usually means a project is on a disconnected network drive or an unmounted volume."
+            ))
+        })?
+    })
+    .await
 }
 
 /// Scans a project's pages/routes directory for page routes.
@@ -1682,25 +1808,63 @@ mod tests {
     #[tokio::test]
     async fn git_scan_helpers_degrade_to_none_outside_a_repo() {
         let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(get_git_branch(tmp.path()).await, None);
+        assert_eq!(branch_from_head_file(tmp.path()), None);
         assert_eq!(get_uncommitted_count(tmp.path()).await, None);
     }
 
     #[tokio::test]
-    async fn scan_git_info_returns_one_entry_per_path_in_order() {
+    async fn scan_uncommitted_counts_returns_one_entry_per_path_in_order() {
         let tmp = tempfile::tempdir().unwrap();
         make_project(tmp.path(), "alpha");
         make_project(tmp.path(), "beta");
         let paths = vec![tmp.path().join("alpha"), tmp.path().join("beta")];
 
-        let info = scan_git_info(paths).await;
+        let counts = scan_uncommitted_counts(paths, git_scan_budget()).await;
 
         // Neither project is a git repo — both must degrade gracefully
         // rather than erroring or being dropped.
-        assert_eq!(info.len(), 2);
-        assert!(info
-            .iter()
-            .all(|(branch, count)| branch.is_none() && count.is_none()));
+        assert_eq!(counts.len(), 2);
+        assert!(counts.iter().all(|count| count.is_none()));
+    }
+
+    #[test]
+    fn branch_from_head_file_reads_a_normal_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir(&git_dir).unwrap();
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature/foo-bar\n").unwrap();
+        assert_eq!(
+            branch_from_head_file(tmp.path()),
+            Some("feature/foo-bar".to_string())
+        );
+    }
+
+    #[test]
+    fn branch_from_head_file_is_none_for_detached_head_and_non_repos() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(branch_from_head_file(tmp.path()), None);
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir(&git_dir).unwrap();
+        std::fs::write(
+            git_dir.join("HEAD"),
+            "1234567890abcdef1234567890abcdef12345678\n",
+        )
+        .unwrap();
+        assert_eq!(branch_from_head_file(tmp.path()), None);
+    }
+
+    #[test]
+    fn branch_from_head_file_follows_a_worktree_gitdir_pointer() {
+        // Linked worktrees and submodules have a `.git` FILE pointing at the
+        // real git directory.
+        let tmp = tempfile::tempdir().unwrap();
+        let real_git = tmp.path().join("repo-git");
+        std::fs::create_dir(&real_git).unwrap();
+        std::fs::write(real_git.join("HEAD"), "ref: refs/heads/wt-branch\n").unwrap();
+        let wt = tmp.path().join("worktree");
+        std::fs::create_dir(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: ../repo-git\n").unwrap();
+        assert_eq!(branch_from_head_file(&wt), Some("wt-branch".to_string()));
     }
 
     #[test]
@@ -1771,5 +1935,616 @@ mod tests {
             !message.contains("os error"),
             "message should not leak the raw OS error, got: {message}"
         );
+    }
+}
+
+/// Tests and the timing harness for the dashboard scan.
+///
+/// The scan's defect was never visible on an idle machine: blocking `std::fs`
+/// work executed directly on tokio worker threads only starves the runtime
+/// once the workers are contended. So the harness measures two things, not
+/// one — wall time *and* how late an unrelated 10ms heartbeat task runs while
+/// the scan is in flight. The second number is the actual bug.
+///
+/// Measured on an M-series Mac, release build, 164 synthetic projects each a
+/// real git repository, load average 8–13, before and after run back to back
+/// four times from two prebuilt test binaries:
+///
+/// | | before | after |
+/// | --- | --- | --- |
+/// | filesystem pass, one scan | 7.9–10.3 ms | 17.6–18.0 ms |
+/// | git pass, one scan | 668–684 ms | 362–394 ms |
+/// | one scan, total | 677–692 ms | 380–412 ms |
+/// | three concurrent scans, wall | 2.055–2.070 s | 0.956–1.106 s |
+/// | worst 10ms-heartbeat lateness | 159–196 ms | 50–91 ms |
+/// | three concurrent, through the coalescer | — | 0.379–0.381 s |
+///
+/// The filesystem pass got *slower* on purpose: reading `.git/HEAD` moved into
+/// it from the forked git pass, which is what removed 164 `git rev-parse`
+/// processes per scan.
+///
+/// What these numbers do not reproduce is the reported magnitude — 39.7s at
+/// load average 10, 2238s at load average 23. This machine's SSD answers an
+/// `open()` in microseconds, so 164 projects is ~10ms of filesystem work here
+/// no matter how the runtime is arranged. What is reproduced is the mechanism
+/// and its shape: blocking work on the workers makes every other task in the
+/// app wait for it, and the same three concurrent calls used to do the same
+/// scan three times.
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    // ---------- synthetic tree ----------
+
+    /// Build `n` project directories that look like the real thing: a
+    /// package.json, a `.shipstudio/project.json` with a `last_opened`, a
+    /// `.gitignore` that already ignores `.shipstudio/` (the steady state on a
+    /// real machine), and a real, clean git repository.
+    fn synthetic_root(n: usize) -> (tempfile::TempDir, tempfile::TempDir) {
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // The template lives outside the scanned root — it is itself a valid
+        // project directory, and one extra row would quietly make every "164"
+        // in a report a lie.
+        let template = make_template_repo(scratch.path());
+        for i in 0..n {
+            let dir = tmp.path().join(format!("project-{i:04}"));
+            make_synthetic_project(&dir, Some(1_700_000_000_000 + i as u64), Some(&template));
+        }
+        (tmp, scratch)
+    }
+
+    /// One synthetic project directory. `last_opened` of `None` writes no
+    /// metadata file at all (the never-opened case). `template` is a `.git`
+    /// directory to clone by copy — forking `git init` + `git commit` a few
+    /// hundred times makes the harness setup slower than the thing it
+    /// measures, and a copied `.git` behaves identically for both the
+    /// `.git/HEAD` read and `git status`.
+    fn make_synthetic_project(dir: &Path, last_opened: Option<u64>, template: Option<&Path>) {
+        std::fs::create_dir_all(dir).expect("project dir");
+        std::fs::write(dir.join("package.json"), TEMPLATE_PACKAGE_JSON).expect("package.json");
+        std::fs::write(dir.join(".gitignore"), TEMPLATE_GITIGNORE).expect("gitignore");
+        if let Some(ts) = last_opened {
+            let meta = dir.join(".shipstudio");
+            std::fs::create_dir_all(&meta).expect("meta dir");
+            std::fs::write(
+                meta.join("project.json"),
+                format!(
+                    r#"{{"_description":"Ship Studio project","schema_version":4,"last_opened":{ts}}}"#
+                ),
+            )
+            .expect("project.json");
+        }
+        match template {
+            Some(git) => copy_dir(git, &dir.join(".git")),
+            None => make_git_repo_here(dir),
+        }
+    }
+
+    const TEMPLATE_PACKAGE_JSON: &str = r#"{"name":"synthetic","version":"1.0.0"}"#;
+    const TEMPLATE_GITIGNORE: &str = "node_modules\n.shipstudio/\n";
+
+    /// A real repository with one commit, whose `.git` is copied into every
+    /// synthetic project. Returns the path of that `.git` directory.
+    fn make_template_repo(under: &Path) -> PathBuf {
+        let dir = under.join(".template");
+        std::fs::create_dir_all(&dir).expect("template dir");
+        std::fs::write(dir.join("package.json"), TEMPLATE_PACKAGE_JSON).expect("package.json");
+        std::fs::write(dir.join(".gitignore"), TEMPLATE_GITIGNORE).expect("gitignore");
+        make_git_repo_here(&dir);
+        dir.join(".git")
+    }
+
+    /// `git init` + one commit, in `dir`. Panics loudly rather than silently
+    /// producing a repo-less directory, which would make the harness measure
+    /// something other than what it claims to.
+    fn make_git_repo_here(dir: &Path) {
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run(&["init", "-q", "-b", "main"]);
+        run(&["config", "user.email", "harness@example.invalid"]);
+        run(&["config", "user.name", "Harness"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        run(&["add", "-A"]);
+        run(&["commit", "-q", "-m", "initial"]);
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).expect("copy dest");
+        for entry in std::fs::read_dir(from).expect("read_dir").flatten() {
+            let src = entry.path();
+            let dst = to.join(entry.file_name());
+            if src.is_dir() {
+                copy_dir(&src, &dst);
+            } else {
+                std::fs::copy(&src, &dst).expect("copy file");
+            }
+        }
+    }
+
+    /// Scan inputs with nothing hidden and no external projects, so a test
+    /// scan never depends on the developer's own app state.
+    fn empty_inputs() -> DashboardScanInputs {
+        DashboardScanInputs {
+            active_account_id: crate::commands::accounts::DEFAULT_ACCOUNT_ID.to_string(),
+            accounts: Vec::new(),
+            removed_projects: RemovedProjectsConfig::default(),
+            external_paths: Vec::new(),
+        }
+    }
+
+    // ---------- exclusion-warning capture ----------
+
+    /// Records every `warn_project_excluded` event as `(path, reason)` so a
+    /// test can assert the scan still reports exactly the same exclusions.
+    #[derive(Clone, Default)]
+    struct ExclusionCapture {
+        events: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    #[derive(Default)]
+    struct FieldGrab {
+        path: Option<String>,
+        reason: Option<String>,
+        message: Option<String>,
+    }
+
+    impl tracing::field::Visit for FieldGrab {
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            match field.name() {
+                "path" => self.path = Some(value.to_string()),
+                "reason" => self.reason = Some(value.to_string()),
+                "message" => self.message = Some(value.to_string()),
+                _ => {}
+            }
+        }
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            let rendered = format!("{value:?}");
+            let rendered = rendered.trim_matches('"').to_string();
+            match field.name() {
+                "path" => self.path = Some(rendered),
+                "reason" => self.reason = Some(rendered),
+                "message" => self.message = Some(rendered),
+                _ => {}
+            }
+        }
+    }
+
+    impl<S> tracing_subscriber::Layer<S> for ExclusionCapture
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut grab = FieldGrab::default();
+            event.record(&mut grab);
+            if grab.message.as_deref() == Some("project directory excluded from dashboard list") {
+                if let (Some(path), Some(reason)) = (grab.path, grab.reason) {
+                    self.events
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push((path, reason));
+                }
+            }
+        }
+    }
+
+    /// Run `f` with exclusion warnings captured, returning them in order.
+    ///
+    /// `tracing::subscriber::with_default` is thread-local, so `f` must do its
+    /// logging on *this* thread — which is why the exclusion test calls the
+    /// synchronous collection pass directly rather than the async scan that
+    /// hands that pass to the blocking pool. Every exclusion warning the
+    /// dashboard emits comes from that pass, so nothing is lost, but a future
+    /// exclusion added elsewhere would not be seen here.
+    fn capture_exclusions<T>(f: impl FnOnce() -> T) -> (T, Vec<(String, String)>) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let capture = ExclusionCapture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        let out = tracing::subscriber::with_default(subscriber, f);
+        let events = capture
+            .events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        (out, events)
+    }
+
+    fn block_on<F: std::future::Future>(workers: usize, fut: F) -> F::Output {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(workers)
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(fut)
+    }
+
+    // ---------- behaviour pinning ----------
+
+    #[test]
+    fn scan_lists_every_project_in_last_opened_order_with_git_metadata() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        // Two opened projects (newest first) and one never opened (last).
+        make_synthetic_project(&root.join("older"), Some(1_000), None);
+        make_synthetic_project(&root.join("newer"), Some(2_000), None);
+        make_synthetic_project(&root.join("never"), None, None);
+
+        let projects = block_on(2, async {
+            scan_dashboard_projects_in(root.to_path_buf(), empty_inputs())
+                .await
+                .expect("scan")
+        });
+
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["newer", "older", "never"]);
+        // Every field the dashboard renders comes back populated.
+        assert!(projects.iter().all(|p| !p.is_external));
+        assert!(projects.iter().all(|p| p.thumbnail.is_none()));
+        assert_eq!(
+            projects
+                .iter()
+                .map(|p| p.git_branch.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                Some("main".to_string()),
+                Some("main".to_string()),
+                Some("main".to_string())
+            ],
+        );
+        assert_eq!(projects[0].last_opened, Some(2_000));
+        assert_eq!(projects[2].last_opened, None);
+    }
+
+    #[test]
+    fn scan_reports_the_same_exclusions_it_always_did() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        make_synthetic_project(&root.join("kept"), Some(1), None);
+        make_synthetic_project(&root.join("hidden"), Some(2), None);
+        // A directory with no project markers at all.
+        std::fs::create_dir_all(root.join("not-a-project")).expect("dir");
+        // Hidden directories are skipped silently, as before.
+        std::fs::create_dir_all(root.join(".cache")).expect("dir");
+
+        let mut inputs = empty_inputs();
+        inputs.removed_projects.projects.push(RemovedProject {
+            path: root.join("hidden").to_string_lossy().to_string(),
+            removed_at: 0,
+        });
+        // A registered external project that no longer exists on disk.
+        let gone = root.join("gone-external");
+        inputs.external_paths.push(gone.clone());
+
+        let ((projects, _paths), exclusions) =
+            capture_exclusions(|| collect_dashboard_projects(root, &inputs).expect("collect"));
+
+        assert_eq!(
+            projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            vec!["kept"]
+        );
+
+        let mut got: Vec<(String, String)> = exclusions;
+        got.sort();
+        let mut want = vec![
+            (
+                root.join("hidden").display().to_string(),
+                "listed in removed-projects.json registry".to_string(),
+            ),
+            (
+                root.join("not-a-project").display().to_string(),
+                "not recognized as a project (no project markers)".to_string(),
+            ),
+            (
+                gone.display().to_string(),
+                "registered external project is missing or not recognized as a project".to_string(),
+            ),
+        ];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn scan_of_a_missing_root_is_empty_not_an_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let missing = tmp.path().join("nope");
+        let projects = block_on(2, async {
+            scan_dashboard_projects_in(missing.clone(), empty_inputs())
+                .await
+                .expect("scan")
+        });
+        assert!(projects.is_empty());
+    }
+
+    // ---------- coalescing ----------
+
+    /// Three simultaneous scans must cost one scan. Counting the runs is the
+    /// claim; timing them would only be a proxy for it.
+    #[test]
+    fn concurrent_calls_run_the_work_once() {
+        let slot: tokio::sync::Mutex<Option<Coalesced<u32>>> = tokio::sync::Mutex::const_new(None);
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let results: Vec<u32> = block_on(3, async {
+            let mut handles = Vec::new();
+            let arrived = Instant::now();
+            for _ in 0..3 {
+                let runs = runs.clone();
+                let slot = &slot;
+                handles.push(async move {
+                    coalesce::<u32, (), _, _>(slot, arrived, || async {
+                        runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        Ok(7)
+                    })
+                    .await
+                    .expect("coalesced")
+                });
+            }
+            futures_util::future::join_all(handles).await
+        });
+
+        assert_eq!(results, vec![7, 7, 7]);
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A call that arrives *after* the previous run finished must not be given
+    /// that run's answer — otherwise deleting a project would leave it on the
+    /// dashboard, which is the failure mode a plain TTL cache would have.
+    #[test]
+    fn a_later_call_rescans_rather_than_reusing_the_last_answer() {
+        let slot: tokio::sync::Mutex<Option<Coalesced<usize>>> =
+            tokio::sync::Mutex::const_new(None);
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let (first, second) = block_on(2, async {
+            let run = || {
+                let runs = runs.clone();
+                async move { Ok::<_, ()>(runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) }
+            };
+            let first = coalesce(&slot, Instant::now(), run).await.expect("first");
+            // Distinct arrival instants: `Instant` on macOS has nanosecond
+            // resolution, but sleep a beat so the ordering is unambiguous.
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let second = coalesce(&slot, Instant::now(), run).await.expect("second");
+            (first, second)
+        });
+
+        assert_eq!((first, second), (0, 1));
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    // ---------- git pass budget ----------
+
+    /// The per-project timeout alone bounds the pass at
+    /// `projects / concurrency * per-project timeout`. The whole-pass budget is
+    /// what keeps a few hundred wedged repos from holding the dashboard for
+    /// half a minute; projects it does not reach degrade to "no git status",
+    /// exactly like a project that timed out on its own.
+    #[test]
+    fn an_exhausted_budget_degrades_every_project_instead_of_waiting() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        make_synthetic_project(&root.join("a"), Some(1), None);
+        make_synthetic_project(&root.join("b"), Some(2), None);
+        let paths = vec![root.join("a"), root.join("b")];
+
+        let (with_budget, without) = block_on(2, async {
+            // Zero budget first: `get_uncommitted_count` caches its result, and
+            // a cached value resolves on the first poll — which a timeout that
+            // has already elapsed still lets through. Cold first, so the
+            // assertion below is about the budget and not about the cache.
+            let without = scan_uncommitted_counts(paths.clone(), Duration::ZERO).await;
+            let with_budget = scan_uncommitted_counts(paths.clone(), git_scan_budget()).await;
+            (with_budget, without)
+        });
+
+        // Clean repos: the real scan finds zero changes. If this said `None`
+        // the test below would pass vacuously.
+        assert_eq!(with_budget, vec![Some(0), Some(0)]);
+        assert_eq!(without, vec![None, None]);
+    }
+
+    // ---------- timing harness ----------
+
+    /// How many projects the harness builds by default — the size of the
+    /// reporter's real `~/ShipStudio`. Override with `SCAN_HARNESS_N`.
+    const HARNESS_PROJECT_COUNT: usize = 164;
+    /// Worker threads for the harness runtime, and the number of simultaneous
+    /// dashboard calls. Three of each reproduces the reported failure exactly:
+    /// three concurrent `get_dashboard_projects` calls with three tokio worker
+    /// threads blocked in `std::fs::read_to_string`, leaving nothing to run
+    /// the rest of the app.
+    const HARNESS_WORKERS: usize = 3;
+    const HARNESS_CONCURRENT_CALLS: usize = 3;
+
+    /// Ticks every 10ms and records the worst lateness. This is the number the
+    /// defect is actually about: a scan that blocks the tokio workers shows up
+    /// here as a long gap, and every other task in the app is stalled for
+    /// exactly that long. Wall time alone would not show it.
+    async fn heartbeat(stop: Arc<std::sync::atomic::AtomicBool>) -> Duration {
+        let mut worst = Duration::ZERO;
+        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let at = Instant::now();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let late = at.elapsed().saturating_sub(Duration::from_millis(10));
+            if late > worst {
+                worst = late;
+            }
+        }
+        worst
+    }
+
+    fn loadavg() -> String {
+        std::process::Command::new("uptime")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    }
+
+    fn harness_n() -> usize {
+        std::env::var("SCAN_HARNESS_N")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(HARNESS_PROJECT_COUNT)
+    }
+
+    /// ```text
+    /// cargo test --release --lib dashboard_scan_timing -- --ignored --nocapture
+    /// SCAN_HARNESS_N=2000 cargo test --release --lib dashboard_scan_timing -- --ignored --nocapture
+    /// ```
+    ///
+    /// Builds a synthetic tree of N real git projects and issues
+    /// [`HARNESS_CONCURRENT_CALLS`] simultaneous dashboard scans on a
+    /// [`HARNESS_WORKERS`]-worker runtime, with a 10ms heartbeat task running
+    /// alongside. Reports the load average, because none of these numbers mean
+    /// anything without it.
+    #[test]
+    #[ignore = "timing harness — run explicitly with --ignored --nocapture"]
+    fn dashboard_scan_timing() {
+        let n = harness_n();
+        let before_load = loadavg();
+        let (tmp, _scratch) = synthetic_root(n);
+        let root = tmp.path().to_path_buf();
+
+        let (burst, worst_late, counts) = block_on(HARNESS_WORKERS, async {
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let hb = tokio::spawn(heartbeat(stop.clone()));
+            // Let the heartbeat establish a baseline before the burst.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            let t0 = Instant::now();
+            let mut handles = Vec::new();
+            for _ in 0..HARNESS_CONCURRENT_CALLS {
+                let root = root.clone();
+                handles.push(tokio::spawn(async move {
+                    scan_dashboard_projects_in(root.clone(), empty_inputs())
+                        .await
+                        .expect("scan")
+                        .len()
+                }));
+            }
+            let mut counts = Vec::new();
+            for h in handles {
+                counts.push(h.await.expect("join"));
+            }
+            let burst = t0.elapsed();
+
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let worst = hb.await.expect("heartbeat");
+            (burst, worst, counts)
+        });
+
+        // A harness that silently scanned an empty tree would report a
+        // wonderful number about nothing.
+        assert!(
+            counts.iter().all(|c| *c == n),
+            "expected {n}, got {counts:?}"
+        );
+
+        // Same burst again, this time through the coalescer the command wraps
+        // the scan in. It runs against a *second, untouched* tree: the first
+        // burst leaves `GIT_CACHE` warm for its own paths, and reusing them
+        // would credit the coalescer with the cache's work.
+        let (tmp2, _scratch2) = synthetic_root(n);
+        let root = tmp2.path().to_path_buf();
+        let coalesced_burst = block_on(HARNESS_WORKERS, async {
+            let slot: tokio::sync::Mutex<Option<Coalesced<usize>>> =
+                tokio::sync::Mutex::const_new(None);
+            let slot = &slot;
+            let t0 = Instant::now();
+            let arrived = Instant::now();
+            let mut futs = Vec::new();
+            for _ in 0..HARNESS_CONCURRENT_CALLS {
+                let root = root.clone();
+                futs.push(async move {
+                    coalesce::<usize, CommandError, _, _>(slot, arrived, || async {
+                        Ok(scan_dashboard_projects_in(root, empty_inputs())
+                            .await?
+                            .len())
+                    })
+                    .await
+                    .expect("coalesced scan")
+                });
+            }
+            let got = futures_util::future::join_all(futs).await;
+            assert!(got.iter().all(|c| *c == n), "expected {n}, got {got:?}");
+            t0.elapsed()
+        });
+
+        println!("\n=== dashboard scan timing harness ===");
+        println!("projects              : {n}");
+        println!("concurrent calls      : {HARNESS_CONCURRENT_CALLS}");
+        println!("tokio worker threads  : {HARNESS_WORKERS}");
+        println!("load before           : {before_load}");
+        println!("load after            : {}", loadavg());
+        println!("burst wall time       : {burst:?}   <- what the user waits");
+        println!("worst heartbeat late  : {worst_late:?}   <- runtime starvation");
+        println!("burst, coalesced      : {coalesced_burst:?}");
+        println!("=====================================\n");
+    }
+
+    /// ```text
+    /// cargo test --release --lib dashboard_scan_phases -- --ignored --nocapture
+    /// ```
+    ///
+    /// Splits one scan into its two passes so the timing harness's numbers can
+    /// be attributed: the synchronous filesystem collection, and the git pass
+    /// that forks per project.
+    #[test]
+    #[ignore = "timing harness — run explicitly with --ignored --nocapture"]
+    fn dashboard_scan_phases() {
+        let n = harness_n();
+        let (tmp, _scratch) = synthetic_root(n);
+        let root = tmp.path().to_path_buf();
+
+        let (fs_pass, git_pass, total, count) = block_on(HARNESS_WORKERS, async {
+            let inputs = empty_inputs();
+            let t0 = Instant::now();
+            let (mut projects, paths) =
+                collect_dashboard_projects(&root, &inputs).expect("collect");
+            let fs_pass = t0.elapsed();
+
+            let t1 = Instant::now();
+            let git = scan_uncommitted_counts(paths, git_scan_budget()).await;
+            let git_pass = t1.elapsed();
+            for (p, c) in projects.iter_mut().zip(git) {
+                p.uncommitted_count = c;
+            }
+            let count = projects.len();
+            // Assert on what the pass produced, not merely that it ran.
+            assert!(
+                projects
+                    .iter()
+                    .all(|p| p.git_branch.as_deref() == Some("main")),
+                "git pass produced no branches — the harness would be timing nothing"
+            );
+            (fs_pass, git_pass, t0.elapsed(), count)
+        });
+
+        assert_eq!(count, n);
+        println!("\n=== dashboard scan phase split ===");
+        println!("projects   : {n}");
+        println!("load       : {}", loadavg());
+        println!("fs pass    : {fs_pass:?}");
+        println!("git pass   : {git_pass:?}");
+        println!("total      : {total:?}");
+        println!("==================================\n");
     }
 }
