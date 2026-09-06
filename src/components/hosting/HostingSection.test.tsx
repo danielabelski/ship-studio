@@ -193,17 +193,17 @@ describe('hosting copy', () => {
     expect(skipped.hint).toContain('[skip ci] in commit message');
     expect(skipped.status).not.toContain('[skip ci]');
 
-    const canceled = copyFor(
+    const gated = copyFor(
       {
-        kind: 'canceled',
-        provider: 'vercel',
+        kind: 'gated',
+        provider: 'netlify',
         deployment: deployment(),
-        detail: { detail: 'superseded_by_newer' },
+        detail: { detail: 'awaiting_review', reason: "the author isn't a known contributor" },
       },
       'Fix the nav'
     );
-    expect(canceled.hint).toMatch(/newer push replaced it/);
-    expect(canceled.status).not.toMatch(/newer push/);
+    expect(gated.hint).toMatch(/known contributor/);
+    expect(gated.status).not.toMatch(/known contributor/);
   });
 
   it('never leaks provider jargon in any state', () => {

@@ -193,7 +193,7 @@ export const hostingScenarios: Scenario[] = [
     id: 'hosting-canceled',
     title: 'Push popover — superseded by a newer push',
     looksRightWhen:
-      'Reads as "replaced", not "broken" — a canceled build is a normal consequence of pushing twice.',
+      'Reads as a normal consequence of pushing twice, not as breakage — and says nothing about *why* it was canceled, because no provider tells us. Line 3 is absent here on purpose; a fixture used to hand-feed a "superseded by a newer push" qualifier that no adapter could ever produce, so this screenshot certified copy no user could reach.',
     project: WORKSPACE_PROJECT,
     openSelector: '.source-control-push-button',
     clipSelector: '.publish-dropdown-menu',
@@ -202,13 +202,7 @@ export const hostingScenarios: Scenario[] = [
     requires: '.publish-dropdown-menu',
     commands: {
       ...workspaceCommands,
-      get_hosting_status: status(
-        found(
-          deployment({ phase: 'canceled' }, 'Canceled', {
-            detail: { detail: 'superseded_by_newer' },
-          })
-        )
-      ),
+      get_hosting_status: status(found(deployment({ phase: 'canceled' }, 'Canceled'))),
     },
   },
   {

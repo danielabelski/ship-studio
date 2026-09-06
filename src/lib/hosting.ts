@@ -75,8 +75,7 @@ export type DeploymentDetail =
   | { detail: 'rolling_out' }
   | { detail: 'skipped_because'; reason?: string | null }
   | { detail: 'awaiting_review'; reason?: string | null }
-  | { detail: 'review_rejected' }
-  | { detail: 'superseded_by_newer' };
+  | { detail: 'review_rejected' };
 
 export interface DeploymentUrls {
   /** The address people visit — the project's production domain. */

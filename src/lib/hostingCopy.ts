@@ -114,10 +114,10 @@ function dashboardLabelFor(state: SectionState): string | undefined {
  * The provider's qualifier on a status, written as a sentence for line 3.
  *
  * These used to be appended to the status line after an em dash. The status
- * line is 184px wide, so "Canceled · Production — a newer push replaced it"
- * arrived on screen as "Canceled · Production — a ne…" — the ellipsis landing
- * squarely on the only part the user didn't already know. The qualifier is the
- * informative half, so it gets the full-width line instead.
+ * line is 184px wide, so "Awaiting approval · Production — the author isn't a
+ * known contributor" arrived on screen with the ellipsis landing squarely on
+ * the only part the user didn't already know. The qualifier is the informative
+ * half, so it gets the full-width line instead.
  */
 function detailSentence(detail?: DeploymentDetail | null): string | undefined {
   if (!detail) return undefined;
@@ -132,8 +132,6 @@ function detailSentence(detail?: DeploymentDetail | null): string | undefined {
       return detail.reason?.trim() || undefined;
     case 'review_rejected':
       return undefined;
-    case 'superseded_by_newer':
-      return 'A newer push replaced it.';
   }
 }
 

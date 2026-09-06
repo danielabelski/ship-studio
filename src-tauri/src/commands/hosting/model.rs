@@ -176,9 +176,15 @@ pub enum DeploymentDetail {
     AwaitingReview { reason: Option<String> },
     /// Netlify's author-trust gate: a human declined the build.
     ReviewRejected,
-    /// Superseded by a newer push before it finished.
-    SupersededByNewer,
 }
+//
+// There is deliberately no `SupersededByNewer`. A canceled build usually *was*
+// replaced by a newer push, and saying so would be the single most useful
+// sentence this section could put under "Canceled" — but no provider reports
+// it. Vercel, Cloudflare and Netlify all return a cancellation with no cause,
+// so the only way to produce it is to infer it from timing, which is a guess
+// wearing a fact's clothes. It existed here unproduced by any adapter, and the
+// harness fixture that hand-fed it certified copy no user could ever see.
 
 /// URLs for a deployment. Every value here is copied verbatim from a provider
 /// response — nothing in this struct is ever assembled from parts. Building a
