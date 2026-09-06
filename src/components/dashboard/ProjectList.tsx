@@ -23,7 +23,12 @@ import {
   renameProject,
   exportProjectAsTemplate,
 } from '../../lib/project';
-import { asCommandError, formatCommandError, isProjectFolderGoneError } from '../../lib/errors';
+import {
+  asCommandError,
+  formatCommandError,
+  isExpectedCommandError,
+  isProjectFolderGoneError,
+} from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import { trackEvent, trackError } from '../../lib/analytics';
 import {
@@ -85,6 +90,21 @@ interface ProjectWithThumbnail extends DashboardProject {
 type SortOption = 'last_opened' | 'name';
 
 const PROJECT_VIEW_MODE_STORAGE_KEY = 'ship-studio-project-view-mode';
+
+/**
+ * Classifies a `getProjectThumbnail` failure into the log level it belongs
+ * at. A gone project folder and any other backend-recognized environment
+ * state (e.g. a macOS Full Disk Access / EPERM denial from
+ * `classify_fs_error`) are user-fixable conditions, not bugs — they must log
+ * as warnings so they aren't auto-filed as bug reports (issue #887).
+ * Exported for direct unit testing.
+ */
+export function classifyThumbnailLoadFailure(e: unknown): { level: 'warn' | 'error' } {
+  if (isProjectFolderGoneError(e) || isExpectedCommandError(e)) {
+    return { level: 'warn' };
+  }
+  return { level: 'error' };
+}
 
 function getInitialProjectViewMode(): ProjectViewMode {
   return localStorage.getItem(PROJECT_VIEW_MODE_STORAGE_KEY) === 'list' ? 'list' : 'grid';
@@ -217,11 +237,12 @@ export function ProjectList({
               // by-design Expected state (canonicalize_tagged), not a bug:
               // warn locally instead of auto-filing a report.
               const message = formatCommandError(asCommandError(e));
-              if (isProjectFolderGoneError(e)) {
-                logger.warn('Thumbnail unavailable — project folder no longer exists', {
-                  error: message,
-                  projectName: project.name,
-                });
+              const { level } = classifyThumbnailLoadFailure(e);
+              if (level === 'warn') {
+                const label = isProjectFolderGoneError(e)
+                  ? 'Thumbnail unavailable — project folder no longer exists'
+                  : 'Thumbnail unavailable';
+                logger.warn(label, { error: message, projectName: project.name });
               } else {
                 logger.error('Failed to load thumbnail', {
                   error: message,
