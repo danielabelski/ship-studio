@@ -16,21 +16,17 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   DashboardProject,
-  getDashboardProjects,
   setHideMainBranchWarning,
-  getProjectThumbnail,
   uploadProjectThumbnail,
   renameProject,
   exportProjectAsTemplate,
 } from '../../lib/project';
-import { asCommandError, formatCommandError, isProjectFolderGoneError } from '../../lib/errors';
-import { TimeoutError, withTimeout } from '../../lib/withTimeout';
+import { asCommandError, formatCommandError } from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import { trackEvent, trackError } from '../../lib/analytics';
 import {
   FolderInfo,
   Folder,
-  listFolders,
   createFolder,
   renameFolder,
   deleteFolder,
@@ -53,7 +49,7 @@ import { MoveWorkspaceModal } from './MoveWorkspaceModal';
 import { SettingsModal } from './SettingsModal';
 import { ProjectActionConfirmModal } from './ProjectActionConfirmModal';
 import { ProjectListStatus } from './ProjectListStatus';
-import { classifyThumbnailLoadFailure } from './projectThumbnailErrors';
+import { useProjectListData } from './useProjectListData';
 import { ProjectBulkActionsBar } from './ProjectBulkActionsBar';
 import { ProjectBulkActionConfirm } from './ProjectBulkActionConfirm';
 import { DashboardPreferencesCard } from './DashboardPreferencesCard';
@@ -75,12 +71,6 @@ interface Project {
   name: string;
   path: string;
   thumbnail: string | null;
-}
-
-/** Dashboard project with loaded thumbnail data */
-interface ProjectWithThumbnail extends DashboardProject {
-  /** Base64-encoded thumbnail image data */
-  thumbnailData: string | null;
 }
 
 /** Available sort options for the project list */
@@ -120,15 +110,6 @@ interface ProjectListProps {
   onSwitchAccount?: () => void;
 }
 
-/**
- * Ceiling on one dashboard load. The backend bounds its own scan (25s) and
- * rejects past that, so this only fires when the IPC round trip itself never
- * comes back — but that is precisely the case that used to leave "Loading
- * projects…" on screen forever with nothing to click. Comfortably above the
- * backend budget so a backend refusal reaches the user with its own wording.
- */
-const DASHBOARD_LOAD_TIMEOUT_MS = 40_000;
-
 export function ProjectList({
   onSelectProject,
   onCreateProject,
@@ -143,22 +124,26 @@ export function ProjectList({
   onTogglePin,
   onSwitchAccount,
 }: ProjectListProps) {
-  const [projects, setProjects] = useState<ProjectWithThumbnail[]>([]);
   /** Hidden <input type="file"> reused across cards. The current upload
    *  target lives in a ref (not state) so the change handler reads the
    *  freshest path even if the user clicks fast through several cards. */
   const thumbnailInputRef = useRef<HTMLInputElement>(null);
   const thumbnailTargetPathRef = useRef<string | null>(null);
-  const [folders, setFolders] = useState<FolderInfo[]>([]);
-  const [filedPaths, setFiledPaths] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  /** Non-null when the last load failed or timed out — the list renders a
-   *  retry instead of an empty grid or an endless spinner. */
-  const [loadError, setLoadError] = useState<string | null>(null);
   const { showToast } = useOptionalToast();
   // Drives a reload whenever the active workspace changes (see the load effect).
   const { activeAccount, accounts } = useActiveAccount();
   const activeAccountId = activeAccount?.id;
+  const {
+    projects,
+    setProjects,
+    folders,
+    filedPaths,
+    loading,
+    loadError,
+    loadProjects,
+    loadFolders,
+    loadAll,
+  } = useProjectListData(activeAccountId);
   const hasMultipleWorkspaces = accounts.length > 1;
   const [renameTarget, setRenameTarget] = useState<DashboardProject | null>(null);
 
@@ -206,122 +191,6 @@ export function ProjectList({
   const [projectViewMode, setProjectViewMode] =
     useState<ProjectViewMode>(getInitialProjectViewMode);
 
-  // Monotonic token so a superseded loadAll() (e.g. the list fetched for the
-  // old workspace right before a switch) neither applies its stale results nor
-  // clears the loading state — preventing an empty-state flash mid-switch.
-  // Only loadAll() passes a seq; bare loadProjects() refreshes apply
-  // unconditionally and intentionally don't touch the token or the spinner.
-  const loadSeqRef = useRef(0);
-
-  const loadProjects = async (seq?: number) => {
-    try {
-      const projectList = await withTimeout(
-        getDashboardProjects(),
-        DASHBOARD_LOAD_TIMEOUT_MS,
-        'Loading projects'
-      );
-
-      // Load thumbnails for each project
-      const projectsWithThumbnails = await Promise.all(
-        projectList.map(async (project) => {
-          let thumbnailData: string | null = null;
-          if (project.thumbnail) {
-            try {
-              thumbnailData = await getProjectThumbnail(project.path);
-            } catch (e) {
-              // `get_project_thumbnail` rejects with a plain CommandError
-              // object (not an Error instance) — String() renders it as
-              // "[object Object]" (issue #685). A gone project folder is a
-              // by-design Expected state (canonicalize_tagged), not a bug:
-              // warn locally instead of auto-filing a report.
-              const message = formatCommandError(asCommandError(e));
-              const { level } = classifyThumbnailLoadFailure(e);
-              if (level === 'warn') {
-                const label = isProjectFolderGoneError(e)
-                  ? 'Thumbnail unavailable — project folder no longer exists'
-                  : 'Thumbnail unavailable';
-                logger.warn(label, { error: message, projectName: project.name });
-              } else {
-                logger.error('Failed to load thumbnail', {
-                  error: message,
-                  projectName: project.name,
-                });
-              }
-            }
-          }
-          return { ...project, thumbnailData };
-        })
-      );
-
-      // A seq'd load (from loadAll) is ignored if a newer one superseded it;
-      // a bare refresh (no seq) always applies.
-      if (seq === undefined || seq === loadSeqRef.current) {
-        setProjects(projectsWithThumbnails);
-        setLoadError(null);
-      }
-    } catch (error) {
-      const message = formatCommandError(asCommandError(error));
-      logger.error('Failed to load projects', { error: message });
-      if (seq === undefined || seq === loadSeqRef.current) {
-        // A backend refusal reaches the user in the backend's own words. A
-        // timeout does not: `TimeoutError`'s message is written for a log line
-        // ("Loading projects timed out after 40000ms"), and this is a sentence
-        // on screen. Say what was observed and name the two things that
-        // actually cause it — a permissions prompt waiting for an answer is the
-        // one this was watched failing on.
-        setLoadError(
-          error instanceof TimeoutError
-            ? 'Scanning your projects folder took longer than 40 seconds. macOS may be waiting ' +
-                'on a permissions prompt, or the folder may be on a drive that isn’t responding.'
-            : message
-        );
-      }
-    }
-  };
-
-  const loadFolders = async () => {
-    try {
-      // Bounded for the same reason the project scan is, and it is the half
-      // that was missed: `loadAll` awaits both, so a folder call that never
-      // settles keeps `loading` true forever — and because `loading` wins over
-      // `loadError`, the user still gets an endless spinner even once the
-      // project scan has timed out and set its error. Both calls hit the same
-      // backend, so whatever stalls one stalls the other.
-      const folderList = await withTimeout(
-        listFolders(),
-        DASHBOARD_LOAD_TIMEOUT_MS,
-        'Loading folders'
-      );
-      setFolders(folderList);
-
-      const paths = await withTimeout(
-        getFiledProjectPaths(),
-        DASHBOARD_LOAD_TIMEOUT_MS,
-        'Loading folder contents'
-      );
-      setFiledPaths(new Set(paths));
-    } catch (error) {
-      logger.error('Failed to load folders', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-
-  const loadAll = useCallback(async () => {
-    const seq = ++loadSeqRef.current;
-    setLoading(true);
-    try {
-      await Promise.all([loadProjects(seq), loadFolders()]);
-    } finally {
-      // Only the latest load clears the spinner — a superseded load keeps it up
-      // so the list stays in its loading state until the current fetch
-      // resolves. In a `finally` because a spinner nothing can clear is the
-      // failure this whole path exists to prevent; both halves catch their own
-      // errors today, and this makes that a belt rather than the only belt.
-      if (seq === loadSeqRef.current) setLoading(false);
-    }
-  }, []);
-
   // Notify parent when loading state changes
   useEffect(() => {
     onLoadingChange?.(loading);
@@ -341,15 +210,6 @@ export function ProjectList({
       setFolderProjectPaths([]);
     }
   }, [currentFolderId]);
-
-  // Load on mount AND whenever the active workspace changes. get_dashboard_projects
-  // is scoped to the active workspace server-side, so a switch changes the result
-  // set. Keying on the resolved active-account id (rather than a fired event) is
-  // deterministic — it reloads even when the switch happened while this list was
-  // unmounted (the picker is a separate view), which an event listener would miss.
-  useEffect(() => {
-    void loadAll();
-  }, [loadAll, activeAccountId]);
 
   // Get projects to display based on current folder
   const displayedProjects = useMemo(() => {
