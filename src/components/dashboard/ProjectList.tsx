@@ -270,10 +270,24 @@ export function ProjectList({
 
   const loadFolders = async () => {
     try {
-      const folderList = await listFolders();
+      // Bounded for the same reason the project scan is, and it is the half
+      // that was missed: `loadAll` awaits both, so a folder call that never
+      // settles keeps `loading` true forever — and because `loading` wins over
+      // `loadError`, the user still gets an endless spinner even once the
+      // project scan has timed out and set its error. Both calls hit the same
+      // backend, so whatever stalls one stalls the other.
+      const folderList = await withTimeout(
+        listFolders(),
+        DASHBOARD_LOAD_TIMEOUT_MS,
+        'Loading folders'
+      );
       setFolders(folderList);
 
-      const paths = await getFiledProjectPaths();
+      const paths = await withTimeout(
+        getFiledProjectPaths(),
+        DASHBOARD_LOAD_TIMEOUT_MS,
+        'Loading folder contents'
+      );
       setFiledPaths(new Set(paths));
     } catch (error) {
       logger.error('Failed to load folders', {
@@ -285,10 +299,16 @@ export function ProjectList({
   const loadAll = useCallback(async () => {
     const seq = ++loadSeqRef.current;
     setLoading(true);
-    await Promise.all([loadProjects(seq), loadFolders()]);
-    // Only the latest load clears the spinner — a superseded load keeps it up
-    // so the list stays in its loading state until the current fetch resolves.
-    if (seq === loadSeqRef.current) setLoading(false);
+    try {
+      await Promise.all([loadProjects(seq), loadFolders()]);
+    } finally {
+      // Only the latest load clears the spinner — a superseded load keeps it up
+      // so the list stays in its loading state until the current fetch
+      // resolves. In a `finally` because a spinner nothing can clear is the
+      // failure this whole path exists to prevent; both halves catch their own
+      // errors today, and this makes that a belt rather than the only belt.
+      if (seq === loadSeqRef.current) setLoading(false);
+    }
   }, []);
 
   // Notify parent when loading state changes

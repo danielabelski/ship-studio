@@ -171,4 +171,35 @@ describe('ProjectList loading state', () => {
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
     expect(screen.queryByText(SPINNER_LABEL)).not.toBeInTheDocument();
   });
+
+  it('gives up when the folder calls are the ones that hang', async () => {
+    // Watched happen. On a machine where the backend stalled, the scan timed
+    // out and logged its error on schedule — and the spinner stayed up anyway,
+    // forever, which is the exact symptom the timeout was added to remove.
+    //
+    // `loadAll` awaits the scan and the folder calls together, and only the
+    // scan was bounded. A folder call that never settles keeps `loading` true,
+    // and `loading` deliberately wins over `loadError`, so the error that was
+    // already set could never be shown.
+    //
+    // Every test above resolved the folder mocks instantly, which is why none
+    // of them could see it.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.getDashboardProjects.mockRejectedValueOnce({
+      type: 'Other',
+      message: 'projects folder is on a disconnected volume',
+    });
+    mocks.listFolders.mockReturnValue(new Promise(() => {}));
+    renderList();
+
+    expect(await screen.findByText(SPINNER_LABEL)).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(41_000);
+    });
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(screen.getByRole('alert')).toHaveTextContent(/disconnected volume/i);
+    expect(screen.queryByText(SPINNER_LABEL)).not.toBeInTheDocument();
+  });
 });
