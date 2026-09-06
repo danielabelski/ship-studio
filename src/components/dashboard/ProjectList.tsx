@@ -24,6 +24,7 @@ import {
   exportProjectAsTemplate,
 } from '../../lib/project';
 import { asCommandError, formatCommandError, isProjectFolderGoneError } from '../../lib/errors';
+import { withTimeout } from '../../lib/withTimeout';
 import { logger } from '../../lib/logger';
 import { trackEvent, trackError } from '../../lib/analytics';
 import {
@@ -56,6 +57,7 @@ import { ProjectBulkActionConfirm } from './ProjectBulkActionConfirm';
 import { DashboardPreferencesCard } from './DashboardPreferencesCard';
 import { DashboardCommunityBanner } from './DashboardCommunityBanner';
 import { Spinner } from '../primitives/Spinner';
+import { Button } from '../primitives/Button';
 import { GitHubCalendar } from './GitHubCalendar';
 import { useModal } from '../../contexts/ModalContext';
 import { useDashboardVisibility } from '../../hooks/useDashboardVisibility';
@@ -118,6 +120,15 @@ interface ProjectListProps {
   onSwitchAccount?: () => void;
 }
 
+/**
+ * Ceiling on one dashboard load. The backend bounds its own scan (25s) and
+ * rejects past that, so this only fires when the IPC round trip itself never
+ * comes back — but that is precisely the case that used to leave "Loading
+ * projects…" on screen forever with nothing to click. Comfortably above the
+ * backend budget so a backend refusal reaches the user with its own wording.
+ */
+const DASHBOARD_LOAD_TIMEOUT_MS = 40_000;
+
 export function ProjectList({
   onSelectProject,
   onCreateProject,
@@ -141,6 +152,9 @@ export function ProjectList({
   const [folders, setFolders] = useState<FolderInfo[]>([]);
   const [filedPaths, setFiledPaths] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  /** Non-null when the last load failed or timed out — the list renders a
+   *  retry instead of an empty grid or an endless spinner. */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { showToast } = useOptionalToast();
   // Drives a reload whenever the active workspace changes (see the load effect).
   const { activeAccount, accounts } = useActiveAccount();
@@ -201,7 +215,11 @@ export function ProjectList({
 
   const loadProjects = async (seq?: number) => {
     try {
-      const projectList = await getDashboardProjects();
+      const projectList = await withTimeout(
+        getDashboardProjects(),
+        DASHBOARD_LOAD_TIMEOUT_MS,
+        'Loading projects'
+      );
 
       // Load thumbnails for each project
       const projectsWithThumbnails = await Promise.all(
@@ -238,11 +256,14 @@ export function ProjectList({
       // a bare refresh (no seq) always applies.
       if (seq === undefined || seq === loadSeqRef.current) {
         setProjects(projectsWithThumbnails);
+        setLoadError(null);
       }
     } catch (error) {
-      logger.error('Failed to load projects', {
-        error: formatCommandError(asCommandError(error)),
-      });
+      const message = formatCommandError(asCommandError(error));
+      logger.error('Failed to load projects', { error: message });
+      if (seq === undefined || seq === loadSeqRef.current) {
+        setLoadError(message);
+      }
     }
   };
 
@@ -662,6 +683,14 @@ export function ProjectList({
               {cleanupStatus && (
                 <p className="project-list-cleanup-status text-style-control">{cleanupStatus}</p>
               )}
+            </div>
+          ) : loadError ? (
+            <div className="project-list-loading" role="alert">
+              <p className="text-style-body-medium">Couldn&rsquo;t load your projects.</p>
+              <p className="project-list-load-error text-style-control">{loadError}</p>
+              <Button variant="secondary" onClick={() => void loadAll()}>
+                Try again
+              </Button>
             </div>
           ) : (
             <>

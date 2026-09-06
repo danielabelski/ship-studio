@@ -2405,7 +2405,11 @@ mod scan_tests {
         );
 
         // Same burst again, this time through the coalescer the command wraps
-        // the scan in, so the two numbers are directly comparable.
+        // the scan in. It runs against a *second, untouched* tree: the first
+        // burst leaves `GIT_CACHE` warm for its own paths, and reusing them
+        // would credit the coalescer with the cache's work.
+        let (tmp2, _scratch2) = synthetic_root(n);
+        let root = tmp2.path().to_path_buf();
         let coalesced_burst = block_on(HARNESS_WORKERS, async {
             let slot: tokio::sync::Mutex<Option<Coalesced<usize>>> =
                 tokio::sync::Mutex::const_new(None);
