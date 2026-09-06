@@ -3962,7 +3962,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": true,
-      "consumerCount": 608
+      "consumerCount": 609
     },
     {
       "name": "--text-faint",

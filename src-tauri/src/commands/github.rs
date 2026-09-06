@@ -1160,7 +1160,12 @@ fn preferred_package_manager(path: &Path) -> Option<String> {
     if path.join("yarn.lock").exists() {
         return Some("yarn".to_string());
     }
-    if path.join("bun.lockb").exists() {
+    // Both spellings. Bun wrote a binary `bun.lockb` until 1.2, which made
+    // `bun.lock` (text, reviewable in a diff) the default — so checking only
+    // the old name misses every project bun has locked since. This ran `npm
+    // install` on them, which is the one package manager the project is not
+    // set up for. `health/mod.rs` already checked both; these two disagreed.
+    if path.join("bun.lockb").exists() || path.join("bun.lock").exists() {
         return Some("bun".to_string());
     }
 
@@ -1874,6 +1879,14 @@ mod tests {
                 Some("yarn")
             );
             let dir = project(&[("bun.lockb", "")]);
+            assert_eq!(
+                preferred_package_manager(dir.path()).as_deref(),
+                Some("bun")
+            );
+            // Bun 1.2 replaced the binary lockfile with a text one and made it
+            // the default. Only `bun.lockb` was checked here, so anything bun
+            // has locked since got an npm install it was never set up for.
+            let dir = project(&[("bun.lock", "")]);
             assert_eq!(
                 preferred_package_manager(dir.path()).as_deref(),
                 Some("bun")
