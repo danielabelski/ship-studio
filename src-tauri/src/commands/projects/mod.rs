@@ -1916,7 +1916,31 @@ mod tests {
 /// once the workers are contended. So the harness measures two things, not
 /// one — wall time *and* how late an unrelated 10ms heartbeat task runs while
 /// the scan is in flight. The second number is the actual bug.
-#[cfg(test)]
+///
+/// Measured on an M-series Mac, release build, 164 synthetic projects each a
+/// real git repository, load average 8–13, before and after run back to back
+/// four times from two prebuilt test binaries:
+///
+/// | | before | after |
+/// | --- | --- | --- |
+/// | filesystem pass, one scan | 7.9–10.3 ms | 17.6–18.0 ms |
+/// | git pass, one scan | 668–684 ms | 362–394 ms |
+/// | one scan, total | 677–692 ms | 380–412 ms |
+/// | three concurrent scans, wall | 2.055–2.070 s | 0.956–1.106 s |
+/// | worst 10ms-heartbeat lateness | 159–196 ms | 50–91 ms |
+/// | three concurrent, through the coalescer | — | 0.379–0.381 s |
+///
+/// The filesystem pass got *slower* on purpose: reading `.git/HEAD` moved into
+/// it from the forked git pass, which is what removed 164 `git rev-parse`
+/// processes per scan.
+///
+/// What these numbers do not reproduce is the reported magnitude — 39.7s at
+/// load average 10, 2238s at load average 23. This machine's SSD answers an
+/// `open()` in microseconds, so 164 projects is ~10ms of filesystem work here
+/// no matter how the runtime is arranged. What is reproduced is the mechanism
+/// and its shape: blocking work on the workers makes every other task in the
+/// app wait for it, and the same three concurrent calls used to do the same
+/// scan three times.
 mod scan_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
