@@ -174,6 +174,19 @@
   pointer-events: auto;
 }
 
+/* …except the comment layer, which is not a piece of chrome but a full-bleed
+   layer over the whole frame (`inset: 0`). It sets `pointer-events: none` at
+   equal specificity to the rule above, so which one won came down to bundle
+   order — and this file loads later. That made the invisible layer eat every
+   click meant for the page, so on a breakpoint canvas an element could never
+   be picked and a comment could never be authored, while pins from comments
+   made in single-frame mode still rendered and still opened. The exception
+   belongs here, beside the blanket rule that caused it. Its pins and cards
+   take their own clicks back in canvas-comments.css. */
+.preview-canvas-outline > .canvas-comment-layer {
+  pointer-events: none;
+}
+
 /* Inactive frames sit behind a transparent target: one click makes the frame
    active (and interactive) rather than reaching a link in a page the user is
    only reviewing. */
