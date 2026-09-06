@@ -167,7 +167,9 @@ describe('ProjectList loading state', () => {
     });
 
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
-    expect(screen.getByRole('alert')).toHaveTextContent(/timed out after 40000ms/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/took longer than 40 seconds/i);
+    // The raw TimeoutError text is a log line, not a sentence for a user.
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/40000ms/);
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
     expect(screen.queryByText(SPINNER_LABEL)).not.toBeInTheDocument();
   });
