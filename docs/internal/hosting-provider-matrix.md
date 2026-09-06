@@ -138,3 +138,31 @@ it exists to be re-verified against and can be deleted whenever.
   **git-triggered** deployment (the testbed deploys by direct upload). The
   stage reducer and `skip_reason` handling are therefore still exercised only
   against documented shapes.
+
+### The link picker's empty list is not a fact about the account
+
+`list_projects` finds Cloudflare projects by first calling `GET /accounts`, so
+a token without `Account Settings:Read` enumerates **no accounts and therefore
+no projects** — a successful, empty, entirely well-formed answer that is
+indistinguishable on the wire from an account with nothing in it. The token
+modal warns about the permission while the token is being created; by the time
+the picker is open, that warning is gone.
+
+Vercel arrives at the same screen by a different route: `list_projects` asks
+`/v9/projects` with no `teamId` (the picker never supplies a scope), so a token
+whose work lives in a team sees an empty personal scope.
+
+The picker's empty state therefore names the likely cause per provider and
+asserts nothing about the account. It used to read "Nothing was returned for
+this account. Create a project on the provider first" — advice about a problem
+neither user has. **Not verified against a live under-permissioned token**: the
+account-listing behaviour is read from the code path and from Cloudflare's own
+permission model, not observed.
+
+### `verify_token` now fails closed on a missing `status`
+
+The verify endpoint's status was matched as `Some("active") | None => Ok(None)`,
+so a response that never said the token was usable was read as saying so. It
+now returns `Malformed` for a missing status. Nothing calls it yet —
+`verify_hosting_token` is a registered command with no callers — so this is
+correctness in advance of the connect flow actually checking a pasted token.
