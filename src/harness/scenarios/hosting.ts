@@ -171,7 +171,7 @@ export const hostingScenarios: Scenario[] = [
     id: 'hosting-failed',
     title: 'Push popover — build failed',
     looksRightWhen:
-      'Clearly failed, tied to this commit, with a way through to the provider’s own log. No URL is offered.',
+      'Clearly failed, tied to this commit, with a way through to the provider’s own log. Critically: NO “Domain” row. This fixture carries a production domain because the real adapters attach one to a failed deployment too — the previous fixture had `urls: {}`, so it could not have shown the bug where “Domain — acme-marketing.com” sat directly under the word “Error”, offering a link to the deployment this push had just failed to replace.',
     project: WORKSPACE_PROJECT,
     openSelector: '.source-control-push-button',
     clipSelector: '.publish-dropdown-menu',
@@ -184,6 +184,12 @@ export const hostingScenarios: Scenario[] = [
         found(
           deployment({ phase: 'failed' }, 'Error', {
             error_message: "Module not found: Can't resolve '@/lib/analytics' in ./app/layout.tsx",
+            // The adapters read the production domain from a project-level
+            // endpoint and attach it to whatever the lookup returned, in
+            // whatever state — so a failed build really does arrive carrying
+            // these. Withholding it is the UI's job, and this is what puts
+            // that job in front of a reviewer.
+            urls: liveUrls,
           })
         )
       ),
@@ -293,6 +299,25 @@ export const hostingScenarios: Scenario[] = [
     commands: { ...workspaceCommands, get_hosting_status: unlinkedHostingStatus },
   },
   {
+    id: 'hosting-unavailable',
+    title: 'Push popover — the status could not be looked up at all',
+    looksRightWhen:
+      'Says plainly that it could not check, and why, with NO spinner and no provider mark. `get_hosting_status` does not only fail transiently — it rejects outright for a folder that is not a repo, a repo with no commits, and a detached HEAD, which is where restoring a snapshot leaves you. The row used to sit on a pulsing “Checking your host…” forever, because the only exit from that state was an answer that was never coming.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.source-control-push-button',
+    clipSelector: '.publish-dropdown-menu',
+    requires: '.publish-dropdown-menu',
+    commands: {
+      ...workspaceCommands,
+      // The only hosting fixture that is a rejection rather than a payload.
+      // Every other scenario here exercises an answer the backend gave; this
+      // one exercises the backend refusing to answer.
+      get_hosting_status: () => {
+        throw new Error('This project has no commits yet.');
+      },
+    },
+  },
+  {
     id: 'hosting-offline',
     title: 'Push popover — provider unreachable',
     looksRightWhen:
@@ -307,7 +332,14 @@ export const hostingScenarios: Scenario[] = [
       ...workspaceCommands,
       get_hosting_status: status(null, {
         lookup: null,
-        transport_error: 'dns error: failed to lookup address information',
+        // Verbatim what `describe_reqwest_error` now produces for an
+        // unreachable host, captured from a real request. It used to be a
+        // tidy hand-written phrase, which is how nobody noticed that the
+        // string a user actually saw led with `error sending request for url
+        // (https://api.cloudflare.com/client/v4/accounts/<their account id>
+        // /pages/projects/<their project>/deployments?per_page=25)`.
+        transport_error:
+          'client error (Connect): dns error: failed to lookup address information: nodename nor servname provided, or not known',
       }),
     },
   },
