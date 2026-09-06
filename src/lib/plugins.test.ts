@@ -178,3 +178,21 @@ describe('isExpectedPluginFailure', () => {
     );
   });
 });
+
+describe('bundled hosting plugins are superseded (issues #386, #804)', () => {
+  // Native hosting (src/components/hosting) replaced the vercel/cloudflare/
+  // netlify plugins. usePlugins filters anything with a supersededReason
+  // out *before* loading/activating it (never calls its onActivate, never
+  // starts its background timers), so these three can no longer reach the
+  // "files missing → deactivation toast" path (#386) or call a stale
+  // required_command like the old Cloudflare plugin's DNS-credential lookup
+  // (#804) — both bugs lived entirely inside code that now never runs. This
+  // pins the invariant that keeps that true: every bundled hosting plugin
+  // id MUST have a superseded reason, or it would load again.
+  it('every HOSTING_PLUGIN_IDS entry has a supersededReason', async () => {
+    const { HOSTING_PLUGIN_IDS, supersededReason } = await loadPlugins();
+    for (const id of HOSTING_PLUGIN_IDS) {
+      expect(supersededReason(id), `expected "${id}" to be superseded`).not.toBeNull();
+    }
+  });
+});
