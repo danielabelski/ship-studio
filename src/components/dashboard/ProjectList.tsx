@@ -23,12 +23,7 @@ import {
   renameProject,
   exportProjectAsTemplate,
 } from '../../lib/project';
-import {
-  asCommandError,
-  formatCommandError,
-  isExpectedCommandError,
-  isProjectFolderGoneError,
-} from '../../lib/errors';
+import { asCommandError, formatCommandError, isProjectFolderGoneError } from '../../lib/errors';
 import { withTimeout } from '../../lib/withTimeout';
 import { logger } from '../../lib/logger';
 import { trackEvent, trackError } from '../../lib/analytics';
@@ -57,12 +52,12 @@ import { MoveFolderModal } from './MoveFolderModal';
 import { MoveWorkspaceModal } from './MoveWorkspaceModal';
 import { SettingsModal } from './SettingsModal';
 import { ProjectActionConfirmModal } from './ProjectActionConfirmModal';
+import { ProjectListStatus } from './ProjectListStatus';
+import { classifyThumbnailLoadFailure } from './projectThumbnailErrors';
 import { ProjectBulkActionsBar } from './ProjectBulkActionsBar';
 import { ProjectBulkActionConfirm } from './ProjectBulkActionConfirm';
 import { DashboardPreferencesCard } from './DashboardPreferencesCard';
 import { DashboardCommunityBanner } from './DashboardCommunityBanner';
-import { Spinner } from '../primitives/Spinner';
-import { Button } from '../primitives/Button';
 import { GitHubCalendar } from './GitHubCalendar';
 import { useModal } from '../../contexts/ModalContext';
 import { useDashboardVisibility } from '../../hooks/useDashboardVisibility';
@@ -92,21 +87,6 @@ interface ProjectWithThumbnail extends DashboardProject {
 type SortOption = 'last_opened' | 'name';
 
 const PROJECT_VIEW_MODE_STORAGE_KEY = 'ship-studio-project-view-mode';
-
-/**
- * Classifies a `getProjectThumbnail` failure into the log level it belongs
- * at. A gone project folder and any other backend-recognized environment
- * state (e.g. a macOS Full Disk Access / EPERM denial from
- * `classify_fs_error`) are user-fixable conditions, not bugs — they must log
- * as warnings so they aren't auto-filed as bug reports (issue #887).
- * Exported for direct unit testing.
- */
-export function classifyThumbnailLoadFailure(e: unknown): { level: 'warn' | 'error' } {
-  if (isProjectFolderGoneError(e) || isExpectedCommandError(e)) {
-    return { level: 'warn' };
-  }
-  return { level: 'error' };
-}
 
 function getInitialProjectViewMode(): ProjectViewMode {
   return localStorage.getItem(PROJECT_VIEW_MODE_STORAGE_KEY) === 'list' ? 'list' : 'grid';
@@ -697,22 +677,13 @@ export function ProjectList({
             }
           />
 
-          {loading ? (
-            <div className="project-list-loading">
-              <Spinner size="lg" style={{ color: 'var(--text-muted)' }} />
-              <p className="text-style-body-medium">Loading projects...</p>
-              {cleanupStatus && (
-                <p className="project-list-cleanup-status text-style-control">{cleanupStatus}</p>
-              )}
-            </div>
-          ) : loadError ? (
-            <div className="project-list-loading" role="alert">
-              <p className="text-style-body-medium">Couldn&rsquo;t load your projects.</p>
-              <p className="project-list-load-error text-style-control">{loadError}</p>
-              <Button variant="secondary" onClick={() => void loadAll()}>
-                Try again
-              </Button>
-            </div>
+          {loading || loadError ? (
+            <ProjectListStatus
+              cleanupStatus={cleanupStatus}
+              loadError={loadError}
+              loading={loading}
+              onRetry={() => void loadAll()}
+            />
           ) : (
             <>
               {projectViewMode === 'list' && (

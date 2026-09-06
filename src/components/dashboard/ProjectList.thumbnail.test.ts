@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyThumbnailLoadFailure } from './ProjectList';
+import { classifyThumbnailLoadFailure } from './projectThumbnailErrors';
 
 /**
  * Issue #887: a `getProjectThumbnail` failure that the backend already
