@@ -22,3 +22,17 @@ export function rejectsWith(message: string) {
     throw new Error(message);
   };
 }
+
+/**
+ * A call that never comes back.
+ *
+ * The other half of the same gap: a surface that only exists *while* a command
+ * is in flight — "Saving…", "Loading your Vercel projects…" — cannot be
+ * photographed with a fixture that resolves, because it is gone by the time the
+ * page settles. A pending promise holds the UI in that state, and IPC still
+ * falls quiet (nothing new is being asked for), so the capture settles
+ * normally.
+ */
+export function neverAnswers() {
+  return () => new Promise<never>(() => {});
+}

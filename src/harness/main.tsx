@@ -49,6 +49,12 @@ installFakeBackend(scenario);
 exposeReactGlobals(React, ReactDOM);
 exposePluginContextRef();
 
+/**
+ * What each scripted step did, so a capture can say a step never happened
+ * rather than quietly photographing the screen before it.
+ */
+const stepLog: string[] = [];
+
 /** Handle for scripted capture runs and for asking the page what it knows. */
 declare global {
   interface Window {
@@ -66,6 +72,8 @@ declare global {
       commandId: string | null;
       /** Set when `?command=` named an id the registry doesn't have. */
       commandMissing?: boolean;
+      /** What the scenario's scripted steps did, in order. */
+      steps?: string[];
     };
   }
 }
@@ -77,6 +85,7 @@ window.__harness = {
   commandsWhenReady: whenRegistryStable,
   run: runCommand,
   commandId,
+  steps: stepLog,
 };
 
 document.title = `Ship Studio harness — ${scenario.id}`;
@@ -95,22 +104,73 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
  * rather than on a fixed sleep, so a slow machine produces the same screenshot
  * as a fast one instead of a half-painted one.
  */
-async function settle(): Promise<void> {
-  const deadline = Date.now() + 8000;
-  if (scenario.openSelector) {
-    for (;;) {
-      const el = document.querySelector<HTMLElement>(scenario.openSelector);
-      if (el) {
-        el.click();
-        break;
-      }
-      if (Date.now() > deadline) {
-        console.error(`[harness] openSelector never appeared: ${scenario.openSelector}`);
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 100));
-    }
+/** Wait for a selector to exist, or give up after `timeoutMs`. */
+async function waitFor(selector: string, timeoutMs = 8000): Promise<HTMLElement | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) return el;
+    if (Date.now() > deadline) return null;
+    await new Promise((r) => setTimeout(r, 100));
   }
+}
+
+/**
+ * Type into a controlled input the way a user does.
+ *
+ * Setting `el.value` directly is invisible to React: the DOM updates, the
+ * component's state does not, and the capture shows a filled field above a
+ * still-disabled Save button — a screen the app cannot actually produce. Going
+ * through the prototype's own setter and dispatching `input` is what React's
+ * synthetic event system reads.
+ */
+function fillInput(el: HTMLElement, value: string): void {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  // Deliberately an unbound setter, applied to this element: that is the whole
+  // technique. `unbound-method` is guarding against losing `this`, which the
+  // explicit receiver here supplies.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const setValue = descriptor?.set;
+  if (setValue) Reflect.apply(setValue, el, [value]);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/**
+ * Perform the scenario's interactions in order: `openSelector` first, then any
+ * `steps`. A step that never finds its selector stops the sequence — later
+ * steps are written against the screen it was supposed to open, so continuing
+ * would click whatever happens to match on the wrong one.
+ */
+async function runSteps(): Promise<void> {
+  const steps = [
+    ...(scenario.openSelector ? [{ click: scenario.openSelector }] : []),
+    ...(scenario.steps ?? []),
+  ];
+
+  for (const step of steps) {
+    const selector = step.click ?? step.fill;
+    if (!selector) continue;
+    const el = await waitFor(selector);
+    if (!el) {
+      stepLog.push(`never appeared: ${selector}`);
+      console.error(`[harness] step never appeared: ${selector}`);
+      return;
+    }
+    if (step.click) {
+      el.click();
+      stepLog.push(`clicked ${selector}`);
+    } else {
+      fillInput(el, step.value ?? '');
+      stepLog.push(`filled ${selector}`);
+    }
+    // One frame, so this step's render lands before the next step looks for
+    // the element it produces.
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  }
+}
+
+async function settle(): Promise<void> {
+  await runSteps();
   if (commandId) {
     // Wait for every feature hook to have registered before looking the
     // command up, otherwise a slow bucket reads as a missing command.

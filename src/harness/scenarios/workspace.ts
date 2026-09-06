@@ -49,6 +49,12 @@ export const workspaceCommands: CommandMap = {
     github_url: 'https://github.com/harness-user/acme-marketing',
   },
   list_pull_requests: [],
+  // Asked for on every workspace open (`useBranchManagement`). Without it
+  // every workspace capture — including all ten hosting states — was badged
+  // incomplete, which by this harness's own rule means their screenshots were
+  // not evidence. False is the real answer for these fixtures: `get_conflict_info`
+  // is empty and no scenario stages a conflicted merge.
+  has_conflicts: false,
   list_worktrees: [],
   detect_workspaces: [],
   /**

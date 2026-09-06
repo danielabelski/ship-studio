@@ -153,6 +153,9 @@ export const featureScenarios: Scenario[] = [
       pull_and_merge: rejectsWith(
         'MERGE_CONFLICT:Auto-merging src/app/page.tsx\nCONFLICT (content): Merge conflict in src/app/page.tsx'
       ),
+      // The repo really is conflicted here, so the workspace default of
+      // `false` would contradict the rest of this scenario's fixtures.
+      has_conflicts: true,
       // `get_conflict_info`, snake_case — the shape at the real call site in
       // `src/lib/conflicts.ts`, which differs from the camelCase
       // `ConflictedFile` the lib maps it into.

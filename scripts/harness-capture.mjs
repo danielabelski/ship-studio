@@ -314,9 +314,17 @@ async function capture({ url, file, clipSelector, identity, label, requires }) {
       await page.eval(`JSON.stringify({
         unmocked: (window.__harness?.unhandled() ?? []).map(u => u.cmd),
         commandMissing: !!window.__harness?.commandMissing,
+        steps: window.__harness?.steps ?? [],
         crashed: document.body.innerText.includes('Something went wrong')
       })`)
     );
+
+    // A scripted step whose control never appeared leaves the page one screen
+    // short of the state the scenario is named after. `requires` catches the
+    // first step; it does not catch a later one, because the surface it asserts
+    // is already on screen by then — a token that never got typed still shows a
+    // perfectly good picture of the modal.
+    state.stepMissed = state.steps.some((s) => s.startsWith('never appeared'));
 
     let clip;
     let missingClip;
@@ -397,7 +405,11 @@ async function capture({ url, file, clipSelector, identity, label, requires }) {
 }
 
 const mark = (r) =>
-  r.crashed || !r.ready || r.missingRequired ? '✗' : r.unmocked.length ? '!' : '✓';
+  r.crashed || !r.ready || r.missingRequired || r.stepMissed
+    ? '✗'
+    : r.unmocked.length
+      ? '!'
+      : '✓';
 
 function renderReport({ scenarios, commands, skipped, meta }) {
   const lines = [
@@ -494,7 +506,7 @@ function renderReport({ scenarios, commands, skipped, meta }) {
   }
 
   const bad = [...scenarios, ...commands].filter(
-    (r) => r.crashed || !r.ready || r.missingRequired
+    (r) => r.crashed || !r.ready || r.missingRequired || r.stepMissed
   );
   if (bad.length) {
     lines.push('## Failures', '');
@@ -503,7 +515,9 @@ function renderReport({ scenarios, commands, skipped, meta }) {
         ? 'crashed'
         : !r.ready
           ? 'never settled'
-          : `subject missing — nothing matched \`${r.requires}\`, so this capture is not of what the scenario claims`;
+          : r.missingRequired
+            ? `subject missing — nothing matched \`${r.requires}\`, so this capture is not of what the scenario claims`
+            : `a scripted step never found its control (${r.steps.filter((s) => s.startsWith('never appeared')).join('; ')}), so this capture is one screen short of the state it is named after`;
       lines.push(`### \`${r.id}\` — ${why}`, '');
       for (const c of r.console) lines.push(`- **${c.level}**: ${c.text.split('\n')[0]}`);
       lines.push('');
@@ -669,7 +683,7 @@ async function main() {
   );
 
   const all = [...scenarioResults, ...commandResults];
-  const broken = all.filter((r) => r.crashed || !r.ready || r.missingRequired);
+  const broken = all.filter((r) => r.crashed || !r.ready || r.missingRequired || r.stepMissed);
   const incomplete = all.filter((r) => !r.crashed && r.unmocked.length);
   const missing = commandResults.filter((r) => r.commandMissing);
 
@@ -692,7 +706,11 @@ async function main() {
             ? 'crashed'
             : !r.ready
               ? 'never became ready'
-              : `subject missing (${r.requires})`
+              : r.missingRequired
+                ? `subject missing (${r.requires})`
+                : `step never found its control (${r.steps
+                    .filter((s) => s.startsWith('never appeared'))
+                    .join('; ')})`
         }`
       );
       for (const c of r.console) console.log(`      ${c.level}: ${c.text.split('\n')[0]}`);
