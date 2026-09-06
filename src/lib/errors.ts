@@ -620,6 +620,28 @@ export function describeProcessError(
         "npm couldn't sign in to the package registry — your saved npm login or token is expired or incorrect. Open a terminal and run `npm login` (or refresh the token in your .npmrc if this project uses a private registry), then try again.",
     };
   }
+  // npm's network layer dropping the registry connection mid-install —
+  // ECONNRESET / ENOTFOUND / ETIMEDOUT / ECONNREFUSED / EAI_AGAIN, or npm's
+  // own "npm error network ..." summary line. npm exits with an unusual,
+  // platform-specific code for these (e.g. -4077 on Windows), so the
+  // exit-code table can't catch it either — only the wording identifies a
+  // transient/environmental network condition, not an app malfunction
+  // (issue #883).
+  if (
+    /\becconnreset\b/.test(lower) ||
+    /\benotfound\b/.test(lower) ||
+    /\betimedout\b/.test(lower) ||
+    /\beconnrefused\b/.test(lower) ||
+    /\beai_again\b/.test(lower) ||
+    lower.includes('npm error network') ||
+    lower.includes('npm err! network')
+  ) {
+    return {
+      expected: true,
+      message:
+        'The connection to the package registry dropped partway through the install — a network blip, proxy, or flaky Wi-Fi, not an app problem. Check your connection and try again.',
+    };
+  }
   // npm refusing a peer-dependency conflict declared by the project itself
   // ("npm error code ERESOLVE" / "unable to resolve dependency tree"). npm
   // exits with the generic code 1, so only the wording identifies it — a
