@@ -51,6 +51,24 @@ const GIT_SCAN_TIMEOUT_SECS: u64 = 3;
 /// git processes at once.
 const GIT_SCAN_CONCURRENCY: usize = 16;
 
+/// Ceiling for the *whole* git pass, across every project. Without it the
+/// worst case is `projects / GIT_SCAN_CONCURRENCY * GIT_SCAN_TIMEOUT_SECS` —
+/// half a minute for a few hundred repos — because each project only bounds
+/// itself. Projects not reached before the deadline degrade to "no git info",
+/// exactly like a project that timed out on its own.
+const GIT_SCAN_TOTAL_BUDGET_SECS: u64 = 6;
+
+/// [`GIT_SCAN_TOTAL_BUDGET_SECS`] as a `Duration`.
+fn git_scan_budget() -> std::time::Duration {
+    std::time::Duration::from_secs(GIT_SCAN_TOTAL_BUDGET_SECS)
+}
+
+/// Ceiling for one whole `get_dashboard_projects` call. The filesystem pass
+/// runs on the blocking pool, where a wedged network mount can hang a thread
+/// indefinitely; this is what turns that into an error the dashboard can show
+/// instead of a spinner that never stops.
+const DASHBOARD_SCAN_BUDGET_SECS: u64 = 25;
+
 /// Run a short, time-bounded scan command and return its output, degrading to
 /// `None` on spawn failure or timeout. The child is killed on timeout so a
 /// hung git process is never left orphaned.
@@ -78,34 +96,53 @@ async fn run_scan_command(
     .ok()
 }
 
-/// Helper to get git branch for a project (time-bounded; `None` on timeout).
-async fn get_git_branch(project_path: &Path) -> Option<String> {
-    let output = run_scan_command(
-        "git",
-        &["rev-parse", "--abbrev-ref", "HEAD"],
-        project_path,
-        GIT_SCAN_TIMEOUT_SECS,
-    )
-    .await?;
-
-    if !output.status.success() {
+/// Resolve the checked-out branch by reading `.git/HEAD` directly — one small
+/// file read instead of a `git rev-parse` fork per project per dashboard load.
+/// Those forks are the ones that logged 733 three-second timeouts in a day.
+///
+/// Handles worktree and submodule `.git` *files* (`gitdir: <path>`). Returns
+/// `None` for a detached HEAD and for a directory with no `.git` of its own,
+/// which is also what `get_uncommitted_count` has always required — so the two
+/// halves of a row's git info now agree about what counts as a repo.
+fn branch_from_head_file(project_path: &Path) -> Option<String> {
+    let dot_git = project_path.join(".git");
+    let git_dir = if dot_git.is_file() {
+        let contents = std::fs::read_to_string(&dot_git).ok()?;
+        let target = Path::new(contents.strip_prefix("gitdir:")?.trim());
+        if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            project_path.join(target)
+        }
+    } else if dot_git.is_dir() {
+        dot_git
+    } else {
         return None;
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let name = head.trim().strip_prefix("ref: refs/heads/")?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
     }
-
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if branch == "HEAD" || branch.is_empty() {
-        return None;
-    }
-
-    Some(branch)
 }
 
 /// Helper to count uncommitted changes (tracked files only; time-bounded,
-/// `None` on timeout).
+/// `None` on timeout). Results — failures included — are cached in `GIT_CACHE`
+/// for 30s, so the repeat dashboard loads that used to re-fork `git status`
+/// for every project hit the cache instead. Git write operations invalidate
+/// the entry through the existing `invalidate`/`invalidate_status` paths, so a
+/// commit or a branch switch is reflected immediately.
 async fn get_uncommitted_count(project_path: &Path) -> Option<u32> {
     let git_dir = project_path.join(".git");
     if !git_dir.exists() {
         return None;
+    }
+
+    let cache_key = project_path.to_string_lossy().to_string();
+    if let Some(cached) = crate::cache::GIT_CACHE.get_scan_status(&cache_key) {
+        return cached;
     }
 
     // Use -uno to ignore untracked files like .DS_Store
@@ -115,26 +152,39 @@ async fn get_uncommitted_count(project_path: &Path) -> Option<u32> {
         project_path,
         GIT_SCAN_TIMEOUT_SECS,
     )
-    .await?;
+    .await;
 
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let count = stdout.lines().filter(|l| !l.trim().is_empty()).count() as u32;
-        return Some(count);
-    }
-    None
+    let count = output.filter(|o| o.status.success()).map(|o| {
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        stdout.lines().filter(|l| !l.trim().is_empty()).count() as u32
+    });
+    crate::cache::GIT_CACHE.set_scan_status(&cache_key, count);
+    count
 }
 
-/// Collects git metadata (current branch + uncommitted count) for many
-/// projects concurrently. Each git call is bounded by
-/// [`GIT_SCAN_TIMEOUT_SECS`]; a slow or hung repo degrades to `(None, None)`
-/// instead of blocking the whole dashboard. Results are returned in input
-/// order.
-async fn scan_git_info(paths: Vec<PathBuf>) -> Vec<(Option<String>, Option<u32>)> {
+/// Counts uncommitted changes for many projects concurrently. Each git call
+/// is bounded by [`GIT_SCAN_TIMEOUT_SECS`] and the pass as a whole by
+/// [`GIT_SCAN_TOTAL_BUDGET_SECS`], so neither one slow repo nor several
+/// hundred of them can hold the dashboard. Results are returned in input
+/// order, `None` where the count could not be had.
+async fn scan_uncommitted_counts(
+    paths: Vec<PathBuf>,
+    budget: std::time::Duration,
+) -> Vec<Option<u32>> {
+    let deadline = tokio::time::Instant::now() + budget;
     stream::iter(paths)
-        .map(
-            |path| async move { tokio::join!(get_git_branch(&path), get_uncommitted_count(&path)) },
-        )
+        .map(|path| async move {
+            match tokio::time::timeout_at(deadline, get_uncommitted_count(&path)).await {
+                Ok(count) => count,
+                Err(_) => {
+                    tracing::debug!(
+                        project = %path.display(),
+                        "dashboard git scan budget exhausted; reporting no git status"
+                    );
+                    None
+                }
+            }
+        })
         .buffered(GIT_SCAN_CONCURRENCY)
         .collect()
         .await
@@ -150,41 +200,6 @@ fn warn_project_excluded(path: &Path, reason: &str) {
         reason,
         "project directory excluded from dashboard list"
     );
-}
-
-/// Sync helper for ensuring .shipstudio/ is in gitignore
-fn ensure_gitignore_has_shipstudio_sync(project: &std::path::Path) -> Result<(), String> {
-    let gitignore_path = project.join(".gitignore");
-    let entry = ".shipstudio/";
-
-    let content = if gitignore_path.exists() {
-        std::fs::read_to_string(&gitignore_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    let already_ignored = content.lines().any(|line| {
-        let trimmed = line.trim();
-        trimmed == entry
-            || trimmed == ".shipstudio"
-            || trimmed == "/.shipstudio/"
-            || trimmed == "/.shipstudio"
-    });
-
-    if already_ignored {
-        return Ok(());
-    }
-
-    let new_content = if content.is_empty() {
-        format!("# ShipStudio metadata\n{entry}\n")
-    } else if content.ends_with('\n') {
-        format!("{content}\n# ShipStudio metadata\n{entry}\n")
-    } else {
-        format!("{content}\n\n# ShipStudio metadata\n{entry}\n")
-    };
-
-    std::fs::write(&gitignore_path, new_content).ok();
-    Ok(())
 }
 
 /// Check if a directory is a valid project.
@@ -718,16 +733,22 @@ fn build_dashboard_project(
         return None;
     }
 
-    // Ensure .shipstudio/ is gitignored
-    let _ = ensure_gitignore_has_shipstudio_sync(path);
+    // Deliberately NOT ensuring `.shipstudio/` is gitignored here. Listing the
+    // dashboard used to read — and sometimes write — a `.gitignore` in every
+    // one of the user's repositories on every render. Rendering a list must not
+    // mutate the things it lists. The write already happens where it belongs:
+    // at project creation (`useProjectCreation`) and on every project open
+    // (`useProjectLifecycle`), both through the `ensure_gitignore_has_shipstudio`
+    // command, which is where a project that predates the entry gets fixed.
 
     Some(DashboardProject {
         name,
         path: path.to_string_lossy().to_string(),
         thumbnail,
         last_opened: metadata.as_ref().and_then(|m| m.last_opened),
-        // Filled in by the git scan.
-        git_branch: None,
+        // Read straight off `.git/HEAD` — no subprocess, so it belongs in this
+        // synchronous pass. Only the uncommitted count still needs git itself.
+        git_branch: branch_from_head_file(path),
         uncommitted_count: None,
         auto_accept_mode: metadata.as_ref().and_then(|m| m.auto_accept_mode),
         hide_main_branch_warning: metadata.as_ref().and_then(|m| m.hide_main_branch_warning),
@@ -749,19 +770,28 @@ fn sort_dashboard_projects(projects: &mut [DashboardProject]) {
 
 /// The whole dashboard scan for one projects root, with the app-level inputs
 /// supplied by the caller. Split from the command so tests and the timing
-/// harness can scan a synthetic tree.
+/// harness drive exactly the code the command runs.
+///
+/// The filesystem pass runs on the blocking pool. It has to: it is on the
+/// order of a hundred `std::fs` calls per project, and running them on a tokio
+/// worker parks that worker for the whole scan. With three simultaneous
+/// dashboard calls that was three workers parked at once, and nothing left to
+/// run the rest of the app — which is exactly what a `sample` of the wedged
+/// process showed.
 async fn scan_dashboard_projects_in(
-    root: &Path,
-    inputs: &DashboardScanInputs,
+    root: PathBuf,
+    inputs: DashboardScanInputs,
 ) -> Result<Vec<DashboardProject>, CommandError> {
-    let (mut projects, scan_paths) = collect_dashboard_projects(root, inputs)?;
+    let (mut projects, scan_paths) =
+        tokio::task::spawn_blocking(move || collect_dashboard_projects(&root, &inputs))
+            .await
+            .map_err(|e| CommandError::from(format!("Dashboard scan panicked: {e}")))??;
 
-    // Second pass: concurrent, time-bounded git scans (one entry per project,
-    // in the same order projects were pushed above). A repo that errors or
-    // times out simply keeps `git_branch: None` / `uncommitted_count: None`.
-    let git_info = scan_git_info(scan_paths).await;
-    for (project, (git_branch, uncommitted_count)) in projects.iter_mut().zip(git_info) {
-        project.git_branch = git_branch;
+    // Second pass: concurrent, time-bounded `git status` (one entry per
+    // project, in the same order projects were pushed above). A repo that
+    // errors or times out simply keeps `uncommitted_count: None`.
+    let counts = scan_uncommitted_counts(scan_paths, git_scan_budget()).await;
+    for (project, uncommitted_count) in projects.iter_mut().zip(counts) {
         project.uncommitted_count = uncommitted_count;
     }
 
@@ -769,13 +799,82 @@ async fn scan_dashboard_projects_in(
     Ok(projects)
 }
 
+/// The most recent run of a coalesced operation, with the instant that run
+/// *started*.
+struct Coalesced<T> {
+    started_at: std::time::Instant,
+    value: T,
+}
+
+/// Run `work`, unless an equivalent run that started after `arrived_at` has
+/// already produced an answer — in which case take that answer instead.
+///
+/// This is coalescing, not caching, and the distinction is the whole point: a
+/// caller is only ever handed a result from a run that began *after the caller
+/// asked*, so it can never see something staler than a scan of its own would
+/// have been. Three simultaneous dashboard loads therefore cost one scan, and
+/// a load issued a moment after a project was deleted still rescans.
+///
+/// The lock is held across the work, so callers queue rather than pile on.
+async fn coalesce<T, E, F, Fut>(
+    slot: &tokio::sync::Mutex<Option<Coalesced<T>>>,
+    arrived_at: std::time::Instant,
+    work: F,
+) -> Result<T, E>
+where
+    T: Clone,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+{
+    let mut guard = slot.lock().await;
+    if let Some(last) = guard.as_ref() {
+        if last.started_at >= arrived_at {
+            return Ok(last.value.clone());
+        }
+    }
+    let started_at = std::time::Instant::now();
+    let value = work().await?;
+    *guard = Some(Coalesced {
+        started_at,
+        value: value.clone(),
+    });
+    Ok(value)
+}
+
+/// Coalescing slot for [`get_dashboard_projects`]. Three concurrent identical
+/// calls used to run the same expensive scan three times over.
+static DASHBOARD_SCAN_GATE: tokio::sync::Mutex<Option<Coalesced<Vec<DashboardProject>>>> =
+    tokio::sync::Mutex::const_new(None);
+
 /// Returns enhanced project list for dashboard with git info
 #[tauri::command]
 #[tracing::instrument]
 pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandError> {
-    let root = crate::utils::projects_root()?;
-    let inputs = DashboardScanInputs::read()?;
-    scan_dashboard_projects_in(&root, &inputs).await
+    let arrived_at = std::time::Instant::now();
+    coalesce(&DASHBOARD_SCAN_GATE, arrived_at, || async {
+        let scan = async {
+            let root = crate::utils::projects_root()?;
+            // Reading app state, the removed-project registry and the
+            // external-project registry is three more file opens — off the
+            // runtime with everything else.
+            let inputs = tokio::task::spawn_blocking(DashboardScanInputs::read)
+                .await
+                .map_err(|e| CommandError::from(format!("Dashboard scan panicked: {e}")))??;
+            scan_dashboard_projects_in(root, inputs).await
+        };
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(DASHBOARD_SCAN_BUDGET_SECS),
+            scan,
+        )
+        .await
+        .map_err(|_| {
+            CommandError::expected(format!(
+                "Reading your projects folder took longer than {DASHBOARD_SCAN_BUDGET_SECS}s and was stopped. This usually means a project is on a disconnected network drive or an unmounted volume."
+            ))
+        })?
+    })
+    .await
 }
 
 /// Scans a project's pages/routes directory for page routes.
@@ -1708,25 +1807,63 @@ mod tests {
     #[tokio::test]
     async fn git_scan_helpers_degrade_to_none_outside_a_repo() {
         let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(get_git_branch(tmp.path()).await, None);
+        assert_eq!(branch_from_head_file(tmp.path()), None);
         assert_eq!(get_uncommitted_count(tmp.path()).await, None);
     }
 
     #[tokio::test]
-    async fn scan_git_info_returns_one_entry_per_path_in_order() {
+    async fn scan_uncommitted_counts_returns_one_entry_per_path_in_order() {
         let tmp = tempfile::tempdir().unwrap();
         make_project(tmp.path(), "alpha");
         make_project(tmp.path(), "beta");
         let paths = vec![tmp.path().join("alpha"), tmp.path().join("beta")];
 
-        let info = scan_git_info(paths).await;
+        let counts = scan_uncommitted_counts(paths, git_scan_budget()).await;
 
         // Neither project is a git repo — both must degrade gracefully
         // rather than erroring or being dropped.
-        assert_eq!(info.len(), 2);
-        assert!(info
-            .iter()
-            .all(|(branch, count)| branch.is_none() && count.is_none()));
+        assert_eq!(counts.len(), 2);
+        assert!(counts.iter().all(|count| count.is_none()));
+    }
+
+    #[test]
+    fn branch_from_head_file_reads_a_normal_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir(&git_dir).unwrap();
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature/foo-bar\n").unwrap();
+        assert_eq!(
+            branch_from_head_file(tmp.path()),
+            Some("feature/foo-bar".to_string())
+        );
+    }
+
+    #[test]
+    fn branch_from_head_file_is_none_for_detached_head_and_non_repos() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(branch_from_head_file(tmp.path()), None);
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir(&git_dir).unwrap();
+        std::fs::write(
+            git_dir.join("HEAD"),
+            "1234567890abcdef1234567890abcdef12345678\n",
+        )
+        .unwrap();
+        assert_eq!(branch_from_head_file(tmp.path()), None);
+    }
+
+    #[test]
+    fn branch_from_head_file_follows_a_worktree_gitdir_pointer() {
+        // Linked worktrees and submodules have a `.git` FILE pointing at the
+        // real git directory.
+        let tmp = tempfile::tempdir().unwrap();
+        let real_git = tmp.path().join("repo-git");
+        std::fs::create_dir(&real_git).unwrap();
+        std::fs::write(real_git.join("HEAD"), "ref: refs/heads/wt-branch\n").unwrap();
+        let wt = tmp.path().join("worktree");
+        std::fs::create_dir(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: ../repo-git\n").unwrap();
+        assert_eq!(branch_from_head_file(&wt), Some("wt-branch".to_string()));
     }
 
     #[test]
@@ -1954,6 +2091,13 @@ mod scan_tests {
     }
 
     /// Run `f` with exclusion warnings captured, returning them in order.
+    ///
+    /// `tracing::subscriber::with_default` is thread-local, so `f` must do its
+    /// logging on *this* thread — which is why the exclusion test calls the
+    /// synchronous collection pass directly rather than the async scan that
+    /// hands that pass to the blocking pool. Every exclusion warning the
+    /// dashboard emits comes from that pass, so nothing is lost, but a future
+    /// exclusion added elsewhere would not be seen here.
     fn capture_exclusions<T>(f: impl FnOnce() -> T) -> (T, Vec<(String, String)>) {
         use tracing_subscriber::layer::SubscriberExt;
         let capture = ExclusionCapture::default();
@@ -1988,7 +2132,7 @@ mod scan_tests {
         make_synthetic_project(&root.join("never"), None, None);
 
         let projects = block_on(2, async {
-            scan_dashboard_projects_in(root, &empty_inputs())
+            scan_dashboard_projects_in(root.to_path_buf(), empty_inputs())
                 .await
                 .expect("scan")
         });
@@ -2033,13 +2177,8 @@ mod scan_tests {
         let gone = root.join("gone-external");
         inputs.external_paths.push(gone.clone());
 
-        let (projects, exclusions) = capture_exclusions(|| {
-            block_on(2, async {
-                scan_dashboard_projects_in(root, &inputs)
-                    .await
-                    .expect("scan")
-            })
-        });
+        let ((projects, _paths), exclusions) =
+            capture_exclusions(|| collect_dashboard_projects(root, &inputs).expect("collect"));
 
         assert_eq!(
             projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
@@ -2071,11 +2210,100 @@ mod scan_tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let missing = tmp.path().join("nope");
         let projects = block_on(2, async {
-            scan_dashboard_projects_in(&missing, &empty_inputs())
+            scan_dashboard_projects_in(missing.clone(), empty_inputs())
                 .await
                 .expect("scan")
         });
         assert!(projects.is_empty());
+    }
+
+    // ---------- coalescing ----------
+
+    /// Three simultaneous scans must cost one scan. Counting the runs is the
+    /// claim; timing them would only be a proxy for it.
+    #[test]
+    fn concurrent_calls_run_the_work_once() {
+        let slot: tokio::sync::Mutex<Option<Coalesced<u32>>> = tokio::sync::Mutex::const_new(None);
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let results: Vec<u32> = block_on(3, async {
+            let mut handles = Vec::new();
+            let arrived = Instant::now();
+            for _ in 0..3 {
+                let runs = runs.clone();
+                let slot = &slot;
+                handles.push(async move {
+                    coalesce::<u32, (), _, _>(slot, arrived, || async {
+                        runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        Ok(7)
+                    })
+                    .await
+                    .expect("coalesced")
+                });
+            }
+            futures_util::future::join_all(handles).await
+        });
+
+        assert_eq!(results, vec![7, 7, 7]);
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A call that arrives *after* the previous run finished must not be given
+    /// that run's answer — otherwise deleting a project would leave it on the
+    /// dashboard, which is the failure mode a plain TTL cache would have.
+    #[test]
+    fn a_later_call_rescans_rather_than_reusing_the_last_answer() {
+        let slot: tokio::sync::Mutex<Option<Coalesced<usize>>> =
+            tokio::sync::Mutex::const_new(None);
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let (first, second) = block_on(2, async {
+            let run = || {
+                let runs = runs.clone();
+                async move { Ok::<_, ()>(runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) }
+            };
+            let first = coalesce(&slot, Instant::now(), run).await.expect("first");
+            // Distinct arrival instants: `Instant` on macOS has nanosecond
+            // resolution, but sleep a beat so the ordering is unambiguous.
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let second = coalesce(&slot, Instant::now(), run).await.expect("second");
+            (first, second)
+        });
+
+        assert_eq!((first, second), (0, 1));
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    // ---------- git pass budget ----------
+
+    /// The per-project timeout alone bounds the pass at
+    /// `projects / concurrency * per-project timeout`. The whole-pass budget is
+    /// what keeps a few hundred wedged repos from holding the dashboard for
+    /// half a minute; projects it does not reach degrade to "no git status",
+    /// exactly like a project that timed out on its own.
+    #[test]
+    fn an_exhausted_budget_degrades_every_project_instead_of_waiting() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        make_synthetic_project(&root.join("a"), Some(1), None);
+        make_synthetic_project(&root.join("b"), Some(2), None);
+        let paths = vec![root.join("a"), root.join("b")];
+
+        let (with_budget, without) = block_on(2, async {
+            // Zero budget first: `get_uncommitted_count` caches its result, and
+            // a cached value resolves on the first poll — which a timeout that
+            // has already elapsed still lets through. Cold first, so the
+            // assertion below is about the budget and not about the cache.
+            let without = scan_uncommitted_counts(paths.clone(), Duration::ZERO).await;
+            let with_budget = scan_uncommitted_counts(paths.clone(), git_scan_budget()).await;
+            (with_budget, without)
+        });
+
+        // Clean repos: the real scan finds zero changes. If this said `None`
+        // the test below would pass vacuously.
+        assert_eq!(with_budget, vec![Some(0), Some(0)]);
+        assert_eq!(without, vec![None, None]);
     }
 
     // ---------- timing harness ----------
@@ -2152,7 +2380,7 @@ mod scan_tests {
             for _ in 0..HARNESS_CONCURRENT_CALLS {
                 let root = root.clone();
                 handles.push(tokio::spawn(async move {
-                    scan_dashboard_projects_in(&root, &empty_inputs())
+                    scan_dashboard_projects_in(root.clone(), empty_inputs())
                         .await
                         .expect("scan")
                         .len()
@@ -2176,14 +2404,41 @@ mod scan_tests {
             "expected {n}, got {counts:?}"
         );
 
+        // Same burst again, this time through the coalescer the command wraps
+        // the scan in, so the two numbers are directly comparable.
+        let coalesced_burst = block_on(HARNESS_WORKERS, async {
+            let slot: tokio::sync::Mutex<Option<Coalesced<usize>>> =
+                tokio::sync::Mutex::const_new(None);
+            let slot = &slot;
+            let t0 = Instant::now();
+            let arrived = Instant::now();
+            let mut futs = Vec::new();
+            for _ in 0..HARNESS_CONCURRENT_CALLS {
+                let root = root.clone();
+                futs.push(async move {
+                    coalesce::<usize, CommandError, _, _>(slot, arrived, || async {
+                        Ok(scan_dashboard_projects_in(root, empty_inputs())
+                            .await?
+                            .len())
+                    })
+                    .await
+                    .expect("coalesced scan")
+                });
+            }
+            let got = futures_util::future::join_all(futs).await;
+            assert!(got.iter().all(|c| *c == n), "expected {n}, got {got:?}");
+            t0.elapsed()
+        });
+
         println!("\n=== dashboard scan timing harness ===");
-        println!("projects            : {n}");
-        println!("concurrent calls    : {HARNESS_CONCURRENT_CALLS}");
-        println!("tokio worker threads: {HARNESS_WORKERS}");
-        println!("load before         : {before_load}");
-        println!("load after          : {}", loadavg());
-        println!("burst wall time     : {burst:?}   <- what the user waits");
-        println!("worst heartbeat late: {worst_late:?}   <- runtime starvation");
+        println!("projects              : {n}");
+        println!("concurrent calls      : {HARNESS_CONCURRENT_CALLS}");
+        println!("tokio worker threads  : {HARNESS_WORKERS}");
+        println!("load before           : {before_load}");
+        println!("load after            : {}", loadavg());
+        println!("burst wall time       : {burst:?}   <- what the user waits");
+        println!("worst heartbeat late  : {worst_late:?}   <- runtime starvation");
+        println!("burst, coalesced      : {coalesced_burst:?}");
         println!("=====================================\n");
     }
 
@@ -2209,10 +2464,9 @@ mod scan_tests {
             let fs_pass = t0.elapsed();
 
             let t1 = Instant::now();
-            let git = scan_git_info(paths).await;
+            let git = scan_uncommitted_counts(paths, git_scan_budget()).await;
             let git_pass = t1.elapsed();
-            for (p, (b, c)) in projects.iter_mut().zip(git) {
-                p.git_branch = b;
+            for (p, c) in projects.iter_mut().zip(git) {
                 p.uncommitted_count = c;
             }
             let count = projects.len();
