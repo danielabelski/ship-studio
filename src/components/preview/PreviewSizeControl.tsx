@@ -9,7 +9,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { MoreHorizontalIcon } from '@/components/icons';
 import { Button } from '../primitives/Button';
-import { IconButton } from '../primitives/IconButton';
 import { ValueField } from '../primitives/ValueField';
 import { trackEvent } from '../../lib/analytics';
 
@@ -162,30 +161,26 @@ export function PreviewSizeControl({
 
   return (
     <span className="preview-size-wrap" ref={wrapRef}>
+      {/* One control, not two: the ⋯ and the readout open the same popover, so
+          they are one button that reads as pressed while it is open — the
+          treatment every other toolbar toggle uses. The ⋯ appears only once the
+          icon strip has gone, where it stands in for the strip; the readout
+          drops at the narrowest widths, leaving the ⋯ alone. */}
       <Button
         type="button"
-        variant="ghost"
-        className="preview-dimensions preview-dimensions--label"
-        title="Set an exact preview size"
+        variant="default"
+        className="preview-dimensions"
+        title="Set preview size or choose a breakpoint"
         aria-label={sizeButtonLabel}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={togglePopover}
       >
+        <MoreHorizontalIcon size={14} className="preview-dimensions-dots" />
         <span className="preview-dimensions-label">
           {width} × {height}
         </span>
       </Button>
-      <IconButton
-        className="preview-dimensions preview-dimensions--compact"
-        variant="ghost"
-        icon={<MoreHorizontalIcon size={14} />}
-        title="Set preview size or choose a breakpoint"
-        aria-label="Set preview size or choose a breakpoint"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={togglePopover}
-      />
       {open && (
         <div className="preview-size-popover" role="dialog" aria-labelledby="preview-size-title">
           <h2 id="preview-size-title" className="preview-size-title">

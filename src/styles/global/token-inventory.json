@@ -514,7 +514,7 @@
       "status": "migration",
       "pluginStable": false,
       "removalCondition": "Remove after internal consumers migrate to the canonical semantic role.",
-      "consumerCount": 356
+      "consumerCount": 353
     },
     {
       "name": "--transition-slow",
@@ -1595,7 +1595,7 @@
       "owner": "Button",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 3
+      "consumerCount": 2
     },
     {
       "name": "--button-border-solid",
@@ -1829,7 +1829,7 @@
       "owner": "Control",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 64
+      "consumerCount": 58
     },
     {
       "name": "--control-height-large",
@@ -3620,7 +3620,7 @@
       "owner": "global/core",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 87
+      "consumerCount": 86
     },
     {
       "name": "--stroke-2",
@@ -4061,7 +4061,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 34
+      "consumerCount": 33
     },
     {
       "name": "--surface-selected",
@@ -4124,7 +4124,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": true,
-      "consumerCount": 412
+      "consumerCount": 409
     },
     {
       "name": "--text-secondary",
@@ -4151,7 +4151,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": true,
-      "consumerCount": 19
+      "consumerCount": 18
     },
     {
       "name": "--text-terminal",
@@ -4187,7 +4187,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 421
+      "consumerCount": 420
     },
     {
       "name": "--border-subtle",
@@ -4817,7 +4817,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 273
+      "consumerCount": 272
     },
     {
       "name": "--spacing-sm",
@@ -4871,7 +4871,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 129
+      "consumerCount": 128
     },
     {
       "name": "--radius-card",

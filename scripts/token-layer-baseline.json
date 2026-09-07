@@ -1119,18 +1119,6 @@
       "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
     },
     {
-      "path": "src/styles/features/preview-size.css",
-      "token": "--stroke-1",
-      "count": 1,
-      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
-    },
-    {
-      "path": "src/styles/features/preview-size.css",
-      "token": "--transition",
-      "count": 3,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
       "path": "src/styles/features/preview.css",
       "token": "--font-size-11",
       "count": 1,
