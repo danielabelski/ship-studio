@@ -198,22 +198,19 @@ async fn resolve_people(project: &std::path::Path, repo: Option<&str>) -> People
             .ok()
             .map(|login| login.to_lowercase());
 
-    let Some(repo) = repo else {
-        return People {
-            me,
-            ..Default::default()
-        };
+    let (collaborators, mut identities) = match repo {
+        Some(repo) => tokio::join!(
+            derive::collaborators(project, repo),
+            derive::identity_map(project, repo)
+        ),
+        None => Default::default(),
     };
 
-    let (collaborators, mut identities) = tokio::join!(
-        derive::collaborators(project, repo),
-        derive::identity_map(project, repo)
-    );
-
-    // Your own email → your own login, which needs no network and no
-    // permissions. Worth doing even when the API answered: it is the identity
-    // most likely to be missing from a public repo's recent commits, and you
-    // appearing in your own team list twice reads as the feature being broken.
+    // Your own email → your own login. Needs no network, no `gh` and no repo
+    // permissions, which is why it happens whether or not there is a remote:
+    // on a local-only repo it is the *only* identity anything can resolve, and
+    // without it you are an unlinked name in your own team list. It also
+    // survives a public repo whose recent commits GitHub could not place.
     if let (Some(me), Some(email)) = (me.as_deref(), derive::own_git_email(project).await) {
         identities.entry(email).or_insert_with(|| me.to_string());
     }
