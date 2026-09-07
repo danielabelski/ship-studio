@@ -11,11 +11,13 @@ facing language — what changed, in plain English — not commit subjects.
 - **Breakpoint canvas** - See every breakpoint at once, side by side, each showing the whole page at its own device width and an honest viewport height. Pan and zoom it like a design canvas; click a frame's label to drop into that size and work there. Editing, inspection and screenshots follow whichever frame is active
 - **Comments on the preview** - Pin a note to the element it is about, collect a few, and hand them all to your agent in one go instead of describing them one at a time
 - **Hosting status, built into the app** - The Vercel plugin is replaced by a native hosting section that supports Vercel, Cloudflare Pages and Netlify. It answers one question honestly: did *the commit you just pushed* deploy? It shows the provider's own status word, the site's address, and when a build fails, the error line — so you don't have to open the dashboard to find out why
+- **Element breadcrumb in the visual editor** - See where the selected element sits in the page, and click a level to jump up to it (thanks Martin Crandon)
 - **The dashboard opens fast** - Scanning your projects no longer blocks on filesystem work or rewrites every project's `.gitignore` on each load. Measured 2.06s to 0.38s for three projects opening at once, and a scan that fails now says so with a retry instead of spinning forever
 - **Comments on a breakpoint canvas actually work** - An invisible layer was swallowing every click, so on the canvas you could never pick an element or write a note
 - **Dialogs open on the thing you came to type in**, not on the close button — pressing Enter at a field you thought was focused no longer dismisses the dialog
 - **A push error no longer prints your account id** into the Push popover
 - **The app explains a failed start** - If the bundle never runs, or it runs but its stylesheet doesn't load, you get a short message and where to find your logs, instead of a dark window with nothing in it
+- **Bun projects install with bun** - Bun 1.2 replaced its binary lockfile with a text `bun.lock`, and Ship Studio was only looking for the old name — so anything bun had locked since got an npm install it wasn't set up for
 - **Quieter, smaller logs** - Span-close noise is gone (it was 91% of the volume) and log retention is capped at 14 days
 - **Opt-in Spotify widget** in the sidebar and a new Experimental tab in Settings (macOS)
 - **~20 reported issues fixed** across git, GitHub, MCP, plugins, mobile, the terminal, and the visual editor — mostly routine environment states (permission prompts, vanished folders, network blips, index.lock contention) that used to file themselves as bugs and now explain themselves instead

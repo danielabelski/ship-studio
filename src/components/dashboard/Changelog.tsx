@@ -36,6 +36,7 @@ const CHANGELOG: ChangelogEntry[] = [
       'Dialogs open on the thing you came to type in rather than the close button, so pressing Enter at a field you thought was focused no longer dismisses the dialog',
       'A push error no longer prints your account id into the Push popover',
       "The app explains a failed start: if it never runs, or runs but its styles don't load, you get a short message and where to find your logs instead of a dark window with nothing in it",
+      'Bun projects install with bun again: Bun 1.2 replaced its binary lockfile with a text bun.lock, and Ship Studio was still only looking for the old name — so anything bun had locked since got an npm install it was never set up for',
       'Quieter, smaller logs — span-close noise (91% of the volume) is gone and log retention is capped at 14 days',
       'Opt-in Spotify now-playing widget in the sidebar, and a new Experimental tab in Settings (macOS)',
       '~20 reported issues fixed across git, GitHub, MCP, plugins, mobile, the terminal and the visual editor — mostly routine environment states (permission prompts, vanished folders, network blips, index.lock contention) that used to file themselves as bug reports and now explain themselves instead',
