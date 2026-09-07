@@ -228,7 +228,7 @@ export function TeamView() {
             <div className="team-sync" data-state={syncState.repo ? 'linked' : 'local'}>
               <span className="team-sync-repo">
                 <GitHubIcon size={12} />
-                {syncState.repo ?? 'No GitHub remote — this project is single-player'}
+                {syncState.repo ?? 'No GitHub remote. This project is single-player'}
               </span>
 
               {syncState.repo && (

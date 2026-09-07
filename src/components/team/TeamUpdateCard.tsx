@@ -59,7 +59,6 @@ export function TeamUpdateCard({
 }: TeamUpdateCardProps) {
   const thin = update.writtenBy === 'app';
   const totals = fileTotals(update.files);
-  const firstName = update.actor.name.split(' ')[0];
   const githubUrl = update.githubUrl;
 
   return (
@@ -112,17 +111,15 @@ export function TeamUpdateCard({
         </ul>
       )}
 
-      {/* A row Ship Studio did not write. Naming whose it is, and what is
-          therefore missing, turns a thin card from "the app failed to explain
-          this" into "GitHub is all anyone has for this person" — which is the
-          truth, and the version a teammate can actually act on. */}
+      {/* A row Ship Studio did not write. One line saying where to go for the
+          rest, and nothing else: it was briefly a sentence naming the person
+          and explaining what their push was missing, which read as a complaint
+          about a teammate for using a different tool. Half the team will always
+          be on a different tool. */}
       {thin && (
         <p className="team-update-source-note">
           <GitHubIcon size={11} />
-          <span>
-            Straight from GitHub. {firstName} isn&rsquo;t pushing through Ship Studio, so there is
-            no record of why this changed — only that it did.
-          </span>
+          <span>Not pushed from Ship Studio. Full details are on GitHub.</span>
         </p>
       )}
 

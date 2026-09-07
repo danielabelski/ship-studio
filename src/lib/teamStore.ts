@@ -66,6 +66,21 @@ interface TeamUiState {
 
 const SEEN_PREFIX = 'shipstudio.team.seen:';
 const PENDING_PREFIX = 'shipstudio.team.pending:';
+const CACHE_PREFIX = 'shipstudio.team.cache:';
+
+/**
+ * How many rows of the last snapshot are kept for the next open.
+ *
+ * Reading a repository takes a couple of seconds: 62 live branches on this one,
+ * each a `git log --numstat`, plus GitHub. Waiting through that is fine once;
+ * waiting through it every single time you open a project is what made the
+ * header's face cluster look broken — it simply was not there yet.
+ *
+ * So the last snapshot is shown immediately and refreshed behind it. Forty rows
+ * is well past a screenful and keeps the stored blob small enough not to matter
+ * next to a browser storage quota.
+ */
+const CACHE_UPDATES = 40;
 
 /** How many seen ids to keep. Past this the oldest are dropped. */
 const MAX_SEEN = 500;
@@ -207,12 +222,33 @@ export function adopt(projectPath: string, _projectName?: string, _repo?: string
   adoptedPath = projectPath;
 
   pending = loadPending(projectPath);
-  // Clear immediately rather than leaving the previous project's feed on
-  // screen under this project's name while the read is in flight.
-  state = { ...emptySnapshot(), seenIds: readJson<string[]>(`${SEEN_PREFIX}${projectPath}`, []) };
-  setUi({ loading: true, expandedId: null });
+  const seenIds = readJson<string[]>(`${SEEN_PREFIX}${projectPath}`, []);
+
+  // Last time's answer, straight away, while this time's is fetched behind it.
+  // Never the *previous project's* feed under this project's name — that is why
+  // the fallback here is empty rather than whatever happened to be in `state`.
+  const cached = readJson<TeamSnapshot | null>(`${CACHE_PREFIX}${projectPath}`, null);
+  state = cached?.updates
+    ? // `lastSyncedAt` stays as it was stored, so the sync row says how old this
+      // is instead of claiming it was just fetched.
+      mergePending({ ...cached, seenIds, sync: { ...cached.sync, syncing: false, error: null } })
+    : { ...emptySnapshot(), seenIds };
+
+  setUi({ loading: !cached, expandedId: null });
+  notify();
 
   void refresh(projectPath);
+}
+
+/** Keep this snapshot for the next time the project opens. */
+function cache(projectPath: string, snapshot: TeamSnapshot): void {
+  writeJson(`${CACHE_PREFIX}${projectPath}`, {
+    ...snapshot,
+    updates: snapshot.updates.slice(0, CACHE_UPDATES),
+    // Seen-ness has its own key, and the pending buffer has another. Storing
+    // either here would give them two homes that disagree.
+    seenIds: [],
+  });
 }
 
 /** Re-read the snapshot for the adopted project. */
@@ -223,13 +259,13 @@ export async function refresh(projectPath = adoptedPath): Promise<void> {
     const snapshot = await getTeamSnapshot(projectPath);
     // Leaving the project mid-read must not drop another project's feed here.
     if (adoptedPath !== projectPath) return;
-    emit(
-      mergePending({
-        ...snapshot,
-        seenIds: state.seenIds,
-        sync: { ...snapshot.sync, lastSyncedAt: Date.now(), error: null, syncing: false },
-      })
-    );
+    const fresh = mergePending({
+      ...snapshot,
+      seenIds: state.seenIds,
+      sync: { ...snapshot.sync, lastSyncedAt: Date.now(), error: null, syncing: false },
+    });
+    emit(fresh);
+    cache(projectPath, fresh);
   } catch (error) {
     if (adoptedPath !== projectPath) return;
     const message = formatCommandError(asCommandError(error));

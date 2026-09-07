@@ -29,7 +29,7 @@ const WRITERS = [
   {
     who: 'Ship Studio',
     what: 'Pushes, branches, PRs, deploys, workflow runs, comments',
-    how: 'Written by the app itself, in Rust. Deterministic — it happens whether or not an agent is running.',
+    how: 'Written by the app itself, in Rust. Deterministic: it happens whether or not an agent is running.',
     tone: 'certain',
   },
   {
@@ -93,7 +93,7 @@ export function TeamHowItWorks({ onClose }: TeamHowItWorksProps) {
           </ul>
           <p className="team-how-note">
             The app never depends on an agent remembering. If an agent writes nothing, Ship Studio
-            still records the session from what changed on disk — you lose the explanation, not the
+            still records the session from what changed on disk. You lose the explanation, not the
             entry.
           </p>
         </div>
@@ -104,7 +104,7 @@ export function TeamHowItWorks({ onClose }: TeamHowItWorksProps) {
         <ul className="team-how-limit-list">
           <li>
             <strong>Not live.</strong> Nothing can notify you without a server, so news arrives when
-            Ship Studio next fetches — about once a minute while the app is open, and never while it
+            Ship Studio next fetches, about once a minute while the app is open, and never while it
             is closed.
           </li>
           <li>
@@ -116,7 +116,7 @@ export function TeamHowItWorks({ onClose }: TeamHowItWorksProps) {
           <li>
             <strong>Not private.</strong> Anything written here is committed history that other
             people fetch. Ship Studio never records IP addresses, locations, or anything about your
-            machine — only what happened to the code.
+            machine. Only what happened to the code.
           </li>
         </ul>
       </div>

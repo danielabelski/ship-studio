@@ -71,6 +71,11 @@ const HISTORY_DAYS: u32 = 30;
 /// dominate the walk.
 const MAX_COMMITS_PER_BRANCH: u32 = 200;
 
+/// How many branches are walked at once. Enough to hide the per-spawn cost,
+/// low enough that a repo with a hundred live branches does not launch a
+/// hundred gits and lose to its own context switching.
+const WALK_CONCURRENCY: usize = 8;
+
 /// A commit as git reports it, before it is grouped into anything.
 #[derive(Debug, Clone)]
 pub struct RawCommit {
@@ -88,6 +93,10 @@ pub struct RawCommit {
     /// landing, but their subject ("Merge pull request #139 from …") describes
     /// the merge rather than the change.
     pub is_merge: bool,
+    /// What this commit touched, read from the same `git log --numstat` that
+    /// produced everything above. Empty for a merge, which `git log` shows no
+    /// diff for — [`files_for`] handles that case separately.
+    pub files: Vec<super::TeamFileTouch>,
 }
 
 /// A group of commits by one person, on one branch, in one sitting.
@@ -206,17 +215,24 @@ pub async fn default_base_branch(project: &std::path::Path) -> Option<String> {
 }
 
 /// Branches worth walking: every local branch plus every `origin/` branch,
-/// deduplicated to the short name.
+/// deduplicated to the short name, **newest first and stale ones dropped**.
 ///
 /// Remote branches matter more than local ones here — a teammate's work only
 /// exists locally as `origin/their-branch`, and they are the entire reason this
 /// feature exists.
-async fn branches(project: &std::path::Path) -> Vec<String> {
+///
+/// The date filter is not a nicety. This repository has 195 refs, and the walk
+/// spawned a `git log` for every one of them: two seconds of process churn to
+/// learn that 180 branches have not moved since May. A ref whose tip predates
+/// the window has nothing the feed can show, and `for-each-ref` will sort and
+/// report the tip date in the same call it was already making.
+async fn branches(project: &std::path::Path, cutoff_secs: i64) -> Vec<String> {
     let Some(out) = git_stdout(
         project,
         &[
             "for-each-ref",
-            "--format=%(refname:short)",
+            "--sort=-committerdate",
+            "--format=%(refname:short)\t%(committerdate:unix)",
             "refs/heads",
             "refs/remotes/origin",
         ],
@@ -229,11 +245,17 @@ async fn branches(project: &std::path::Path) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut names = Vec::new();
     for line in out.lines() {
-        let raw = line.trim();
+        let Some((raw, at)) = line.trim().split_once('\t') else {
+            continue;
+        };
         // `origin/HEAD` is a symbolic pointer at the base branch, not a branch
         // of its own; walking it double-counts the base.
         if raw.is_empty() || raw == "origin/HEAD" {
             continue;
+        }
+        // Sorted newest-first, so the first stale ref ends the list.
+        if at.trim().parse::<i64>().unwrap_or(0) < cutoff_secs {
+            break;
         }
         let short = raw.strip_prefix("origin/").unwrap_or(raw);
         if seen.insert(short.to_string()) {
@@ -243,7 +265,11 @@ async fn branches(project: &std::path::Path) -> Vec<String> {
     names
 }
 
-/// Parse one `git log` record produced by [`LOG_FORMAT`].
+/// Parse one `git log` record produced by [`log_format`].
+///
+/// A chunk is the formatted fields followed by this commit's `--numstat`
+/// lines, so the trailing field separator marks where one ends and the other
+/// begins.
 fn parse_commit(chunk: &str, branch: &str) -> Option<RawCommit> {
     let mut parts = chunk.split(FIELD);
     let sha = parts.next()?.trim().to_string();
@@ -256,6 +282,7 @@ fn parse_commit(chunk: &str, branch: &str) -> Option<RawCommit> {
     // `%(trailers:key=…)` yields an empty string when the trailer is absent,
     // and `key: value` when it is present.
     let trailer = parts.next().unwrap_or("").trim().to_string();
+    let numstat = parts.next().unwrap_or("");
 
     if sha.is_empty() {
         return None;
@@ -277,13 +304,39 @@ fn parse_commit(chunk: &str, branch: &str) -> Option<RawCommit> {
         subject,
         branch: branch.to_string(),
         update_id,
+        files: parse_numstat(numstat),
     })
 }
 
+/// `git`'s `--numstat` block: `<added>\t<removed>\t<path>` per line.
+fn parse_numstat(block: &str) -> Vec<super::TeamFileTouch> {
+    block
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let (added, removed, path) = (parts.next()?, parts.next()?, parts.next()?);
+            if path.is_empty() {
+                return None;
+            }
+            Some(super::TeamFileTouch {
+                path: path.to_string(),
+                // Binary files report "-" for both counts. They changed; by how
+                // much is not a number, so it stays zero rather than a guess.
+                added: added.trim().parse().unwrap_or(0),
+                removed: removed.trim().parse().unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
 /// Fields, in the order [`parse_commit`] reads them.
+///
+/// The record separator leads rather than trails, which matters: `--numstat`
+/// prints its lines *after* the formatted header, so a trailing separator would
+/// leave every commit's file list stranded in the next commit's chunk.
 fn log_format() -> String {
     format!(
-        "%H{FIELD}%h{FIELD}%at{FIELD}%an{FIELD}%ae{FIELD}%P{FIELD}%s{FIELD}%(trailers:key={key},valueonly=false){RECORD}",
+        "{RECORD}%H{FIELD}%h{FIELD}%at{FIELD}%an{FIELD}%ae{FIELD}%P{FIELD}%s{FIELD}%(trailers:key={key},valueonly=false){FIELD}",
         key = super::UPDATE_TRAILER,
     )
 }
@@ -291,13 +344,19 @@ fn log_format() -> String {
 /// Walk every branch and return the commits of the last [`HISTORY_DAYS`] days,
 /// each attributed to one branch.
 pub async fn walk_commits(project: &std::path::Path, base: Option<&str>) -> Vec<RawCommit> {
+    let cutoff = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+        - i64::from(HISTORY_DAYS) * 86_400;
+
     let since = format!("--since={HISTORY_DAYS} days ago");
     let max = format!("--max-count={MAX_COMMITS_PER_BRANCH}");
     let format = format!("--format={}", log_format());
 
     // Topic branches first so that when a commit is reachable from both, the
     // branch it was written on wins.
-    let mut refs = branches(project).await;
+    let mut refs = branches(project, cutoff).await;
     if let Some(base) = base {
         refs.sort_by_key(|name| {
             let short = name.strip_prefix("origin/").unwrap_or(name);
@@ -305,40 +364,71 @@ pub async fn walk_commits(project: &std::path::Path, base: Option<&str>) -> Vec<
         });
     }
 
+    // Branches are read concurrently but folded in the order above, so a
+    // commit reachable from two of them still lands on the topic branch every
+    // time. Ordering the *results* rather than the *work* is what lets this be
+    // parallel without becoming non-deterministic.
+    let jobs: Vec<(String, Vec<String>)> = refs
+        .iter()
+        .map(|reference| {
+            let short = reference
+                .strip_prefix("origin/")
+                .unwrap_or(reference)
+                .to_string();
+            // A topic branch is walked as its own work only (`base..branch`);
+            // the base branch is walked directly, since everything on it *is*
+            // the integrated history.
+            let range = match base {
+                Some(base) if base != short => format!("{base}..{reference}"),
+                _ => reference.clone(),
+            };
+            // Merges are kept. On the base branch they are usually the *only*
+            // record that a PR landed, and "Theo merged #139" is a real thing
+            // that happened to the project.
+            //
+            // `--numstat` here rather than a `git show` per commit later. That
+            // was 300 extra process spawns and four seconds on this repo, to
+            // compute something this call already had in hand.
+            let args = vec![
+                "log".to_string(),
+                range,
+                since.clone(),
+                max.clone(),
+                format.clone(),
+                "--numstat".to_string(),
+            ];
+            (short, args)
+        })
+        .collect();
+
     let mut by_sha: HashMap<String, RawCommit> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
 
-    for reference in refs {
-        let short = reference
-            .strip_prefix("origin/")
-            .unwrap_or(&reference)
-            .to_string();
-        // A topic branch is walked as its own work only (`base..branch`); the
-        // base branch is walked directly, since everything on it *is* the
-        // integrated history.
-        let range = match base {
-            Some(base) if base != short => format!("{base}..{reference}"),
-            _ => reference.clone(),
-        };
+    // Chunked rather than all at once: a repo with a hundred live branches
+    // would otherwise launch a hundred gits together and lose to its own
+    // context switching.
+    for batch in jobs.chunks(WALK_CONCURRENCY) {
+        let outputs =
+            futures_util::future::join_all(batch.iter().map(|(short, args)| async move {
+                let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+                (short.as_str(), git_stdout(project, &borrowed).await)
+            }))
+            .await;
 
-        // Merges are kept. On the base branch they are usually the *only*
-        // record that a PR landed, and "Theo merged #139" is a real thing that
-        // happened to the project.
-        let Some(out) = git_stdout(project, &["log", &range, &since, &max, &format]).await else {
-            continue;
-        };
-
-        for chunk in out.split(RECORD) {
-            let chunk = chunk.trim_start_matches('\n');
-            if chunk.trim().is_empty() {
-                continue;
-            }
-            let Some(commit) = parse_commit(chunk, &short) else {
-                continue;
-            };
-            if !by_sha.contains_key(&commit.sha) {
-                order.push(commit.sha.clone());
-                by_sha.insert(commit.sha.clone(), commit);
+        for (short, out) in outputs {
+            let Some(out) = out else { continue };
+            for chunk in out.split(RECORD) {
+                let chunk = chunk.trim_start_matches('\n');
+                if chunk.trim().is_empty() {
+                    continue;
+                }
+                let Some(commit) = parse_commit(chunk, short) else {
+                    continue;
+                };
+                if !by_sha.contains_key(&commit.sha) {
+                    order.push(commit.sha.clone());
+                    by_sha.insert(commit.sha.clone(), commit);
+                }
             }
         }
     }
@@ -392,58 +482,56 @@ pub fn group_into_stints(commits: Vec<RawCommit>) -> Vec<Stint> {
 
 /// Files a stint touched, with line counts.
 ///
+/// Free for an ordinary stint: `walk_commits` already read every commit's
+/// `--numstat` in the same `git log` that produced the commit itself, so this
+/// is a fold rather than a fetch.
+///
 /// ## Merges are diffed against their first parent, and only when alone
 ///
-/// A merge has no single diff. `git show --numstat` on one reports the combined
-/// diff against *every* parent, which double-counts everything the merge brought
-/// in and makes a routine merge the largest change in the repo. So a merge is
-/// skipped whenever the stint holds ordinary commits too: those already account
-/// for the same lines, and adding the merge on top counts them twice.
+/// A merge has no single diff, so `git log --numstat` shows none for one. That
+/// is the right default: whenever the stint holds ordinary commits too, those
+/// already account for the same lines and adding the merge would count them
+/// twice.
 ///
-/// A stint that is *only* a merge is the case where skipping is wrong. "Merged
-/// pull request #881" reporting zero files is not restraint, it is a row with
-/// its content missing — and it is what this did against a real repo. There the
+/// A stint that is *only* a merge is the case where showing nothing is wrong.
+/// "Merged pull request #881 — 0 files" is not restraint, it is a row with its
+/// content missing, and it is what this did against a real repo. There the
 /// first-parent diff is exactly the right number: what the merge brought in.
+/// That costs one `git diff`, for the handful of stints shaped that way.
 pub async fn files_for(project: &std::path::Path, stint: &Stint) -> Vec<super::TeamFileTouch> {
-    let mut totals: HashMap<String, (u32, u32)> = HashMap::new();
-    let mut order: Vec<String> = Vec::new();
-
     let merges_only = stint.commits.iter().all(|commit| commit.is_merge);
-    let wanted = stint
-        .commits
-        .iter()
-        .filter(|commit| merges_only || !commit.is_merge);
 
-    for commit in wanted {
-        // `<sha>^!` with `--first-parent` is the merge's own contribution to
-        // the branch it landed on, rather than its diff against everything.
-        let first_parent = format!("{}^1", commit.sha);
-        let args: Vec<&str> = if commit.is_merge {
-            vec!["diff", "--numstat", &first_parent, &commit.sha]
-        } else {
-            vec!["show", "--numstat", "--format=", &commit.sha]
-        };
-        let Some(out) = git_stdout(project, &args).await else {
-            continue;
-        };
-        for line in out.lines() {
-            let mut parts = line.split('\t');
-            let (Some(added), Some(removed), Some(path)) =
-                (parts.next(), parts.next(), parts.next())
+    // Gathered first, folded second: a closure that borrows both accumulators
+    // has to be dead before either can be read back, and saying so with a
+    // `drop` is a note-to-self where a scope is a rule.
+    let mut touched: Vec<super::TeamFileTouch> = Vec::new();
+    if merges_only {
+        for commit in &stint.commits {
+            let first_parent = format!("{}^1", commit.sha);
+            let Some(out) =
+                git_stdout(project, &["diff", "--numstat", &first_parent, &commit.sha]).await
             else {
                 continue;
             };
-            // Binary files report "-" for both counts. They changed; by how
-            // much is not a number, so it stays zero rather than a guess.
-            let added: u32 = added.trim().parse().unwrap_or(0);
-            let removed: u32 = removed.trim().parse().unwrap_or(0);
-            let entry = totals.entry(path.to_string()).or_insert_with(|| {
-                order.push(path.to_string());
-                (0, 0)
-            });
-            entry.0 += added;
-            entry.1 += removed;
+            touched.extend(parse_numstat(&out));
         }
+    } else {
+        for commit in stint.commits.iter().filter(|c| !c.is_merge) {
+            touched.extend(commit.files.iter().cloned());
+        }
+    }
+
+    // Summed per path, in the order each path was first touched, so the list
+    // reads as the work happened rather than alphabetically.
+    let mut totals: HashMap<String, (u32, u32)> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    for file in touched {
+        let entry = totals.entry(file.path.clone()).or_insert_with(|| {
+            order.push(file.path);
+            (0, 0)
+        });
+        entry.0 += file.added;
+        entry.1 += file.removed;
     }
 
     order
@@ -1034,6 +1122,7 @@ mod tests {
             branch: branch.to_string(),
             update_id: None,
             is_merge: false,
+            files: Vec::new(),
         }
     }
 

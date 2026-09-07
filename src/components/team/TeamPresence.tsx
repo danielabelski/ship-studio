@@ -54,7 +54,7 @@ export function TeamPresence({
   const summary = teammates
     .map(
       (member) =>
-        `${member.actor.name} — ${member.branch ?? 'no branch'}, ${
+        `${member.actor.name}: ${member.branch ?? 'no branch'}, ${
           member.lastPushedAt ? formatAgo(member.lastPushedAt, now) : 'never pushed'
         }`
     )
@@ -71,8 +71,8 @@ export function TeamPresence({
         leftIcon={<CollaboratorsIcon size={16} />}
         aria-label={
           unseenCount > 0
-            ? `Team — ${teammates.length} others, ${unseenCount} new`
-            : `Team — ${teammates.length} others`
+            ? `Team: ${teammates.length} others, ${unseenCount} new`
+            : `Team: ${teammates.length} others`
         }
       >
         <span className="team-presence-faces">

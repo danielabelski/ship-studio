@@ -72,11 +72,16 @@ pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, Com
     let stored = records::read_records(&project);
     let adopters = records::logins_with_records(&stored);
 
-    let commits = derive::walk_commits(&project, base.as_deref()).await;
+    // Three independent lookups, so they run as three. Sequentially this was
+    // a local history walk *plus* a `gh pr list` *plus* three GitHub API calls,
+    // one after another, and the workspace header showed nothing at all until
+    // the last of them returned.
+    let (commits, prs, people) = tokio::join!(
+        derive::walk_commits(&project, base.as_deref()),
+        derive::pull_requests(&project),
+        resolve_people(&project, repo.as_deref()),
+    );
     let stints = derive::group_into_stints(commits);
-
-    let prs = derive::pull_requests(&project).await;
-    let people = resolve_people(&project, repo.as_deref()).await;
 
     let by_id = records::updates_by_id(&stored);
     let mut updates: Vec<TeamUpdate> = Vec::new();
@@ -467,6 +472,7 @@ mod tests {
             branch: "main".to_string(),
             update_id: None,
             is_merge: merge,
+            files: Vec::new(),
         }
     }
 

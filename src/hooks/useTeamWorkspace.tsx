@@ -40,6 +40,12 @@ import {
  */
 const CLOCK_TICK_MS = 30_000;
 
+/**
+ * Past this many arrivals at once, one summary toast replaces the stack.
+ * Three fits on screen; a week away does not.
+ */
+const MAX_ARRIVAL_TOASTS = 3;
+
 const STORAGE_PREFIX = 'shipstudio.team.panelOpen:';
 
 /**
@@ -131,12 +137,26 @@ export function useTeamWorkspace(project: { path: string; name: string }) {
       knownIds.current = ids;
       return;
     }
-    const arrived = snapshot.updates.filter((update) => !knownIds.current!.has(update.id));
+    const arrived = snapshot.updates.filter(
+      (update) =>
+        !knownIds.current!.has(update.id) &&
+        // Your own push is not news to you. It is also the most common arrival
+        // by far, so without this the feature mostly announces you to yourself.
+        !(update.actor.login && update.actor.login === me?.login)
+    );
     knownIds.current = ids;
+
+    // Coming back after a week is a burst, not an arrival. Past a handful,
+    // one line saying how much you missed beats a stack of them saying what.
+    if (arrived.length > MAX_ARRIVAL_TOASTS) {
+      const people = new Set(arrived.map((update) => update.actor.name));
+      showToast(
+        `${arrived.length} updates from ${people.size} ${people.size === 1 ? 'person' : 'people'} while you were away`,
+        'info'
+      );
+      return;
+    }
     for (const update of arrived) {
-      // Your own push is not news to you. It is also the most common arrival
-      // by far, so without this the feature mostly announces you to yourself.
-      if (update.actor.login && update.actor.login === me?.login) continue;
       showToast(`${update.actor.name}: ${update.headline}`, 'info');
     }
   }, [loaded, snapshot.updates, me, showToast]);

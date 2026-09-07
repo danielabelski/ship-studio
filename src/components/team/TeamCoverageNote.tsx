@@ -46,7 +46,7 @@ export function TeamCoverageNote({ members, repo }: TeamCoverageNoteProps) {
   const invite = [
     `I've been using Ship Studio on ${repo ?? 'our repo'} and it writes up what changed and why straight into the repo, so the rest of us can see it.`,
     '',
-    'It is free and open source, and it keeps everything in git — no account, no server, nothing to sign up for.',
+    'It is free and open source, and it keeps everything in git. No account, no server, nothing to sign up for.',
     '',
     'https://github.com/ship-studio/ship-studio',
   ].join('\n');
@@ -64,8 +64,8 @@ export function TeamCoverageNote({ members, repo }: TeamCoverageNoteProps) {
           {coverage.onShipStudio} of {coverage.total} on Ship Studio.
         </strong>{' '}
         {nameList}
-        {names.length === 1 ? ' pushes' : ' push'} straight to GitHub, so their work shows up here
-        as the commit, the branch and the build — everything except why they did it.
+        {names.length === 1 ? ' pushes' : ' push'} straight to GitHub, so their rows show what
+        changed but not why.
       </p>
 
       <button

@@ -175,7 +175,7 @@ export function TeamUpdatesFeed({
             title="Nothing here yet"
             description={
               repo
-                ? `Nothing has been committed to ${repo} in the last month. Anything you or your teammates push shows up here — from Ship Studio, from a terminal, from anywhere.`
+                ? `Nothing has been committed to ${repo} in the last month. Anything you or your teammates push shows up here, from Ship Studio, from a terminal, from anywhere.`
                 : 'This project has no GitHub remote, so there is nobody to share with yet. Your own commits will still show up here.'
             }
           />
@@ -204,7 +204,7 @@ export function TeamUpdatesFeed({
           <TeamCoverageNote members={members} repo={repo} />
 
           <p className="team-feed-footnote">
-            Built from your repository. Work nobody pushed appears nowhere at all — a git remote
+            Built from your repository. Work nobody pushed appears nowhere at all. A git remote
             cannot see a file that has not left someone&rsquo;s laptop.
           </p>
         </div>

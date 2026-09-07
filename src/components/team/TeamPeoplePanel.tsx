@@ -55,8 +55,8 @@ export function TeamPeoplePanel({ members, now, compact = false }: TeamPeoplePan
     <div className={`team-people${compact ? ' is-compact' : ''}`}>
       {!compact && (
         <p className="team-people-note">
-          Everyone with access to this repository on GitHub. Roles come from GitHub — Ship Studio
-          has no accounts of its own, so there is nothing here to invite anyone to.
+          Everyone with access to this repository on GitHub. Roles come from GitHub. Ship Studio has
+          no accounts of its own, so there is nothing here to invite anyone to.
         </p>
       )}
 
@@ -117,7 +117,7 @@ export function TeamPeoplePanel({ members, now, compact = false }: TeamPeoplePan
       {/* The honest caveat, said once, where the misreading would happen. */}
       <p className="team-people-footnote">
         “Last pushed” is the only activity a git remote can report. Uncommitted work, and work that
-        has not been pushed, is invisible to everyone — including to this panel.
+        has not been pushed, is invisible to everyone, including to this panel.
       </p>
     </div>
   );
