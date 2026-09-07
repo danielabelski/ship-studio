@@ -102,6 +102,46 @@ pub fn with_trailers(
     }
 }
 
+/// The footer added to pull request descriptions Ship Studio opens.
+///
+/// A PR body is markdown on a web page, not a commit message, so the git
+/// trailer rules do not apply and `interpret-trailers` is the wrong tool. What
+/// carries over is the restraint: one line, at the bottom, under a rule, after
+/// whatever the description actually says.
+///
+/// Deliberately says nothing the reader has to act on. A PR description is read
+/// by people deciding whether to approve a change, and an advertisement above
+/// the fold is a tax on every one of those readings.
+pub fn pr_footer(agent: Option<&str>) -> Option<String> {
+    attribution_enabled().then(|| match agent {
+        Some(agent) if !agent.trim().is_empty() => format!(
+            "---\n\n*Opened from [Ship Studio](https://shipstudio.dev), described by {}.*",
+            agent.trim()
+        ),
+        _ => "---\n\n*Opened from [Ship Studio](https://shipstudio.dev).*".to_string(),
+    })
+}
+
+/// A pull request description with the footer on it.
+///
+/// Never appended twice: reopening or editing a PR whose body already carries
+/// the line must not stack them.
+pub fn with_pr_footer(body: &str, agent: Option<&str>) -> String {
+    let Some(footer) = pr_footer(agent) else {
+        return body.to_string();
+    };
+    // Match on the stable half of the sentence, so a body carrying the
+    // no-agent variant is not given the with-agent one on a later edit.
+    if body.contains("[Ship Studio](https://shipstudio.dev)") {
+        return body.to_string();
+    }
+    let trimmed = body.trim_end();
+    if trimmed.is_empty() {
+        return footer;
+    }
+    format!("{trimmed}\n\n{footer}")
+}
+
 /// Hand the message to `git interpret-trailers` and read it back.
 fn interpret_trailers(
     repo: &std::path::Path,
@@ -330,6 +370,49 @@ mod tests {
         );
         assert_eq!(made_with.trim(), "Claude Code in Ship Studio");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_pr_footer_goes_under_the_description_never_over_it() {
+        let body = with_pr_footer("## What changed\n\nThe pricing grid.", Some("Claude Code"));
+        assert!(
+            body.starts_with("## What changed"),
+            "a reader deciding whether to approve this sees the change first"
+        );
+        assert!(body.ends_with("described by Claude Code.*"));
+        assert!(body.contains("\n\n---\n\n"));
+    }
+
+    #[test]
+    fn the_pr_footer_credits_nobody_when_the_description_fell_back() {
+        // The submit flow drops to a branch-name title whenever the agent is
+        // unavailable or fails. Naming one there is the same invention the
+        // commit trailer refuses to make.
+        let body = with_pr_footer("Bare description.", None);
+        assert!(body.ends_with("*Opened from [Ship Studio](https://shipstudio.dev).*"));
+        assert!(!body.contains("described by"));
+    }
+
+    #[test]
+    fn an_empty_description_gets_the_footer_alone_with_no_leading_blank() {
+        let body = with_pr_footer("", None);
+        assert!(body.starts_with("---"));
+    }
+
+    #[test]
+    fn editing_a_pr_never_stacks_the_footer() {
+        let once = with_pr_footer("The pricing grid.", Some("Claude Code"));
+        let twice = with_pr_footer(&once, Some("Claude Code"));
+        assert_eq!(once, twice);
+        // Including across the two variants — a body carrying the no-agent
+        // line must not later collect the with-agent one as well.
+        let mixed = with_pr_footer(&with_pr_footer("x", None), Some("Codex"));
+        assert_eq!(
+            mixed
+                .matches("Ship Studio](https://shipstudio.dev)")
+                .count(),
+            1
+        );
     }
 
     #[test]
