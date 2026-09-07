@@ -51,8 +51,3 @@ export function subscribeUnhandled(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
-
-export function resetUnhandled(): void {
-  calls.clear();
-  rebuild();
-}

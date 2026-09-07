@@ -22,7 +22,6 @@ import {
   PROVIDER_LABELS,
   type Deployment,
   type DeploymentDetail,
-  type HostingProvider,
   type SectionState,
 } from './hosting';
 
@@ -356,8 +355,3 @@ export function copyFor(
  */
 export const BANNED_JARGON =
   /\b(prod|READY|BUILDING|QUEUED|CANCELED|INITIALIZING|ERROR|scope|alias|uid|teamId|substate|readyState|aliasAssigned|deployment_trigger)\b/;
-
-/** Which provider each state's copy is about, for the icon. */
-export function providerFor(state: SectionState): HostingProvider | undefined {
-  return state.provider;
-}

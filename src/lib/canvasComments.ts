@@ -43,13 +43,7 @@ export function commentScopeDevices(scope: CommentScope): CommentDevice[] {
     (device) =>
       scope === 'All sizes' || (Array.isArray(scope) ? scope.includes(device) : scope === device)
   );
-}
-export function commentScopeLabel(scope: CommentScope): string {
-  const devices = commentScopeDevices(scope);
-  return devices.length === 3 ? 'All sizes' : devices.join(' + ');
-}
-
-/** The viewport a note was written at, which is the context an agent needs. */
+} /** The viewport a note was written at, which is the context an agent needs. */
 export function commentViewportLabel(target: CommentTarget): string {
   return `${target.viewport.width} × ${target.viewport.height}`;
 }

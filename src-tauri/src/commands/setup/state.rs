@@ -129,13 +129,6 @@ pub async fn set_default_host(host: String) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// The persisted default hosting provider, if one was chosen.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn get_default_host() -> Result<Option<String>, CommandError> {
-    Ok(read_app_state().default_host)
-}
-
 /// Get the default agent ID from persisted AppState.
 /// Returns None if not set (frontend should fall back to Claude Code).
 #[tauri::command]

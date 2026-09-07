@@ -20,14 +20,6 @@ export type WorkspacePick = { kind: 'root' } | { kind: 'app'; relativePath: stri
 
 export const ROOT_PICK: WorkspacePick = { kind: 'root' };
 
-/** True when the two picks point at the same option. */
-export function picksEqual(a: WorkspacePick | null, b: WorkspacePick | null): boolean {
-  if (a === null || b === null) return a === b;
-  if (a.kind !== b.kind) return false;
-  if (a.kind === 'app' && b.kind === 'app') return a.relativePath === b.relativePath;
-  return true;
-}
-
 export interface Step3WorkspacePickerProps {
   repoName: string;
   workspaces: WorkspaceInfo[];

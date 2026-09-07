@@ -160,11 +160,6 @@ export const MACHINE_ITEM_IDS = new Set([
   'vercel',
 ]);
 
-/** Classify a setup item id as machine- or workspace-tier. */
-export function tierOf(itemId: string): SetupTier {
-  return WORKSPACE_LOGIN_ITEM_IDS.has(itemId) ? 'workspace' : 'machine';
-}
-
 /** Quick setup check result (fast Tier-1 check) */
 interface QuickSetupCheck {
   /** Whether all binaries and auth files exist */
@@ -587,30 +582,6 @@ export function needsCmdExeWrapper(command: string, resolvedPath?: string | null
   // cmd.exe wrapper as the conservative default — cmd re-searches PATH with
   // PATHEXT and finds the proper .cmd/.exe.
   return true;
-}
-
-/**
- * Start GitHub authentication flow (opens browser).
- * Returns a message to display to the user.
- */
-export async function startGitHubAuth(): Promise<string> {
-  return invoke<string>('start_github_auth');
-}
-
-/**
- * Install Claude Code CLI.
- */
-export async function installClaude(): Promise<void> {
-  return invoke('install_claude_cli');
-}
-
-/**
- * Start agent authentication flow.
- * If agentId is provided, authenticate that specific agent.
- * Returns a message to display to the user.
- */
-export async function startClaudeAuth(agentId?: string): Promise<string> {
-  return invoke<string>('start_claude_auth', { agentId: agentId ?? null });
 }
 
 /**

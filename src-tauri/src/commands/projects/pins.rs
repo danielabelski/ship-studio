@@ -217,7 +217,6 @@ pub async fn reorder_pins(ordered_paths: Vec<String>) -> Result<Vec<String>, Com
 
 /// Persist per-pin session metadata. Called when the user closes the app or
 /// suspends a session — captures tab session IDs so we can `--resume` later.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn save_pin_session(
     project_path: String,
@@ -239,7 +238,6 @@ pub async fn save_pin_session(
 }
 
 /// Read per-pin session metadata, or `None` if not yet saved.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn get_pin_session(project_path: String) -> Result<Option<LastSession>, CommandError> {
     Ok(read_pins().last_sessions.get(&project_path).cloned())

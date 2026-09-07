@@ -283,19 +283,6 @@ pub async fn list_inbox_items() -> Result<Vec<InboxItem>, CommandError> {
     Ok(items)
 }
 
-/// Run history for one workflow, newest first.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn list_workflow_runs(workflow_id: String) -> Result<Vec<WorkflowRun>, CommandError> {
-    let mut runs: Vec<WorkflowRun> = load_state()
-        .runs
-        .into_iter()
-        .filter(|run| run.workflow_id == workflow_id)
-        .collect();
-    runs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-    Ok(runs)
-}
-
 #[tauri::command]
 #[tracing::instrument]
 pub async fn set_inbox_item_read(id: String, read: bool) -> Result<(), CommandError> {

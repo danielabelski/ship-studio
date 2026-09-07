@@ -83,14 +83,6 @@ export interface MirrorInfo {
   launch_status: MobileLaunchStatus | null;
 }
 
-/**
- * List currently-booted iOS simulators. Rejects if Xcode/`xcrun` is missing;
- * resolves to an empty array when Xcode is present but nothing is booted.
- */
-export async function listBootedSimulators(): Promise<MobileSimulator[]> {
-  return invoke<MobileSimulator[]>('list_booted_simulators');
-}
-
 /** Whether the project's app is currently running on the booted simulator. This
  *  is the ground-truth "did it launch" signal — true regardless of whether Ship
  *  Studio or the agent built it — so the preview panel can resolve even when the

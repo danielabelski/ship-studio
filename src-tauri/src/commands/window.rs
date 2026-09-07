@@ -5,8 +5,7 @@
 
 use crate::commands::setup::{read_app_state, write_app_state};
 use crate::errors::CommandError;
-use crate::types::WindowPosition;
-use tauri::{LogicalSize, Window};
+use tauri::Window;
 
 /// Leading inset of the close button, matching AppKit's own placement for a
 /// standard titled window. That placement — not the one a 46pt custom titlebar
@@ -140,78 +139,6 @@ unsafe fn constrain_macos_traffic_lights(ns_window: *mut objc2::runtime::AnyObje
     true
 }
 
-/// Compact mode dimensions
-const COMPACT_WIDTH: f64 = 450.0;
-const COMPACT_HEIGHT_DEFAULT: f64 = 600.0;
-
-/// Default full mode dimensions
-const FULL_MODE_WIDTH: f64 = 1200.0;
-const FULL_MODE_HEIGHT: f64 = 800.0;
-
-/// Enter compact mode - resize window and enable always-on-top
-/// The UI adapts via responsive CSS based on window width
-#[tauri::command]
-#[tracing::instrument]
-pub async fn enter_compact_mode(window: Window) -> Result<(), CommandError> {
-    tracing::info!("Entering compact mode");
-
-    // Set always-on-top so window floats above browser
-    window
-        .set_always_on_top(true)
-        .map_err(|e| format!("Failed to set always on top: {e}"))?;
-
-    // Resize to compact dimensions
-    window
-        .set_size(LogicalSize::new(COMPACT_WIDTH, COMPACT_HEIGHT_DEFAULT))
-        .map_err(|e| format!("Failed to set window size: {e}"))?;
-
-    // Always re-center on entry. A previously saved position tends to
-    // drift to the corner (either stale from a pre-resize save, or because
-    // macOS clamps a position that no longer fits the new size). Centering
-    // on every entry is predictable; the user can drag afterward.
-    window
-        .center()
-        .map_err(|e| format!("Failed to center window: {e}"))?;
-
-    // Focus and bring to front
-    window
-        .set_focus()
-        .map_err(|e| format!("Failed to focus window: {e}"))?;
-
-    tracing::info!("Compact mode entered successfully");
-    Ok(())
-}
-
-/// Exit compact mode - restore window to full size
-#[tauri::command]
-#[tracing::instrument]
-pub async fn exit_compact_mode(window: Window) -> Result<(), CommandError> {
-    tracing::info!("Exiting compact mode");
-
-    // Save current position before exiting
-    if let Ok(position) = window.outer_position() {
-        let _ = save_compact_position_internal(position.x, position.y);
-    }
-
-    // Disable always-on-top
-    window
-        .set_always_on_top(false)
-        .map_err(|e| format!("Failed to disable always on top: {e}"))?;
-
-    // Restore full size
-    window
-        .set_size(LogicalSize::new(FULL_MODE_WIDTH, FULL_MODE_HEIGHT))
-        .map_err(|e| format!("Failed to set window size: {e}"))?;
-
-    // Center window on screen
-    window
-        .center()
-        .map_err(|e| format!("Failed to center window: {e}"))?;
-
-    tracing::info!("Compact mode exited successfully");
-    Ok(())
-}
-
 /// Toggle always-on-top state for the window
 #[tauri::command]
 #[tracing::instrument]
@@ -227,48 +154,6 @@ pub async fn set_always_on_top(window: Window, enabled: bool) -> Result<(), Comm
     let compact_prefs = state.compact_mode.get_or_insert_with(Default::default);
     compact_prefs.always_on_top = enabled;
     write_app_state(&state)?;
-
-    Ok(())
-}
-
-/// Internal helper to save position (used by both command and exit_compact_mode)
-fn save_compact_position_internal(x: i32, y: i32) -> Result<(), CommandError> {
-    tracing::debug!("Saving compact position: ({}, {})", x, y);
-
-    let mut state = read_app_state();
-    let compact_prefs = state.compact_mode.get_or_insert_with(Default::default);
-    compact_prefs.position = Some(WindowPosition { x, y });
-    write_app_state(&state)?;
-
-    Ok(())
-}
-
-/// Start dragging the window (native drag)
-#[tauri::command]
-#[tracing::instrument]
-pub async fn start_window_drag(window: Window) -> Result<(), CommandError> {
-    window
-        .start_dragging()
-        .map_err(|e| format!("Failed to start dragging: {e}"))?;
-
-    Ok(())
-}
-
-/// Focus and bring window to front (useful after opening external apps)
-#[tauri::command]
-#[tracing::instrument]
-pub async fn focus_window(window: Window) -> Result<(), CommandError> {
-    tracing::debug!("Focusing window");
-
-    // Ensure window is visible
-    window
-        .show()
-        .map_err(|e| format!("Failed to show window: {e}"))?;
-
-    // Set focus
-    window
-        .set_focus()
-        .map_err(|e| format!("Failed to focus window: {e}"))?;
 
     Ok(())
 }

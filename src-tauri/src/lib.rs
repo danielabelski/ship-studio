@@ -407,7 +407,6 @@ pub fn run() {
             commands::workflows::delete_workflow_file,
             commands::workflows::run_workflow,
             commands::workflows::list_inbox_items,
-            commands::workflows::list_workflow_runs,
             commands::workflows::workflow_progress,
             commands::workflows::set_inbox_item_read,
             commands::workflows::set_inbox_item_archived,
@@ -496,17 +495,10 @@ pub fn run() {
             commands::projects::unpin_project,
             commands::projects::list_pinned_projects,
             commands::projects::reorder_pins,
-            commands::projects::save_pin_session,
-            commands::projects::get_pin_session,
             // Project session lifecycle (background sessions rail)
             commands::projects::register_project_session,
             commands::projects::suspend_project_session,
             commands::projects::unregister_project_session,
-            commands::projects::touch_project_session,
-            commands::projects::list_project_sessions,
-            commands::projects::get_project_session_info,
-            commands::projects::get_active_session_count,
-            commands::projects::get_session_memory,
             // Internationalization (i18n)
             commands::i18n::get_i18n_status,
             commands::i18n::set_i18n_config,
@@ -591,7 +583,6 @@ pub fn run() {
             commands::ai::generate_commit_message,
             // Claude integration
             commands::claude::check_claude_cli_status,
-            commands::claude::install_claude_cli,
             commands::claude::claude_session_exists,
             // Shopify theme integration
             commands::shopify::check_shopify_cli_status,
@@ -641,8 +632,6 @@ pub fn run() {
             commands::hosting::detect_hosting_links,
             commands::hosting::list_hosting_projects,
             commands::hosting::set_hosting_link,
-            commands::hosting::clear_hosting_link,
-            commands::hosting::verify_hosting_token,
             commands::hosting::list_recent_deployments,
             commands::hosting::get_deployment_log,
             // Pull requests
@@ -674,7 +663,6 @@ pub fn run() {
             commands::projects::detect_project_type_command,
             commands::projects::project_path_exists,
             // Native Mobile Preview (iOS Simulator via serve-sim)
-            commands::mobile::list_booted_simulators,
             commands::mobile::start_mobile_preview,
             commands::mobile::get_simulator_launch_command,
             commands::mobile::simulator_app_running,
@@ -701,7 +689,6 @@ pub fn run() {
             commands::pty_session::pty_session_kill,
             commands::pty_session::pty_session_attach,
             commands::pty_session::pty_session_detach,
-            commands::pty_session::pty_session_list,
             // Community Templates
             commands::templates::fetch_community_templates,
             commands::templates::download_template_zip,
@@ -710,8 +697,6 @@ pub fn run() {
             commands::setup::resolve_cli_path,
             commands::setup::install_brew_packages,
             commands::setup::install_winget_packages,
-            commands::setup::start_github_auth,
-            commands::setup::start_claude_auth,
             commands::setup::check_claude_auth_status,
             commands::setup::check_npm_cache_permissions,
             commands::setup::install_version,
@@ -720,7 +705,6 @@ pub fn run() {
             commands::setup::mock_mark_setup_item_ready,
             commands::setup::set_external_agent_opt_in,
             commands::setup::set_default_host,
-            commands::setup::get_default_host,
             commands::setup::ensure_agent_workdir,
             commands::setup::mark_setup_complete,
             commands::setup::get_default_agent_id,
@@ -781,11 +765,7 @@ pub fn run() {
             commands::snapshots::snapshot_undo,
             commands::snapshots::snapshot_redo,
             // Window / Compact Mode
-            commands::window::enter_compact_mode,
-            commands::window::exit_compact_mode,
             commands::window::set_always_on_top,
-            commands::window::start_window_drag,
-            commands::window::focus_window,
             commands::window::set_window_title,
             // Clipboard (Windows terminal paste)
             commands::clipboard::read_clipboard_text,

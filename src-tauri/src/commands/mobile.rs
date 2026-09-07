@@ -269,7 +269,6 @@ async fn simctl_stdout(
 ///
 /// Errors if `xcrun` is unavailable (Xcode not installed). Returns an empty
 /// vec when Xcode is present but no simulator is booted.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn list_booted_simulators() -> Result<Vec<MobileSimulator>, CommandError> {
     tracing::info!("list_booted_simulators: invoked");
