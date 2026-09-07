@@ -28,6 +28,7 @@ import {
 import { DockablePanel } from '../primitives/DockablePanel';
 import { EmptyState } from '../primitives/EmptyState';
 import { IconButton } from '../primitives/IconButton';
+import { Spinner } from '../primitives/Spinner';
 import { Tabs, TabsList, TabsTab } from '../primitives/Tabs';
 import { TeamCoverageNote } from './TeamCoverageNote';
 import { TeamPeoplePanel } from './TeamPeoplePanel';
@@ -53,7 +54,7 @@ interface TeamPanelProps {
 
 export function TeamPanel({ hidden, onClose, now }: TeamPanelProps) {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);
-  const { tab, expandedId } = useSyncExternalStore(subscribe, getUiSnapshot);
+  const { tab, expandedId, loading } = useSyncExternalStore(subscribe, getUiSnapshot);
 
   const unseen = useMemo(() => unseenUpdates(snapshot), [snapshot]);
   const unseenIds = useMemo(() => new Set(unseen.map((update) => update.id)), [unseen]);
@@ -125,11 +126,25 @@ export function TeamPanel({ hidden, onClose, now }: TeamPanelProps) {
         <div className="team-float-body">
           {tab === 'updates' &&
             (snapshot.updates.length === 0 ? (
-              <EmptyState
-                icon={<HistoryIcon size={24} />}
-                title="Nothing yet"
-                description="When someone pushes work to this repository, what they did shows up here."
-              />
+              loading ? (
+                <EmptyState
+                  icon={<Spinner size="lg" />}
+                  title="Reading this repository"
+                  description="Walking the history and asking GitHub about open pull requests."
+                />
+              ) : snapshot.sync.error ? (
+                <EmptyState
+                  icon={<HistoryIcon size={24} />}
+                  title="Couldn't read the history"
+                  description={snapshot.sync.error}
+                />
+              ) : (
+                <EmptyState
+                  icon={<HistoryIcon size={24} />}
+                  title="Nothing yet"
+                  description="When someone pushes work to this repository, what they did shows up here."
+                />
+              )
             ) : (
               groups.map((group) => (
                 <section className="team-float-day" key={group.key}>

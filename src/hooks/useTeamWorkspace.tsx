@@ -1,19 +1,17 @@
 /**
- * Wires the Team prototype into an open project.
+ * Wires Team into an open project.
  *
- * Three jobs, all of which the real build also has:
+ * Four jobs:
  *
- * 1. Point the store at the project that is actually open. In the real build
- *    this is `get_team_snapshot`; here it is the fixture adopting the project's
- *    name and repo, so what you see is your own project with people in it.
- * 2. Hold the panel's open state, and remember it per project — coming back to
- *    a workspace where you had the panel open should find it open.
- * 3. Announce work that arrives while you are looking.
+ * 1. Point the store at the project that is actually open (`get_team_snapshot`).
+ * 2. Re-read it on a timer, because with no server nobody can tell us something
+ *    happened — the floor is however often we ask.
+ * 3. Hold the panel's open state per project, so coming back to a workspace
+ *    where you had it open finds it open.
+ * 4. Announce work that arrives while you are looking.
  *
- * That third one is the whole feeling. Multiplayer is not a screen you visit;
- * it is something landing that you did not do. Here it is one scripted arrival
- * (see `buildIncomingUpdate`); in the real build it is whatever the next
- * `git fetch` pulls down, announced exactly the same way.
+ * That last one is the whole feeling. Multiplayer is not a screen you visit; it
+ * is something landing that you did not do.
  *
  * @module hooks/useTeamWorkspace
  */
@@ -23,7 +21,14 @@ import { useOptionalToast } from '../contexts/ToastContext';
 import { usePolling } from './usePolling';
 import { TeamPanel } from '../components/team/TeamPanel';
 import { TeamPresence } from '../components/team/TeamPresence';
-import { adopt, getSnapshot, subscribe, unseenUpdates } from '../lib/teamStore';
+import {
+  TEAM_SYNC_INTERVAL_MS,
+  adopt,
+  getSnapshot,
+  refresh,
+  subscribe,
+  unseenUpdates,
+} from '../lib/teamStore';
 
 /**
  * How often the shared clock advances.
@@ -53,24 +58,31 @@ function readStoredOpen(projectPath: string): boolean {
 }
 
 /**
- * @param project    the open project, whose name and path the fixture adopts
- * @param githubRepo `owner/repo`, or null when there is no GitHub remote
+ * @param project the open project — its path is what the snapshot is read for
  */
-export function useTeamWorkspace(
-  project: { path: string; name: string },
-  githubRepo: string | null
-) {
-  const { path: projectPath, name: projectName } = project;
+export function useTeamWorkspace(project: { path: string; name: string }) {
+  const { path: projectPath } = project;
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);
   const { showToast } = useOptionalToast();
 
   const [open, setOpen] = useState(() => readStoredOpen(projectPath));
 
-  // Point the fixture at this project. `adopt` is idempotent per path, so a
-  // re-render or a returning visit does not reset a thread being replied to.
+  // Read this project. `adopt` is idempotent per path, so a re-render or a
+  // returning visit does not re-announce the backlog or drop a pending reply.
   useEffect(() => {
-    adopt(projectPath, projectName, githubRepo);
-  }, [projectPath, projectName, githubRepo]);
+    adopt(projectPath);
+  }, [projectPath]);
+
+  // Re-read on a timer. `usePolling` rather than a raw interval, per the repo's
+  // own rule — it owns teardown and backs off when a read fails, which matters
+  // here because the read shells out to git and `gh`.
+  usePolling(
+    useCallback(() => refresh(projectPath), [projectPath]),
+    {
+      intervalMs: TEAM_SYNC_INTERVAL_MS,
+      name: 'team-snapshot',
+    }
+  );
 
   // Re-read the preference when the project changes, using React's documented
   // "adjust state during render" pattern rather than an effect. An effect here
@@ -96,16 +108,24 @@ export function useTeamWorkspace(
 
   const toggle = useCallback(() => setOpenPersisted(!open), [open, setOpenPersisted]);
 
-  // Announce anything that arrives after the first render of this project.
-  // The ref starts unset so the initial backlog is not announced as news —
-  // toasting seven updates the moment a project opens is not an arrival, it
-  // is an ambush.
+  const me = snapshot.members.find((member) => member.isSelf)?.actor ?? null;
+
+  // Announce anything that arrives after the first *read* of this project.
+  //
+  // The baseline has to be the first loaded snapshot, not the first render.
+  // Reading the repo is asynchronous, so the first render is an empty feed —
+  // baselining on that makes every existing row look like news and greets you
+  // with seven toasts the moment a project opens. That is not an arrival, it is
+  // an ambush, and it is exactly what happened the first time this ran against
+  // real data. `lastSyncedAt` is the signal that a read actually landed.
   const knownIds = useRef<Set<string> | null>(null);
   useEffect(() => {
     knownIds.current = null;
   }, [projectPath]);
 
+  const loaded = snapshot.sync.lastSyncedAt !== null;
   useEffect(() => {
+    if (!loaded) return;
     const ids = new Set(snapshot.updates.map((update) => update.id));
     if (knownIds.current === null) {
       knownIds.current = ids;
@@ -114,9 +134,12 @@ export function useTeamWorkspace(
     const arrived = snapshot.updates.filter((update) => !knownIds.current!.has(update.id));
     knownIds.current = ids;
     for (const update of arrived) {
+      // Your own push is not news to you. It is also the most common arrival
+      // by far, so without this the feature mostly announces you to yourself.
+      if (update.actor.login && update.actor.login === me?.login) continue;
       showToast(`${update.actor.name}: ${update.headline}`, 'info');
     }
-  }, [snapshot.updates, showToast]);
+  }, [loaded, snapshot.updates, me, showToast]);
 
   // The shared clock. `usePolling` rather than a raw interval, per the repo's
   // own rule — it owns teardown and backoff in one place.

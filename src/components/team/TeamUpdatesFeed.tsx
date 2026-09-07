@@ -20,6 +20,7 @@ import { Dropdown, DropdownItem } from '../primitives/Dropdown';
 import { EmptyState } from '../primitives/EmptyState';
 import { MenuButton } from '../primitives/MenuButton';
 import { SegmentedControl } from '../primitives/SegmentedControl';
+import { Spinner } from '../primitives/Spinner';
 import { TeamCoverageNote } from './TeamCoverageNote';
 import { TeamUpdateCard } from './TeamUpdateCard';
 import { actorKey, groupByDay, type TeamMember, type TeamUpdate } from '../../lib/team';
@@ -34,6 +35,10 @@ interface TeamUpdatesFeedProps {
   unseenIds: Set<string>;
   expandedId: string | null;
   onToggleExpanded: (id: string) => void;
+  /** Reading the repo. Distinguishes "nothing yet" from "not looked yet". */
+  loading?: boolean;
+  /** What went wrong reading it, if anything. Shown, never swallowed. */
+  error?: string | null;
   now: number;
 }
 
@@ -44,6 +49,8 @@ export function TeamUpdatesFeed({
   unseenIds,
   expandedId,
   onToggleExpanded,
+  loading = false,
+  error = null,
   now,
 }: TeamUpdatesFeedProps) {
   const [scope, setScope] = useState<Scope>('all');
@@ -82,6 +89,7 @@ export function TeamUpdatesFeed({
   }, [updates, scope, person, query]);
 
   const groups = useMemo(() => groupByDay(visible, now), [visible, now]);
+  const filtered = scope !== 'all' || person !== 'all' || query.trim() !== '';
 
   return (
     <div className="team-feed">
@@ -138,12 +146,40 @@ export function TeamUpdatesFeed({
         </div>
       </div>
 
+      {/* Four different nothings, and telling them apart is the whole job.
+          "No updates match these filters" on an unfiltered feed reads as a
+          broken feature; "nobody has done anything" on a repo we failed to read
+          is a lie about your teammates. */}
       {groups.length === 0 ? (
-        <EmptyState
-          icon={<HistoryIcon size={26} />}
-          title="Nothing matches"
-          description="No updates match these filters. Clear them to see everything."
-        />
+        loading ? (
+          <EmptyState
+            icon={<Spinner size="lg" />}
+            title="Reading your repository"
+            description="Walking the history and asking GitHub about open pull requests."
+          />
+        ) : error ? (
+          <EmptyState
+            icon={<HistoryIcon size={26} />}
+            title="Couldn't read the history"
+            description={error}
+          />
+        ) : filtered ? (
+          <EmptyState
+            icon={<HistoryIcon size={26} />}
+            title="Nothing matches"
+            description="No updates match these filters. Clear them to see everything."
+          />
+        ) : (
+          <EmptyState
+            icon={<HistoryIcon size={26} />}
+            title="Nothing here yet"
+            description={
+              repo
+                ? `Nothing has been committed to ${repo} in the last month. Anything you or your teammates push shows up here — from Ship Studio, from a terminal, from anywhere.`
+                : 'This project has no GitHub remote, so there is nobody to share with yet. Your own commits will still show up here.'
+            }
+          />
+        )
       ) : (
         <div className="team-feed-scroll">
           {groups.map((group) => (

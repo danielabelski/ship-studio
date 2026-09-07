@@ -519,6 +519,9 @@ pub fn run() {
             commands::workflows::set_inbox_item_archived,
             commands::workflows::delete_inbox_item,
             commands::workflows::mark_all_inbox_read,
+            // Team (multiplayer). Read-only: git and gh are the database, and
+            // nothing here writes to either.
+            commands::team::get_team_snapshot,
             commands::projects::get_dashboard_projects,
             commands::projects::list_pages,
             commands::projects::open_in_finder,

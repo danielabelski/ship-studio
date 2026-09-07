@@ -1037,7 +1037,7 @@ export const WorkspaceView = memo(function WorkspaceView({
     />
   );
 
-  const team = useTeamWorkspace(currentProject, integrations.projectGithub?.github_repo ?? null);
+  const team = useTeamWorkspace(currentProject);
 
   const header = WorkspaceHeader({
     projectPath: currentProject.path,

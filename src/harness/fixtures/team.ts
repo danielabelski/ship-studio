@@ -1,31 +1,30 @@
 /**
- * Fixture data for the Team prototype.
+ * Team — the harness's backend.
  *
- * PROTOTYPE ONLY. Every person, SHA, PR number and sentence below is invented.
- * This file exists so the Team surfaces can be used before a line of git
- * plumbing is written, and it is the first thing deleted when `teamStore`
- * starts reading real records.
+ * `get_team_snapshot` reads a real repository, which is exactly what a harness
+ * cannot have: the machine running a capture has no teammates, no pull requests
+ * and usually no remote. So this stands in for it — every person, SHA, PR
+ * number and sentence below is invented, and none of it ships.
  *
- * Two rules keep it honest as a preview of the real thing:
+ * Two rules keep it honest as a stand-in:
  *
- * 1. **It adopts whichever project you actually opened.** The point is to see
- *    your own project with people in it, so the fixture takes the open
- *    project's name and path rather than inventing a repo you have never
- *    heard of.
+ * 1. **It adopts whichever project the scenario opened.** The screens are about
+ *    *your* project with people in it, so the fixture takes the open project's
+ *    name and path rather than inventing a repo nobody has heard of.
  * 2. **`avatarUrl` is null for everyone.** A real GitHub avatar is a network
- *    image; inventing URLs would photograph a broken image and tell us
- *    nothing. Initials are the design for a missing avatar, so the fixtures
- *    exercise the path that actually has to be good.
+ *    image, and inventing URLs would photograph a broken one. Initials are the
+ *    design for a missing avatar, so the fixture exercises the path that
+ *    actually has to be good.
  *
  * The updates are written the way an agent would write them under the bundled
  * skill: what changed, why, what it touched, what it needs. That is the whole
- * argument for this feature, so the fixture has to hold itself to it — if
- * these read like commit messages, the design is wrong.
+ * argument for the feature, so the fixture holds itself to it — if these read
+ * like commit messages, the design is wrong.
  *
- * @module lib/teamFixtures
+ * @module harness/fixtures/team
  */
 
-import type { TeamActor, TeamMember, TeamSnapshot, TeamThread, TeamUpdate } from './team';
+import type { TeamActor, TeamMember, TeamSnapshot, TeamThread, TeamUpdate } from '../../lib/team';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -432,43 +431,5 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
     // Everything older than the two most recent counts as already seen, so
     // "new since you were here" has something to show on first open.
     seenIds: updates.slice(2).map((u) => u.id),
-  };
-}
-
-/**
- * The update that arrives while you are looking at the app.
- *
- * Multiplayer is a feeling before it is a feature, and the feeling is
- * something showing up that you did not do. In the real build this is whatever
- * the next `git fetch` pulls down; here it is one scripted arrival, so the
- * prototype can demonstrate the moment that matters.
- */
-export function buildIncomingUpdate(
-  projectName: string,
-  projectPath: string,
-  now = Date.now()
-): TeamUpdate {
-  return {
-    id: `01K4J8Q2LIVE${now}`,
-    at: now,
-    actor: FIXTURE_ACTORS.sarah,
-    writtenBy: 'agent',
-    agentName: 'Claude Code',
-    headline: 'Swapped the duplicate testimonial and credited both quotes',
-    why: 'Two of the three testimonials were from the same company, which reads as though we only have one happy customer.',
-    changes: [
-      'Replaced the second quote with the one from the onboarding survey',
-      'Every quote now carries a name and company — one had neither',
-    ],
-    asks: 'This resolves the comment you have open on that section.',
-    branch: 'main',
-    status: 'deployed',
-    projectName,
-    projectPath,
-    commits: [{ sha: 'f19d3c0', message: 'Swap duplicate testimonial' }],
-    files: [{ path: 'src/data/testimonials.ts', added: 11, removed: 9 }],
-    prNumber: null,
-    buildError: null,
-    githubUrl: `https://github.com/acme-studio/${projectName}/commit/f19d3c0`,
   };
 }

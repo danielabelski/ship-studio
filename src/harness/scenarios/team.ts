@@ -1,11 +1,11 @@
 /**
- * Team — the multiplayer vision prototype.
+ * Team — multiplayer, captured.
  *
- * These scenarios add no `commands` of their own, because the Team screens do
- * not call the backend yet: their data comes from `lib/teamFixtures`, in the
- * frontend. That is the point of the prototype, and it is also why these
- * captures are worth having — the whole feature is UI right now, so UI is the
- * only thing there is to review.
+ * `get_team_snapshot` reads a real repository: git history, `gh pr list`, and
+ * any records under `.shipstudio-team/`. A capture machine has none of those —
+ * no teammates, no pull requests, usually no remote — so these scenarios answer
+ * that one command from `harness/fixtures/team`, which is the only invented
+ * data left anywhere in the feature.
  *
  * Each reaches its surface through the palette rather than through `steps`,
  * because the harness runs scripted steps *before* `command` — a step cannot
@@ -19,6 +19,30 @@
 
 import type { Scenario } from '../types';
 import { workspaceCommands, WORKSPACE_PROJECT } from './workspace';
+import { buildTeamFixture } from '../fixtures/team';
+
+/**
+ * The one command every Team surface calls.
+ *
+ * Answered per invocation rather than as a frozen literal, so the fixture
+ * adopts whichever project the scenario opened. The screens are about *your*
+ * project with people in it, and a fixture naming a repo nobody has heard of
+ * would photograph the wrong idea.
+ */
+const teamCommands = {
+  get_team_snapshot: (args: Record<string, unknown>) => {
+    const projectPath = typeof args.projectPath === 'string' ? args.projectPath : WORKSPACE_PROJECT;
+    return buildTeamFixture({
+      projectPath,
+      projectName: projectPath.split('/').pop() || 'your project',
+    });
+  },
+  // The home-level screen reads across recently opened projects, so it needs
+  // the list before it can read anything at all.
+  get_dashboard_projects: [
+    { name: 'acme-marketing', path: WORKSPACE_PROJECT, thumbnail: null, last_opened: null },
+  ],
+};
 
 export const teamScenarios: Scenario[] = [
   {
@@ -30,7 +54,7 @@ export const teamScenarios: Scenario[] = [
     openSelector: '.team-presence',
     requires: '.team-coverage',
     clipSelector: '.team-coverage',
-    commands: { ...workspaceCommands },
+    commands: { ...workspaceCommands, ...teamCommands },
   },
 
   {
@@ -41,7 +65,7 @@ export const teamScenarios: Scenario[] = [
     project: WORKSPACE_PROJECT,
     openSelector: '.team-presence',
     requires: '.team-update-headline',
-    commands: { ...workspaceCommands },
+    commands: { ...workspaceCommands, ...teamCommands },
   },
   {
     id: 'team-in-workspace-people',
@@ -52,7 +76,7 @@ export const teamScenarios: Scenario[] = [
     openSelector: '.team-presence',
     steps: [{ click: '[data-tab-value="people"]' }],
     requires: '.team-person-doing',
-    commands: { ...workspaceCommands },
+    commands: { ...workspaceCommands, ...teamCommands },
   },
 
   {
@@ -62,7 +86,7 @@ export const teamScenarios: Scenario[] = [
       'Every row leads with a sentence you can act on, with the reasoning underneath and the commits collapsed behind one line. The single row Ship Studio wrote itself — a push with no agent summary attached — is visibly the lesser thing, which is the argument for the skill made in the UI rather than in a doc.',
     command: 'team.updates',
     requires: '.team-update-headline',
-    commands: {},
+    commands: { ...teamCommands },
   },
   {
     id: 'team-people',
@@ -71,7 +95,7 @@ export const teamScenarios: Scenario[] = [
       'Each person shows a branch, how far ahead it is, and when they last pushed — never an "online" dot, because no remote can report that. The collaborator who has pushed nothing says so instead of being hidden, and the footnote names what a git remote cannot see.',
     command: 'team.people',
     requires: '.team-person',
-    commands: {},
+    commands: { ...teamCommands },
   },
   {
     id: 'team-comments',
@@ -80,7 +104,7 @@ export const teamScenarios: Scenario[] = [
       'A list driving a reader beside it, the same geometry as the Inbox. A thread shows its pin number, its participants and its route; the reader shows the conversation and a composer whose hint says replies are pushed on the next sync.',
     command: 'team.comments',
     requires: '.team-message',
-    commands: {},
+    commands: { ...teamCommands },
   },
   {
     id: 'team-how-it-works',
@@ -89,6 +113,6 @@ export const teamScenarios: Scenario[] = [
       'The disclosure panel that replaces an onboarding step: the exact path written into the repo, the three writers ranked by how much each can be relied on, and the three limits — not live, not an audit log, not private.',
     command: 'team.howItWorks',
     requires: '.team-how-limits',
-    commands: {},
+    commands: { ...teamCommands },
   },
 ];

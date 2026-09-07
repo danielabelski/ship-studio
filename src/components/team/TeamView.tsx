@@ -1,9 +1,11 @@
 /**
  * Team — the home-level screen for everything multiplayer.
  *
- * VISION PROTOTYPE. Data comes from `teamFixtures`; nothing here reaches a
- * backend. The point is to look at the shape of the feature before deciding to
- * build it.
+ * Reads across your most recently opened projects at once (see
+ * `HOME_PROJECT_LIMIT`), because the question this screen answers — "what has
+ * my team been building?" — is not scoped to whichever project happens to be
+ * open. Each read is a full history walk plus a `gh pr list`, which is why the
+ * set is bounded and ordered by when you last opened it.
  *
  * Placed beside Home, Workflows and Inbox because it is the same kind of
  * destination: a standing view over every project rather than something inside
@@ -22,7 +24,7 @@
  * @module components/team/TeamView
  */
 
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   ChevronIcon,
   CollaboratorsIcon,
@@ -44,7 +46,9 @@ import { TeamThreadsPanel } from './TeamThreadsPanel';
 import { useDashboardVisibility } from '../../hooks/useDashboardVisibility';
 import { formatAgo } from '../../lib/workflows';
 import { openThreads } from '../../lib/team';
+import { getDashboardProjects } from '../../lib/project';
 import {
+  adoptAll,
   getSnapshot,
   getUiSnapshot,
   setHowItWorksOpen,
@@ -58,10 +62,30 @@ import type { TeamTab } from '../../lib/teamStore';
 
 export function TeamView() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);
-  const { tab, howItWorksOpen, expandedId } = useSyncExternalStore(subscribe, getUiSnapshot);
+  const { tab, howItWorksOpen, expandedId, loading } = useSyncExternalStore(
+    subscribe,
+    getUiSnapshot
+  );
   const { dashboardHeaderHidden, hideDashboardHeader } = useDashboardVisibility();
 
   const [project, setProject] = useState<string | null>(null);
+
+  // `get_dashboard_projects` already returns them ordered by last opened, so
+  // the store's cap takes the ones actually worth reading. Failures are the
+  // store's business — it drops the project that failed and keeps the rest.
+  useEffect(() => {
+    let live = true;
+    void getDashboardProjects()
+      .then((projects) => {
+        if (live) void adoptAll(projects.map(({ path, name }) => ({ path, name })));
+      })
+      .catch(() => {
+        // No project list means no feed, which the empty state already says.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /**
    * One clock for the whole screen.
@@ -254,6 +278,8 @@ export function TeamView() {
                     unseenIds={unseenIds}
                     expandedId={expandedId}
                     onToggleExpanded={toggleExpanded}
+                    loading={loading}
+                    error={syncState.error}
                     now={now}
                   />
                 </TabsPanel>

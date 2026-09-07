@@ -27,6 +27,8 @@ export const workspaceCommands: CommandMap = {
   mark_project_opened: null,
   set_window_title: null,
   get_auto_accept_mode: false,
+  // Default-on in the product, so the captures show what people actually see.
+  get_element_breadcrumb_enabled: true,
 
   // ---- dev server --------------------------------------------------------
   // Null rather than a port: the harness has no dev server, and inventing a
