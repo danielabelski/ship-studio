@@ -1209,6 +1209,12 @@
       "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
     },
     {
+      "path": "src/styles/features/project-rail.css",
+      "token": "--radius-full",
+      "count": 2,
+      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
+    },
+    {
       "path": "src/styles/features/publish/dropdown.css",
       "token": "--font-weight-semibold",
       "count": 1,
