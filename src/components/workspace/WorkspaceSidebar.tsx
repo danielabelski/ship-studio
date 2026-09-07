@@ -21,6 +21,7 @@ import {
   ChevronIcon,
   CloseIcon,
   EditFieldIcon,
+  CollaboratorsIcon,
   HomeIcon,
   PanelLeftIcon,
   PinIcon,
@@ -122,11 +123,13 @@ interface Props {
    * Which top-level destination is showing, so the
    * nav row can mark it current. Defaults to Home when omitted.
    */
-  activeNav?: 'home' | 'workflows' | 'inbox';
+  activeNav?: 'home' | 'workflows' | 'inbox' | 'team';
   /** Open the Workflows page. Hides the nav button when omitted. */
   onGoWorkflows?: () => void;
   /** Open the Inbox. Hides the nav button when omitted. */
   onGoInbox?: () => void;
+  /** Home-level Team screen. Absent where there is no nav row. */
+  onGoTeam?: () => void;
   /** Unread findings, rendered as a badge on the Inbox button. */
   inboxUnreadCount?: number;
 
@@ -319,6 +322,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   activeNav,
   onGoWorkflows,
   onGoInbox,
+  onGoTeam,
   inboxUnreadCount = 0,
   onGoHome,
   onOpenProjectPicker,
@@ -1330,6 +1334,18 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                   </span>
                 )}
               </span>
+            )}
+            {onGoTeam && (
+              <IconButton
+                variant="ghost"
+                className={`workspace-sidebar-home ${activeNav === 'team' ? 'is-active' : ''}`}
+                icon={<CollaboratorsIcon size={12} />}
+                onClick={onGoTeam}
+                disabled={activeNav === 'team'}
+                aria-current={activeNav === 'team' ? 'page' : undefined}
+                title="Team"
+                aria-label="Team"
+              />
             )}
           </div>
         )}

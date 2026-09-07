@@ -24,6 +24,7 @@ const props = {
   onGoHome: vi.fn(),
   onGoWorkflows: vi.fn(),
   onGoInbox: vi.fn(),
+  onGoTeam: vi.fn(),
   inboxUnreadCount: 0,
   isSidebarHidden: false,
   onToggleSidebar: vi.fn(),
@@ -59,10 +60,11 @@ describe('HomeSidebar', () => {
     expect(onTogglePinProject).toHaveBeenCalledWith('/tmp/project-a', false);
   });
 
-  it('renders the Workflows and Inbox destinations', () => {
+  it('renders the Workflows, Inbox and Team destinations', () => {
     renderSidebar(<HomeSidebar {...props} activeNav="home" />);
     expect(screen.getByRole('button', { name: 'Workflows' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Inbox' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Team' })).toBeInTheDocument();
   });
 
   it('badges the Inbox with the unread count', () => {

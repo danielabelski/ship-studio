@@ -63,6 +63,7 @@ import {
 } from './components/CommandPalette/paletteContext';
 import { useAppCommands } from './commands/useAppCommands';
 import { useWorkflowCommands } from './commands/useWorkflowCommands';
+import { useTeamCommands } from './commands/useTeamCommands';
 import { useProjectNumberShortcuts } from './hooks/useProjectNumberShortcuts';
 import { useWorkspaceNumberShortcuts } from './hooks/useWorkspaceNumberShortcuts';
 import { TooltipProvider } from './components/primitives/Tooltip';
@@ -145,7 +146,7 @@ function AppContents({ initialProjectPath }: AppProps) {
         currentProjectName: currentProject?.name ?? null,
         currentProjectPath: currentProject?.path ?? null,
       });
-    } else if (view === 'projects' || view === 'workflows' || view === 'inbox') {
+    } else if (view === 'projects' || view === 'workflows' || view === 'inbox' || view === 'team') {
       // Workflows and the Inbox are home-level screens; left in 'other' their
       // ⌘K armed a palette that couldn't render (see CommandPaletteHost).
       setPaletteContext({ kind: 'home', currentProjectName: null, currentProjectPath: null });
@@ -594,6 +595,7 @@ function AppContents({ initialProjectPath }: AppProps) {
   });
 
   useWorkflowCommands({ setView, showToast });
+  useTeamCommands({ setView });
 
   // Close an active session from the sidebar (dashboard, collapsed rail, or
   // workspace). Ordering and the auto-open sentinel are load-bearing — see
@@ -1075,6 +1077,7 @@ function AppContents({ initialProjectPath }: AppProps) {
       onGoHome: () => setView('projects'),
       onGoWorkflows: () => setView('workflows'),
       onGoInbox: () => setView('inbox'),
+      onGoTeam: () => setView('team'),
       inboxUnreadCount: inboxUnread,
       onOpenProjectPicker: openProjectPicker,
       isSidebarHidden,

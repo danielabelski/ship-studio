@@ -6,5 +6,6 @@ export type AppView =
   | 'projects'
   | 'workflows'
   | 'inbox'
+  | 'team'
   | 'project-loading'
   | 'workspace';

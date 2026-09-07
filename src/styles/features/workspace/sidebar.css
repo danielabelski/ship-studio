@@ -83,21 +83,23 @@
   height: calc(var(--control-height-standard) + (var(--space-08) * 2));
   min-height: calc(var(--control-height-standard) + (var(--space-08) * 2));
   gap: 0;
-  /* The left inset clears the traffic lights. The extra --space-08 gives the
-     nav row a little air off them now that it carries four buttons rather
-     than one. */
+  /* The left inset clears the traffic lights. The air that used to sit
+     between them and the nav is now spent on the buttons themselves: Team
+     makes five destinations, and the row has ~126px after the inset. */
   padding: 0 var(--space-08) 0
-    calc(
-      var(--space-32) + var(--space-32) + var(--spacing-md) + var(--button-gap) + var(--space-08)
-    );
+    calc(var(--space-32) + var(--space-32) + var(--spacing-md) + var(--button-gap));
 }
 
 /* Match the titlebar's icon-only Home control instead of stretching with the
- * resizable sidebar. */
+ * resizable sidebar. Sized to the shortcut token rather than the full button
+ * height: five 30px buttons overflow this row at the 214px default width and
+ * the fifth is clipped, which is not a state anyone would choose. */
 .app.workspace-home .workspace-sidebar-top-row .workspace-sidebar-home {
-  width: var(--button-height);
-  min-width: var(--button-height);
-  flex: 0 0 var(--button-height);
+  width: var(--size-sidebar-project-shortcut);
+  min-width: var(--size-sidebar-project-shortcut);
+  height: var(--size-sidebar-project-shortcut);
+  min-height: var(--size-sidebar-project-shortcut);
+  flex: 0 0 var(--size-sidebar-project-shortcut);
   padding-inline: 0;
 }
 

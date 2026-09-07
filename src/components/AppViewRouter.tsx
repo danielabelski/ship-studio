@@ -142,7 +142,8 @@ export function AppViewRouter({
     );
   }
 
-  if (view === 'workflows' || view === 'inbox') {
+  // Workflows, Inbox and Team: home-level screens sharing the home sidebar.
+  if (view === 'workflows' || view === 'inbox' || view === 'team') {
     return (
       <>
         <StandingWorkView

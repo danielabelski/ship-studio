@@ -1,5 +1,5 @@
 /**
- * The two home-level screens that aren't the project list: Workflows and Inbox.
+ * The home-level screens that aren't the project list: Workflows, Inbox and Team.
  *
  * Extracted from App.tsx so the shell stays a router rather than growing a
  * third full screen body. They share the home sidebar and the same
@@ -13,10 +13,11 @@ import type { ComponentProps } from 'react';
 import { HomeSidebar } from './HomeSidebar';
 import { WorkflowsView } from '../workflows/WorkflowsView';
 import { InboxView } from '../inbox/InboxView';
+import { TeamView } from '../team/TeamView';
 import type { Project } from '../../lib/project';
 
 interface StandingWorkViewProps {
-  view: 'workflows' | 'inbox';
+  view: 'workflows' | 'inbox' | 'team';
   isCompact: boolean;
   sidebarProps: Omit<ComponentProps<typeof HomeSidebar>, 'activeNav'>;
   /** Preselects the project when creating a workflow from an open workspace. */
@@ -38,6 +39,8 @@ export function StandingWorkView({
         {!isCompact && <HomeSidebar {...sidebarProps} activeNav={view} />}
         {view === 'workflows' ? (
           <WorkflowsView currentProjectPath={currentProjectPath} />
+        ) : view === 'team' ? (
+          <TeamView />
         ) : (
           <InboxView onOpenProject={onOpenProject} />
         )}
