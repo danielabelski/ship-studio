@@ -78,7 +78,6 @@ import {
   ExpandIcon,
   FullBreakpointIcon,
   GridIcon,
-  MoreHorizontalIcon,
   LaptopIcon,
   MobileIcon,
   PackageIcon,
@@ -117,15 +116,26 @@ const BreakpointIcon = ({ type }: { type: Breakpoint }) => {
 
 const PREVIEW_BREAKPOINTS = Object.keys(BREAKPOINTS) as Breakpoint[];
 
-const PREVIEW_BREAKPOINT_OPTIONS = PREVIEW_BREAKPOINTS.map((bp) => ({
-  value: bp,
-  label: BREAKPOINTS[bp].label,
-  width: BREAKPOINTS[bp].width,
-  icon: <BreakpointIcon type={bp} />,
-}));
 /** The viewport tab that means "all of them at once". Deliberately not a
  *  breakpoint name, so it cannot collide with one. */
 const CANVAS_TAB = 'canvas';
+
+const PREVIEW_BREAKPOINT_OPTIONS = [
+  ...PREVIEW_BREAKPOINTS.map((bp) => ({
+    value: bp,
+    label: BREAKPOINTS[bp].label,
+    width: BREAKPOINTS[bp].width,
+    icon: <BreakpointIcon type={bp} />,
+  })),
+  // The canvas is a viewport choice like any other, and this popover is the
+  // only way to reach it once the icon strip is hidden at narrow widths.
+  {
+    value: CANVAS_TAB,
+    label: 'Every breakpoint',
+    width: '',
+    icon: <GridIcon size={14} />,
+  },
+];
 
 /**
  * A frame reports its selection box in its OWN pixels. Host-side editor chrome
@@ -1788,49 +1798,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           <ResetIcon size={14} />
         </button>
 
-        {/* The same viewport choices as the strip below, for when the pane is
-            too narrow to show it. Only one of the two is ever visible — see
-            the density tiers in preview-toolbar.css. */}
-        <div className="preview-viewport-slot">
-          <Dropdown
-            menuClassName="preview-viewport-menu"
-            portal
-            align="right"
-            trigger={(props) => (
-              <button
-                {...props}
-                type="button"
-                className="preview-viewport-overflow"
-                title="Viewport"
-                aria-label="Viewport"
-              >
-                <MoreHorizontalIcon size={14} />
-              </button>
-            )}
-          >
-            {PREVIEW_BREAKPOINTS.map((bp) => (
-              <DropdownItem
-                key={bp}
-                icon={<BreakpointIcon type={bp} />}
-                active={!canvasMode && resize.getActiveBreakpoint() === bp}
-                onSelect={() => {
-                  setCanvasEnabled(false);
-                  resize.handleBreakpointClick(bp);
-                }}
-              >
-                {BREAKPOINTS[bp].label}
-              </DropdownItem>
-            ))}
-            <DropdownItem
-              icon={<GridIcon size={14} />}
-              active={canvasMode}
-              onSelect={() => setCanvasEnabled(true)}
-            >
-              Every breakpoint
-            </DropdownItem>
-          </Dropdown>
-        </div>
-
         <button
           type="button"
           className="preview-fullscreen-btn"
@@ -1909,11 +1876,16 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                     onApply={resize.previewAtSize}
                     onFit={() => resize.handleBreakpointClick('full')}
                     openSignal={sizePopoverSignal}
-                    activeBreakpoint={resize.getActiveBreakpoint()}
+                    activeBreakpoint={canvasMode ? CANVAS_TAB : resize.getActiveBreakpoint()}
                     breakpointOptions={PREVIEW_BREAKPOINT_OPTIONS}
-                    onBreakpointChange={(value) =>
-                      resize.handleBreakpointClick(value as Breakpoint)
-                    }
+                    onBreakpointChange={(value) => {
+                      if (value === CANVAS_TAB) {
+                        setCanvasEnabled(true);
+                        return;
+                      }
+                      setCanvasEnabled(false);
+                      resize.handleBreakpointClick(value as Breakpoint);
+                    }}
                   />
                 );
               })()}

@@ -52,6 +52,11 @@
   flex: 0 0 var(--size-icon-sm);
   border-radius: var(--radius-pill);
   color: var(--text-inverse);
+  /* Match the sidebar's other initial badges: without an explicit family the
+     glyph inherits whatever the surrounding context uses, and a 10px letter in
+     a 14px circle has ~2px of slack — enough for a metrics mismatch to read as
+     off-centre. */
+  font-family: var(--font-ui);
   font-size: var(--font-size-badge);
   font-weight: var(--font-weight-heading);
   line-height: 1;
