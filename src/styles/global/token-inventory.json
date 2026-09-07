@@ -1595,7 +1595,7 @@
       "owner": "Button",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 2
+      "consumerCount": 3
     },
     {
       "name": "--button-border-solid",
@@ -4052,7 +4052,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 306
+      "consumerCount": 305
     },
     {
       "name": "--surface-control-hover",
@@ -4709,7 +4709,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 17
+      "consumerCount": 16
     },
     {
       "name": "--shadow-source-control-attention",

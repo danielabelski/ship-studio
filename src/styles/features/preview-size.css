@@ -81,17 +81,21 @@
   white-space: nowrap;
 }
 
-.preview-dimensions:hover:not(:disabled):not([aria-expanded='true']) {
+.preview-dimensions:hover:not(:disabled):not(.preview-dimensions--compact[aria-expanded='true']) {
   background: var(--surface-control-hover);
   border-color: transparent;
   color: var(--text-primary);
 }
 
-.preview-dimensions[aria-expanded='true'],
-.preview-dimensions[aria-expanded='true']:hover:not(:disabled) {
-  background: var(--surface-control);
+/* Only the ⋯ carries the open state. It is the menu's trigger, so it reads as
+   held down while the popover is up — the same pressed treatment every other
+   toolbar toggle uses, rather than a raised one. The readout opens the same
+   popover but is a value, not a toggle: giving it the same treatment lit two
+   controls at once and made the number look like it had been switched on. */
+.preview-dimensions--compact[aria-expanded='true'],
+.preview-dimensions--compact[aria-expanded='true']:hover:not(:disabled) {
+  background: var(--button-surface-pressed);
   border-color: transparent;
-  box-shadow: var(--shadow-button);
   color: var(--text-primary);
 }
 
