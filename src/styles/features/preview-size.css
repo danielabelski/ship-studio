@@ -241,6 +241,10 @@
 
   .preview-dimensions--compact {
     display: inline-flex;
+    /* The ⋯ stands in for the icon strip, so it takes the strip's place at the
+       head of the group rather than trailing the readout — the collapsed pill
+       reads as the expanded one with its strip swapped for a menu. */
+    order: -1;
   }
 }
 
