@@ -18,15 +18,38 @@
  */
 
 import type { Scenario } from '../types';
+import { workspaceCommands, WORKSPACE_PROJECT } from './workspace';
 
 export const teamScenarios: Scenario[] = [
   {
-    id: 'team-activity',
-    title: 'Team — activity log',
+    id: 'team-in-workspace',
+    title: 'Team — inside the project you are working in',
     looksRightWhen:
-      'Rows group under Today/Yesterday, each showing who did what with a category badge. Only the git-derived rows carry the quiet "from git" marker; the rest go without rather than claiming an assurance they do not have. The failed deploy shows its build error on the second line.',
-    command: 'team.activity',
-    requires: '.team-event',
+      'The workspace header carries a face stack with a count of what has landed since you last looked, and the panel floats over the preview showing what people actually did — headline, why, what changed — rather than a list of pushes.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.team-presence',
+    requires: '.team-update-headline',
+    commands: { ...workspaceCommands },
+  },
+  {
+    id: 'team-in-workspace-people',
+    title: 'Team — who is on what, without leaving the project',
+    looksRightWhen:
+      'Each teammate shows the branch they are on and the sentence describing what they are doing, not just a branch name and a timestamp.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.team-presence',
+    steps: [{ click: '[data-tab-value="people"]' }],
+    requires: '.team-person-doing',
+    commands: { ...workspaceCommands },
+  },
+
+  {
+    id: 'team-activity',
+    title: 'Team — what everyone did',
+    looksRightWhen:
+      'Every row leads with a sentence you can act on, with the reasoning underneath and the commits collapsed behind one line. The single row Ship Studio wrote itself — a push with no agent summary attached — is visibly the lesser thing, which is the argument for the skill made in the UI rather than in a doc.',
+    command: 'team.updates',
+    requires: '.team-update-headline',
     commands: {},
   },
   {

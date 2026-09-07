@@ -1,0 +1,202 @@
+/* Team — multiplayer Ship Studio (vision prototype).
+
+   Split by surface rather than kept as one sheet, matching how `branches/` and
+   `workspace/` are laid out: the feature spans a home screen, a floating panel
+   inside the workspace and a header control, and those get edited separately.
+*/
+
+/* -------------------------------------------------- presence, in the header */
+
+.team-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  position: relative;
+  height: var(--button-height);
+  padding: 0 var(--spacing-sm);
+  background: var(--button-surface-default);
+  border: var(--border-width-default) solid var(--button-border);
+  border-radius: var(--button-radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-interaction);
+}
+
+.team-presence:hover {
+  background: var(--button-surface-hover);
+  color: var(--text-secondary);
+}
+
+.team-presence.is-open {
+  background: var(--button-surface-selected);
+  color: var(--text-primary);
+}
+
+.team-presence-faces {
+  display: inline-flex;
+  align-items: center;
+}
+
+.team-presence-faces > .team-avatar + .team-avatar {
+  margin-left: -6px;
+  box-shadow: 0 0 0 var(--border-width-default) var(--surface-panel);
+}
+
+/* On the corner rather than in the row: the face stack is already wide, and a
+   count inline would push it past the space the header has. */
+.team-presence-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--accent-active);
+  color: var(--text-on-accent);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-label);
+  line-height: 1;
+}
+
+/* ------------------------------------------- the panel inside the workspace */
+
+/* The surface supplies border, radius and shadow; the consumer supplies the
+   background and the layout — same division canvas comments uses. */
+.team-panel-float {
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* The single child the surface stretches to 100%. Everything else hangs off
+   this, so the header stays a header instead of becoming a third of a panel. */
+.team-float-inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.team-float-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  flex: none;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: var(--border-width-default) solid var(--border-subtle);
+  cursor: grab;
+}
+
+.team-float-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-primary);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-label);
+}
+
+.team-float-count {
+  padding: var(--spacing-3xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--accent-active-rgb), 0.12);
+  color: var(--accent-active);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-body);
+}
+
+.team-float-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+}
+
+.team-float-tabs {
+  flex: none;
+  padding: var(--spacing-xs) var(--spacing-md) 0;
+}
+
+.team-float-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--spacing-md);
+  scrollbar-width: none;
+}
+
+.team-float-body::-webkit-scrollbar {
+  display: none;
+}
+
+.team-float-day + .team-float-day {
+  margin-top: var(--spacing-md);
+}
+
+.team-float-day-heading {
+  margin: 0 0 var(--spacing-2xs);
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+}
+
+/* At 420px a two-pane reader and the wide people rows do not fit, so both
+   collapse to a single column rather than being squeezed into unreadability. */
+.team-threads.is-compact .team-threads-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: none;
+  background: none;
+}
+
+.team-threads.is-compact .team-thread-list {
+  border-right: none;
+  border-bottom: var(--border-width-default) solid var(--border-subtle);
+  padding: 0 0 var(--spacing-sm);
+  max-height: 190px;
+}
+
+.team-threads.is-compact .team-thread-pane {
+  padding-top: var(--spacing-sm);
+}
+
+.team-threads.is-compact .team-thread-header,
+.team-threads.is-compact .team-thread-messages,
+.team-threads.is-compact .team-thread-composer {
+  padding-inline: 0;
+}
+
+.team-threads.is-compact .team-thread-composer {
+  background: none;
+}
+
+.team-people.is-compact .team-person {
+  padding: var(--spacing-sm);
+}
+
+.team-people.is-compact .team-people-footnote {
+  font-size: var(--font-size-micro);
+}
+
+/* What they are actually doing — the line that makes this more useful than
+   `git branch -r`. */
+.team-person-doing {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-compact);
+  overflow-wrap: anywhere;
+}
+
+.team-person-when {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+  white-space: nowrap;
+}

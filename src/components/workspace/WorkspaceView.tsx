@@ -36,13 +36,14 @@ import { WorkspaceModalHost } from './WorkspaceModalHost';
 import { WorkspaceModes } from './WorkspaceModes';
 import { WorkspacePreviewPane } from './WorkspacePreviewPane';
 import { WorkspaceTerminalPane } from './WorkspaceTerminalPane';
-import { WorkspaceHeader, HOSTING_PLUGIN_IDS } from './WorkspaceHeader';
+import { WorkspaceHeader } from './WorkspaceHeader';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
+import { useTeamWorkspace } from '../../hooks/useTeamWorkspace';
 import { trackEvent } from '../../lib/analytics';
 import { useWorkspaceCommands } from '../../commands/useWorkspaceCommands';
 import { useSnapshots } from '../../hooks/useSnapshots';
 import { useWorktreeWorkflow } from '../../hooks/useWorktreeWorkflow';
-import { PluginsDropdown } from '../plugins/PluginsDropdown';
+import { WorkspacePluginsSlot } from '../plugins/WorkspacePluginsSlot';
 import type { AgentConfig } from '../../lib/agent';
 import type { Project } from '../../lib/project';
 import { type ProjectType } from '../../lib/static-server';
@@ -453,7 +454,6 @@ export const WorkspaceView = memo(function WorkspaceView({
   const mcpModal = useModal('mcp');
   const devCommandModal = useModal('devCommand');
   const projectSettingsModal = useModal('projectSettings');
-  const pluginManagerModal = useModal('pluginManager');
   useEffect(() => {
     const cleanups = [
       envEditorModal.registerOnClose(focusActiveTerminal),
@@ -614,7 +614,7 @@ export const WorkspaceView = memo(function WorkspaceView({
     handleConflictsResolved,
   } = branchMgmt;
 
-  const { loadedPlugins, pluginFailures, getSlotPlugins, reloadPlugins } = plugins;
+  const { loadedPlugins, getSlotPlugins, reloadPlugins } = plugins;
 
   const {
     autoAcceptMode,
@@ -1037,6 +1037,8 @@ export const WorkspaceView = memo(function WorkspaceView({
     />
   );
 
+  const team = useTeamWorkspace(currentProject, integrations.projectGithub?.github_repo ?? null);
+
   const header = WorkspaceHeader({
     projectPath: currentProject.path,
     projectName: currentProject.name,
@@ -1058,18 +1060,14 @@ export const WorkspaceView = memo(function WorkspaceView({
     variablesPanelAvailable: isWebProject,
     onToggleVariablesPanel: variables.toggle,
     ...comments.header,
+    teamPresence: team.presence,
     modes: modesNode,
     headerExtras: (
-      <PluginsDropdown
-        plugins={loadedPlugins.filter((p) => !HOSTING_PLUGIN_IDS.includes(p.info.manifest.id))}
-        failures={pluginFailures}
-        hostingPluginCount={
-          loadedPlugins.filter((p) => HOSTING_PLUGIN_IDS.includes(p.info.manifest.id)).length
-        }
+      <WorkspacePluginsSlot
+        plugins={plugins}
         pluginProject={pluginProject}
         pluginActions={pluginActions}
         pluginTheme={pluginTheme}
-        onOpenPluginManager={pluginManagerModal.open}
       />
     ),
     integrations,
@@ -1127,6 +1125,7 @@ export const WorkspaceView = memo(function WorkspaceView({
         }`}
       >
         {!isCompact && header.titlebar}
+        {!isCompact && team.panel}
 
         {isCompact ? (
           <CompactWorkspace

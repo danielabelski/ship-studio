@@ -1,78 +1,74 @@
 /**
  * Team — the frontend store.
  *
- * A `useSyncExternalStore` source shaped exactly like `workflowsStore`, so the
- * Team screens read state the same way every other screen does and nothing has
- * to change when the data stops being invented.
+ * A `useSyncExternalStore` source shaped like `workflowsStore`, so the Team
+ * surfaces read state the way every other screen does and nothing changes
+ * shape when the data stops being invented.
  *
  * PROTOTYPE. State starts from `buildTeamFixture()` and lives in memory.
- * Mutations below are real — replying to a thread, resolving one, syncing —
- * and they update the store and re-render, so the UI can be *used* rather than
- * only looked at. They just never leave the tab.
+ * Mutations are real — replying, resolving, syncing, marking seen — so the UI
+ * can be *used* rather than only looked at. They never leave the tab.
  *
  * ## What replaces this
  *
- * Every mutation here is already written as an **append**, because that is how
- * the real one has to work (see `lib/team.ts`). `resolveThread` does not flip a
- * boolean on a record — it pushes a `comment.resolved` event and derives the
- * thread's state from it. So the wiring is:
+ * Every mutation is already written as an **append**, because that is how the
+ * real one has to work (see `lib/team.ts`):
  *
- * - `load()`      → `invoke('get_team_snapshot', { projectPath })`, which reads
- *                   the event files and folds them
- * - `append*()`   → `invoke('append_team_event', { projectPath, event })`,
+ * - `adopt()`     → `invoke('get_team_snapshot', { projectPath })`, which reads
+ *                   `.shipstudio-team/updates/**` and folds it
+ * - `append*()`   → `invoke('append_team_record', { projectPath, record })`,
  *                   which writes one file and debounces a commit
- * - `sync()`      → `invoke('sync_team_events', { projectPath })` — fetch, fold,
- *                   push anything pending
- * - the poll      → the same, on a timer, because without a server a fetch is
+ * - `sync()`      → `invoke('sync_team', { projectPath })` — fetch, fold, push
+ * - the poll      → the same on a timer, because without a server a fetch is
  *                   the only way anyone learns anything
- *
- * The optimistic path is not a nicety here, it is the honest model: a local
- * write IS local until a push succeeds, which is why `pending` exists on a
- * message and why the sync row counts unpushed events out loud.
  *
  * @module lib/teamStore
  */
 
-import { buildTeamFixture } from './teamFixtures';
+import { buildIncomingUpdate, buildTeamFixture } from './teamFixtures';
 import {
+  actorKey,
   lastMessageAt,
   type TeamActor,
-  type TeamEvent,
   type TeamSnapshot,
   type TeamThread,
+  type TeamUpdate,
 } from './team';
 
 /**
  * How often a real build would `git fetch` the team ref.
  *
- * This is the feature's entire notion of "real time" and it is worth being
- * explicit about: with no server, nobody can tell us something happened, so
- * the floor is however often we ask. A minute is frequent enough that a
- * conversation works and infrequent enough not to hammer someone's remote all
- * day. The prototype does not run it — there is nothing to fetch — but the
- * number is the design, so it lives here rather than in a component.
+ * This is the feature's entire notion of "real time", and it is worth being
+ * explicit: with no server, nobody can tell us something happened, so the
+ * floor is however often we ask. A minute is frequent enough that a
+ * conversation works and infrequent enough not to hammer a remote all day.
  */
 export const TEAM_SYNC_INTERVAL_MS = 60_000;
 
-/** Which of the three Team surfaces is showing. */
-export type TeamTab = 'activity' | 'people' | 'comments';
-
 /**
- * View state lives in the store rather than in `TeamView`'s `useState`, because
- * the palette has to be able to land on a specific tab.
+ * When the scripted teammate update lands after a project opens.
  *
- * "Team comments" in Cmd+K should open the comments, not the Team screen with
- * comments one more click away — a palette command that gets you *near* the
- * thing is the failure mode the palette exists to avoid. A command can't reach
- * into a component's state, so the state moves out here.
+ * Long enough that it reads as someone else finishing something rather than
+ * as a page-load animation, short enough that nobody has to wait around for
+ * the demo. Prototype only — the real one arrives on a fetch.
  */
+const INCOMING_AFTER_MS = 24_000;
+
+/** Which of the three Team surfaces is showing. */
+export type TeamTab = 'updates' | 'people' | 'comments';
+
 interface TeamUiState {
   tab: TeamTab;
   howItWorksOpen: boolean;
+  /** The update expanded to show its evidence, if any. */
+  expandedId: string | null;
 }
 
 let state: TeamSnapshot = buildTeamFixture();
-let ui: TeamUiState = { tab: 'activity', howItWorksOpen: false };
+let ui: TeamUiState = { tab: 'updates', howItWorksOpen: false, expandedId: null };
+let adoptedPath: string | null = null;
+let incomingTimer: ReturnType<typeof setTimeout> | null = null;
+
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -109,29 +105,66 @@ export function setHowItWorksOpen(open: boolean): void {
   notify();
 }
 
+export function toggleExpanded(id: string): void {
+  ui = { ...ui, expandedId: ui.expandedId === id ? null : id };
+  notify();
+}
+
+/**
+ * Point the fixture at the project the user actually opened.
+ *
+ * The whole request this prototype answers is "let me open *my* project and
+ * see people in it", so the invented team has to be about the real repo in
+ * front of them rather than about a demo project they have never heard of.
+ * In the real build this is the `get_team_snapshot` call, keyed the same way.
+ *
+ * Idempotent per project: re-entering a workspace must not reset a thread the
+ * user has been replying in.
+ */
+export function adopt(projectPath: string, projectName: string, repo: string | null): void {
+  if (adoptedPath === projectPath) return;
+  adoptedPath = projectPath;
+
+  const built = buildTeamFixture({ projectName, projectPath });
+  emit({ ...built, sync: { ...built.sync, repo } });
+
+  if (incomingTimer) clearTimeout(incomingTimer);
+  incomingTimer = setTimeout(() => {
+    // Guard on the path: leaving the project before this fires must not drop
+    // someone else's project's update into this one's feed.
+    if (adoptedPath !== projectPath) return;
+    const incoming = buildIncomingUpdate(projectName, projectPath);
+    emit({ ...state, updates: [incoming, ...state.updates] });
+  }, INCOMING_AFTER_MS);
+}
+
 /** The signed-in user. Real build: the workspace's GitHub login. */
 export function currentActor(): TeamActor {
   return state.members.find((member) => member.isSelf)?.actor ?? state.members[0].actor;
+}
+
+/** Updates the user has not seen yet — what the header badge counts. */
+export function unseenUpdates(snapshot: TeamSnapshot): TeamUpdate[] {
+  const seen = new Set(snapshot.seenIds);
+  return snapshot.updates.filter(
+    (update) => !seen.has(update.id) && !isSelf(snapshot, update.actor)
+  );
+}
+
+function isSelf(snapshot: TeamSnapshot, candidate: TeamActor): boolean {
+  const me = snapshot.members.find((member) => member.isSelf)?.actor;
+  return me ? actorKey(me) === actorKey(candidate) : false;
+}
+
+/** Marks everything currently in the feed as seen. */
+export function markAllSeen(): void {
+  emit({ ...state, seenIds: state.updates.map((update) => update.id) });
 }
 
 let seq = 0;
 function nextId(prefix: string): string {
   seq += 1;
   return `${prefix}-local-${Date.now().toString(36)}-${seq}`;
-}
-
-/**
- * Append one event. Every mutation goes through here, which is what keeps the
- * activity feed complete without anyone remembering to also log their action.
- */
-function appendEvent(event: Omit<TeamEvent, 'id' | 'at'>): TeamEvent {
-  const full: TeamEvent = { ...event, id: nextId('ev'), at: Date.now() };
-  emit({
-    ...state,
-    events: [full, ...state.events],
-    sync: { ...state.sync, pendingCount: state.sync.pendingCount + 1 },
-  });
-  return full;
 }
 
 /** Post a reply. Optimistic and marked `pending` until the next sync. */
@@ -155,27 +188,16 @@ export function replyToThread(threadId: string, body: string): void {
           }
         : candidate
     ),
-  });
-
-  appendEvent({
-    actor: me,
-    kind: 'comment.added',
-    source: 'event',
-    projectName: thread.projectName,
-    projectPath: thread.projectPath,
-    branch: thread.branch,
-    summary: `replied to a comment on ${thread.target}`,
-    detail: text.length > 120 ? `${text.slice(0, 117)}…` : text,
-    refs: [{ kind: 'file', label: thread.route }],
+    sync: { ...state.sync, pendingCount: state.sync.pendingCount + 1 },
   });
 }
 
 /**
  * Resolve or reopen a thread.
  *
- * Written as an append rather than a field flip because that is the only form
- * that survives two people doing it at once: both events land, the fold takes
- * the later one, and nobody's work is lost to a merge.
+ * An append in the real build rather than a field flip, because that is the
+ * only form that survives two people doing it at once: both records land, the
+ * fold takes the later one, and nobody's work is lost to a merge.
  */
 export function setThreadResolved(threadId: string, resolved: boolean): void {
   const thread = state.threads.find((candidate) => candidate.id === threadId);
@@ -189,27 +211,11 @@ export function setThreadResolved(threadId: string, resolved: boolean): void {
         ? { ...candidate, resolved, resolvedBy: resolved ? me : null }
         : candidate
     ),
-  });
-
-  appendEvent({
-    actor: me,
-    kind: resolved ? 'comment.resolved' : 'comment.added',
-    source: 'event',
-    projectName: thread.projectName,
-    projectPath: thread.projectPath,
-    branch: thread.branch,
-    summary: resolved
-      ? `resolved a comment on ${thread.target}`
-      : `reopened a comment on ${thread.target}`,
-    detail: null,
-    refs: [{ kind: 'file', label: thread.route }],
+    sync: { ...state.sync, pendingCount: state.sync.pendingCount + 1 },
   });
 }
 
-/**
- * Fetch, fold, push. In the prototype it flushes the pending count after a
- * beat, which is the only part of the round trip that is visible anyway.
- */
+/** Fetch, fold, push. Here it just flushes the pending count after a beat. */
 export function sync(): Promise<void> {
   if (state.sync.syncing) return Promise.resolve();
   emit({ ...state, sync: { ...state.sync, syncing: true, error: null } });
@@ -243,7 +249,9 @@ export function __setTeamState(next: TeamSnapshot): void {
 /** Test seam: back to the shipped fixture. */
 export function __resetTeamState(now?: number): void {
   seq = 0;
-  emit(buildTeamFixture(now));
+  adoptedPath = null;
+  if (incomingTimer) clearTimeout(incomingTimer);
+  emit(buildTeamFixture({ now }));
 }
 
 /** Threads for one project, unresolved first, most recently active first. */

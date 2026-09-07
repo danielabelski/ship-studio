@@ -37,7 +37,7 @@ import { Dropdown, DropdownItem } from '../primitives/Dropdown';
 import { MenuButton } from '../primitives/MenuButton';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '../primitives/Tabs';
 import { DashboardHeader } from '../dashboard/DashboardHeader';
-import { TeamActivityFeed } from './TeamActivityFeed';
+import { TeamUpdatesFeed } from './TeamUpdatesFeed';
 import { TeamHowItWorks } from './TeamHowItWorks';
 import { TeamPeoplePanel } from './TeamPeoplePanel';
 import { TeamThreadsPanel } from './TeamThreadsPanel';
@@ -51,12 +51,14 @@ import {
   setTeamTab,
   subscribe,
   sync,
+  toggleExpanded,
+  unseenUpdates,
 } from '../../lib/teamStore';
 import type { TeamTab } from '../../lib/teamStore';
 
 export function TeamView() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);
-  const { tab, howItWorksOpen } = useSyncExternalStore(subscribe, getUiSnapshot);
+  const { tab, howItWorksOpen, expandedId } = useSyncExternalStore(subscribe, getUiSnapshot);
   const { dashboardHeaderHidden, hideDashboardHeader } = useDashboardVisibility();
 
   const [project, setProject] = useState<string | null>(null);
@@ -71,16 +73,21 @@ export function TeamView() {
   const [now] = useState(() => Date.now());
 
   const projects = useMemo(
-    () => [...new Set(snapshot.events.map((event) => event.projectName))].sort(),
-    [snapshot.events]
+    () => [...new Set(snapshot.updates.map((update) => update.projectName))].sort(),
+    [snapshot.updates]
   );
 
-  const events = useMemo(
+  const updates = useMemo(
     () =>
       project === null
-        ? snapshot.events
-        : snapshot.events.filter((event) => event.projectName === project),
-    [snapshot.events, project]
+        ? snapshot.updates
+        : snapshot.updates.filter((update) => update.projectName === project),
+    [snapshot.updates, project]
+  );
+
+  const unseenIds = useMemo(
+    () => new Set(unseenUpdates(snapshot).map((update) => update.id)),
+    [snapshot]
   );
 
   const threads = useMemo(
@@ -130,8 +137,8 @@ export function TeamView() {
                     mode="navigation"
                   >
                     <TabsList aria-label="Team">
-                      <TabsTab value="activity" leftIcon={<HistoryIcon size={12} />}>
-                        Activity
+                      <TabsTab value="updates" leftIcon={<HistoryIcon size={12} />}>
+                        What&rsquo;s new
                       </TabsTab>
                       <TabsTab value="people" leftIcon={<CollaboratorsIcon size={12} />}>
                         People
@@ -239,8 +246,14 @@ export function TeamView() {
 
             <div className="team-panel-body">
               <Tabs value={tab} onValueChange={(next) => setTeamTab(next as TeamTab)}>
-                <TabsPanel value="activity">
-                  <TeamActivityFeed events={events} projectFilter={project} now={now} />
+                <TabsPanel value="updates">
+                  <TeamUpdatesFeed
+                    updates={updates}
+                    unseenIds={unseenIds}
+                    expandedId={expandedId}
+                    onToggleExpanded={toggleExpanded}
+                    now={now}
+                  />
                 </TabsPanel>
                 <TabsPanel value="people">
                   <TeamPeoplePanel members={snapshot.members} now={now} />

@@ -1,0 +1,392 @@
+/* Team — multiplayer Ship Studio (vision prototype).
+
+   Three surfaces sharing one panel: an activity feed, a people list, and a
+   comment reader. The feed borrows the dashboard column; the comment reader
+   borrows the Inbox's two-pane geometry, because it is the same job (a list
+   that drives a reader beside it) and it should not look like a different app.
+
+   Per-person colours are the only new visual idea here. They are file-local
+   tokens rather than semantic roles: they carry no product meaning, they are
+   assigned by a hash, and nothing outside this feature should reach for them. */
+
+:root {
+  --team-swatch-0: var(--color-swatch-blue);
+  --team-swatch-1: var(--color-swatch-green);
+  --team-swatch-2: var(--color-swatch-purple);
+  --team-swatch-3: var(--color-swatch-pink);
+  --team-swatch-4: var(--color-swatch-yellow);
+  --team-swatch-5: var(--color-swatch-sky);
+  --team-swatch-6: var(--color-swatch-indigo);
+  --team-swatch-7: var(--color-swatch-red);
+
+  /* The Review category has no semantic role of its own — purple is already
+     spoken for by the variables system — so it gets a feature-local pair
+     rather than borrowing a role that means something else. */
+  --team-review-accent: var(--color-purple-400);
+  --team-review-surface: var(--color-purple-500-o15);
+}
+
+/* `min-content`, not 0.
+   The Inbox can floor its panel at 0 because everything inside it scrolls, so
+   the panel never has more content than the height it is given. This one has
+   the "How this works" disclosure, which is prose that expands the card — with
+   a 0 floor the panel shrinks under it and the text renders straight through
+   the bottom border. Flooring at the content's own minimum lets the card grow
+   and the page scroll, while the feed and the comment reader keep scrolling
+   inside their own bounded regions. */
+.team-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: min-content;
+}
+
+.team-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 360px;
+}
+
+/* `tabs__panel`, not `tabs-panel` — the primitive is BEM. Getting this wrong
+   silently drops the whole flex chain, and the feed's inner scroller then has
+   no bounded height to scroll inside, so it grows straight through the bottom
+   of the card. */
+.team-panel-body > .tabs,
+.team-panel-body .tabs__panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* `hidden` on an inactive panel has to beat the `display: flex` above. */
+.team-panel-body .tabs__panel[hidden] {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- avatars */
+
+.team-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-control);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-label);
+  line-height: 1;
+  overflow: hidden;
+  user-select: none;
+}
+
+.team-avatar[data-swatch='0'] {
+  background: var(--team-swatch-0);
+}
+.team-avatar[data-swatch='1'] {
+  background: var(--team-swatch-1);
+}
+.team-avatar[data-swatch='2'] {
+  background: var(--team-swatch-2);
+}
+.team-avatar[data-swatch='3'] {
+  background: var(--team-swatch-3);
+}
+.team-avatar[data-swatch='4'] {
+  background: var(--team-swatch-4);
+}
+.team-avatar[data-swatch='5'] {
+  background: var(--team-swatch-5);
+}
+.team-avatar[data-swatch='6'] {
+  background: var(--team-swatch-6);
+}
+.team-avatar[data-swatch='7'] {
+  background: var(--team-swatch-7);
+}
+
+/* The swatches are mid-tone fills chosen to carry white text in both themes;
+   letting the initials inherit would put muted grey on them in light mode. */
+.team-avatar[data-swatch] .team-avatar-initials {
+  color: var(--text-white);
+}
+
+.team-avatar--sm {
+  width: 18px;
+  height: 18px;
+  font-size: var(--font-size-micro);
+}
+
+.team-avatar--md {
+  width: 26px;
+  height: 26px;
+  font-size: var(--font-size-body-sm);
+}
+
+.team-avatar--lg {
+  width: 34px;
+  height: 34px;
+  font-size: var(--font-size-body-md);
+}
+
+.team-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.team-avatar.is-self {
+  box-shadow:
+    0 0 0 2px var(--surface-panel),
+    0 0 0 3px var(--accent-active);
+}
+
+.team-avatar--overflow {
+  background: var(--surface-control);
+  color: var(--text-muted);
+}
+
+.team-avatar-stack {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+/* Overlap, with each avatar cut out of the one behind it so the stack reads as
+   depth rather than as a smear at small sizes. */
+.team-avatar-stack > .team-avatar + .team-avatar {
+  margin-left: -6px;
+  box-shadow: 0 0 0 var(--border-width-default) var(--surface-panel);
+}
+
+/* ------------------------------------------------------------- sync row */
+
+.team-sync {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  padding: var(--spacing-xs) var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  background: var(--surface-recessed);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  color: var(--text-muted);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-compact);
+}
+
+.team-sync-repo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-code);
+  font-size: var(--font-size-body-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A project with no remote has nothing after the repo name, so the row reads
+   as one sentence rather than as a control strip with its controls missing. */
+.team-sync[data-state='local'] .team-sync-repo {
+  font-family: var(--font-ui);
+  color: var(--text-muted);
+}
+
+.team-sync-sep {
+  width: var(--border-width-default);
+  height: 12px;
+  background: var(--border-subtle);
+}
+
+.team-sync-state {
+  white-space: nowrap;
+}
+
+.team-sync-error {
+  color: var(--accent-error);
+}
+
+/* Unpushed work is the one number in this row that changes what someone should
+   do, so it is the one thing tinted. */
+.team-sync-pending {
+  padding: var(--spacing-3xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--accent-warning-rgb), 0.12);
+  color: var(--accent-warning);
+  white-space: nowrap;
+}
+
+.team-sync > .button:last-child {
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------------ how it works */
+
+.team-how {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  margin-bottom: var(--spacing-md);
+  background: var(--surface-recessed);
+  border: var(--border-width-default) solid var(--border-default);
+  border-radius: var(--radius-card);
+}
+
+.team-how-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.team-how-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-subhead);
+  font-weight: var(--font-weight-heading);
+  line-height: var(--line-height-heading);
+}
+
+.team-how-lead {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-lg);
+  line-height: var(--line-height-reading);
+}
+
+.team-how-lead code {
+  padding: var(--spacing-3xs) var(--spacing-2xs);
+  background: var(--surface-control);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-code);
+  font-size: var(--font-size-body-sm);
+  color: var(--text-primary);
+}
+
+.team-how-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--spacing-lg);
+}
+
+.team-how-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.team-how-block-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+}
+
+.team-how-path {
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-panel);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  overflow-x: auto;
+}
+
+.team-how-path code {
+  font-family: var(--font-code);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-help);
+  color: var(--text-secondary);
+  white-space: pre;
+}
+
+.team-how-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-help);
+}
+
+.team-how-writers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A left rule per writer, weighted by how much the row can be relied on:
+   solid for the app, softer for an agent that may simply not bother. */
+.team-how-writer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3xs);
+  padding-left: var(--spacing-sm);
+  border-left: 2px solid var(--border-subtle);
+}
+
+.team-how-writer[data-tone='certain'] {
+  border-left-color: var(--accent-success);
+}
+
+.team-how-writer[data-tone='likely'] {
+  border-left-color: var(--accent-active);
+}
+
+.team-how-writer[data-tone='best-effort'] {
+  border-left-color: var(--border-strong);
+}
+
+.team-how-writer-who {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-md);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+}
+
+.team-how-writer-what {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-compact);
+}
+
+.team-how-writer-how {
+  color: var(--text-muted);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-help);
+}
+
+.team-how-limits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-md);
+  border-top: var(--border-width-default) solid var(--border-subtle);
+}
+
+.team-how-limit-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 84ch;
+  color: var(--text-muted);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-help);
+}
+
+.team-how-limit-list strong {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-label);
+}

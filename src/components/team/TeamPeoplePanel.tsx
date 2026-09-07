@@ -2,14 +2,15 @@
  * Who is on what.
  *
  * The closest thing to presence that can be true without a server. Nobody is
- * "online" here, and there is no green dot: what a git remote actually knows
- * is that a person has a branch, that it last moved at a time, and that it is
- * N commits ahead. That is real, it is free, and it answers the question
- * people open a team screen to ask.
+ * "online" here and there is no green dot: what a git remote actually knows is
+ * that a person has a branch, that it last moved at a time, and that it is N
+ * commits ahead. That is real, it is free, and it answers the question people
+ * open a team screen to ask.
  *
- * A collaborator who has pushed nothing gets a row saying exactly that. The
- * temptation is to hide them so the panel looks busy; the cost is a reader
- * concluding the person does not have access.
+ * The line that makes it useful is `doing` — the headline off their most
+ * recent update. A branch name tells you where someone is; that sentence tells
+ * you what they are actually doing, which is the difference between this and
+ * `git branch -r`.
  *
  * @module components/team/TeamPeoplePanel
  */
@@ -18,7 +19,7 @@ import { BranchIcon, CollaboratorsIcon, PullRequestIcon } from '@/components/ico
 import { EmptyState } from '../primitives/EmptyState';
 import { TeamAvatar } from './TeamAvatar';
 import { formatAgo } from '../../lib/workflows';
-import type { TeamMember } from '../../lib/team';
+import { actorKey, type TeamMember } from '../../lib/team';
 
 const ROLE_LABEL: Record<TeamMember['role'], string> = {
   admin: 'Admin',
@@ -30,37 +31,41 @@ const ROLE_LABEL: Record<TeamMember['role'], string> = {
 interface TeamPeoplePanelProps {
   members: TeamMember[];
   now: number;
+  /** Tighter rows for the in-workspace panel, which is 420px wide. */
+  compact?: boolean;
 }
 
-export function TeamPeoplePanel({ members, now }: TeamPeoplePanelProps) {
+export function TeamPeoplePanel({ members, now, compact = false }: TeamPeoplePanelProps) {
   if (members.length === 0) {
     return (
       <EmptyState
-        icon={<CollaboratorsIcon size={26} />}
+        icon={<CollaboratorsIcon size={24} />}
         title="No collaborators"
         description="This repository has no other collaborators on GitHub."
       />
     );
   }
 
-  // Most recently active first; never-pushed last rather than interleaved by
-  // a null timestamp, which would sort them as if they were ancient.
+  // Most recently active first; never-pushed last rather than interleaved by a
+  // null timestamp, which would sort them as if they were ancient.
   const sorted = [...members].sort((a, b) => (b.lastPushedAt ?? -1) - (a.lastPushedAt ?? -1));
 
   return (
-    <div className="team-people">
-      <p className="team-people-note">
-        Everyone with access to this repository on GitHub. Roles come from GitHub — Ship Studio has
-        no accounts of its own, so there is nothing here to invite anyone to.
-      </p>
+    <div className={`team-people${compact ? ' is-compact' : ''}`}>
+      {!compact && (
+        <p className="team-people-note">
+          Everyone with access to this repository on GitHub. Roles come from GitHub — Ship Studio
+          has no accounts of its own, so there is nothing here to invite anyone to.
+        </p>
+      )}
 
       <ul className="team-people-list">
         {sorted.map((member) => (
           <li
             className={`team-person${member.isSelf ? ' is-self' : ''}`}
-            key={member.actor.login ?? member.actor.name}
+            key={actorKey(member.actor)}
           >
-            <TeamAvatar actor={member.actor} size="lg" isSelf={member.isSelf} />
+            <TeamAvatar actor={member.actor} size={compact ? 'md' : 'lg'} isSelf={member.isSelf} />
 
             <div className="team-person-body">
               <div className="team-person-line">
@@ -68,16 +73,16 @@ export function TeamPeoplePanel({ members, now }: TeamPeoplePanelProps) {
                   {member.actor.name}
                   {member.isSelf && <span className="team-person-you">you</span>}
                 </span>
-                <span className="team-person-role">{ROLE_LABEL[member.role]}</span>
+                {!compact && <span className="team-person-role">{ROLE_LABEL[member.role]}</span>}
+                <span className="team-person-when">
+                  {member.lastPushedAt !== null ? formatAgo(member.lastPushedAt, now) : '—'}
+                </span>
               </div>
 
-              {member.actor.login ? (
-                <span className="team-person-login">@{member.actor.login}</span>
-              ) : (
-                // A git author with no GitHub account behind it. Named by the
-                // email on their commits, and said so, rather than dressed up
-                // as a teammate we know something about.
-                <span className="team-person-login is-unknown">Not linked to a GitHub account</span>
+              {member.doing ? (
+                <span className="team-person-doing">{member.doing}</span>
+              ) : member.isSelf ? null : (
+                <span className="team-person-idle">Nothing new since you last looked</span>
               )}
 
               {member.branch ? (
@@ -99,19 +104,6 @@ export function TeamPeoplePanel({ members, now }: TeamPeoplePanelProps) {
                 <div className="team-person-work">
                   <span className="team-person-idle">Has not pushed to this repository</span>
                 </div>
-              )}
-            </div>
-
-            <div className="team-person-when">
-              {member.lastPushedAt !== null ? (
-                <>
-                  <span className="team-person-when-value">
-                    {formatAgo(member.lastPushedAt, now)}
-                  </span>
-                  <span className="team-person-when-label">last pushed</span>
-                </>
-              ) : (
-                <span className="team-person-when-label">—</span>
               )}
             </div>
           </li>

@@ -98,6 +98,13 @@ export interface WorkspaceHeaderProps {
   // WorkspaceView. Omit to hide.
   headerExtras?: ReactNode;
 
+  /**
+   * Who else is in this repo. Pre-composed in WorkspaceView because it needs
+   * the team store and the panel's open state, neither of which the header
+   * has any other reason to know about.
+   */
+  teamPresence?: ReactNode;
+
   // Primary workspace modes (Preview/Focus/Code), rendered in the topbar
   // between the project location and repository/publishing actions.
   // Pre-composed in WorkspaceView since they drive the right-pane state.
@@ -303,6 +310,7 @@ export function WorkspaceHeader({
   variablesPanelAvailable,
   onToggleVariablesPanel,
   headerExtras,
+  teamPresence,
   modes,
   integrations,
   onGitHubStatusChange,
@@ -533,6 +541,7 @@ export function WorkspaceHeader({
         leftIcon={<ImageIcon size={16} />}
       />
       {headerExtras}
+      {teamPresence}
     </div>
   );
   const projectTitle = (

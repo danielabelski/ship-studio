@@ -1,17 +1,17 @@
 /**
- * The activity feed: what everyone has been doing, newest first.
+ * What everyone has been doing, newest first.
  *
  * Grouped by day rather than shown as one flat river, because the question
- * people bring to this screen is "what happened while I was away" and a day is
- * the unit they think in.
+ * people bring here is "what happened while I was away" and a day is the unit
+ * they think in.
  *
- * Filtering is by category and by person, both of which are answerable from
- * the events themselves. There is deliberately no date-range picker — the log
- * is a stream you scroll, and a range control implies a completeness this data
- * does not have (a teammate who never opened Ship Studio contributes only what
- * git knows about them).
+ * Filters are by person and by whether a row wants something from you. There
+ * is deliberately no filter by event type — that was the first version's idea
+ * and it was a symptom of the wrong model: once a row is a piece of work
+ * rather than a git event, "show me only the pushes" stops being a question
+ * anyone has.
  *
- * @module components/team/TeamActivityFeed
+ * @module components/team/TeamUpdatesFeed
  */
 
 import { useMemo, useState } from 'react';
@@ -20,56 +20,60 @@ import { Dropdown, DropdownItem } from '../primitives/Dropdown';
 import { EmptyState } from '../primitives/EmptyState';
 import { MenuButton } from '../primitives/MenuButton';
 import { SegmentedControl } from '../primitives/SegmentedControl';
-import { TeamActivityRow } from './TeamActivityRow';
-import {
-  groupByDay,
-  TEAM_CATEGORY_LABEL,
-  TEAM_EVENT_CATEGORY,
-  type TeamCategory,
-  type TeamEvent,
-} from '../../lib/team';
+import { TeamUpdateCard } from './TeamUpdateCard';
+import { actorKey, groupByDay, type TeamUpdate } from '../../lib/team';
 
-type CategoryFilter = TeamCategory | 'all';
+type Scope = 'all' | 'asks' | 'rich';
 
-interface TeamActivityFeedProps {
-  events: TeamEvent[];
-  /** Null means "every project", which hides the per-row project chip. */
-  projectFilter: string | null;
+interface TeamUpdatesFeedProps {
+  updates: TeamUpdate[];
+  unseenIds: Set<string>;
+  expandedId: string | null;
+  onToggleExpanded: (id: string) => void;
   now: number;
 }
 
-export function TeamActivityFeed({ events, projectFilter, now }: TeamActivityFeedProps) {
-  const [category, setCategory] = useState<CategoryFilter>('all');
+export function TeamUpdatesFeed({
+  updates,
+  unseenIds,
+  expandedId,
+  onToggleExpanded,
+  now,
+}: TeamUpdatesFeedProps) {
+  const [scope, setScope] = useState<Scope>('all');
   const [person, setPerson] = useState<string>('all');
   const [query, setQuery] = useState('');
 
   const people = useMemo(() => {
     const seen = new Map<string, string>();
-    for (const event of events) seen.set(event.actor.login ?? event.actor.name, event.actor.name);
+    for (const update of updates) seen.set(actorKey(update.actor), update.actor.name);
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [events]);
+  }, [updates]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return events.filter((event) => {
-      if (category !== 'all' && TEAM_EVENT_CATEGORY[event.kind] !== category) return false;
-      if (person !== 'all' && (event.actor.login ?? event.actor.name) !== person) return false;
+    return updates.filter((update) => {
+      if (scope === 'asks' && !update.asks) return false;
+      if (scope === 'rich' && update.writtenBy === 'app') return false;
+      if (person !== 'all' && actorKey(update.actor) !== person) return false;
       if (!needle) return true;
-      // Search what is on screen — the sentence, the detail, the refs — rather
-      // than the event kind, which nobody can see and nobody would type.
+      // Search what is on the card — the sentence, the reasoning, the files —
+      // rather than the status enum, which nobody can see and nobody types.
       const haystack = [
-        event.actor.name,
-        event.summary,
-        event.detail ?? '',
-        event.branch ?? '',
-        event.projectName,
-        ...event.refs.map((ref) => ref.label),
+        update.actor.name,
+        update.headline,
+        update.why ?? '',
+        update.asks ?? '',
+        update.branch,
+        ...update.changes,
+        ...update.files.map((file) => file.path),
+        ...update.commits.map((commit) => commit.message),
       ]
         .join(' ')
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [events, category, person, query]);
+  }, [updates, scope, person, query]);
 
   const groups = useMemo(() => groupByDay(visible, now), [visible, now]);
 
@@ -82,22 +86,20 @@ export function TeamActivityFeed({ events, projectFilter, now }: TeamActivityFee
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search activity"
-            aria-label="Search activity"
+            placeholder="Search what people did"
+            aria-label="Search updates"
           />
         </label>
 
         <div className="team-feed-filters">
           <SegmentedControl
-            aria-label="Filter by area"
-            value={category}
-            onValueChange={setCategory}
+            aria-label="Filter updates"
+            value={scope}
+            onValueChange={setScope}
             options={[
-              { value: 'all', label: 'All' },
-              ...(Object.keys(TEAM_CATEGORY_LABEL) as TeamCategory[]).map((key) => ({
-                value: key,
-                label: TEAM_CATEGORY_LABEL[key],
-              })),
+              { value: 'all', label: 'Everything' },
+              { value: 'asks', label: 'Wants a look' },
+              { value: 'rich', label: 'Explained' },
             ]}
           />
           <Dropdown
@@ -134,23 +136,23 @@ export function TeamActivityFeed({ events, projectFilter, now }: TeamActivityFee
         <EmptyState
           icon={<HistoryIcon size={26} />}
           title="Nothing matches"
-          description="No activity matches these filters. Clear them to see the whole log."
+          description="No updates match these filters. Clear them to see everything."
         />
       ) : (
         <div className="team-feed-scroll">
           {groups.map((group) => (
             <section className="team-day" key={group.key}>
               <h3 className="team-day-heading">{group.label}</h3>
-              <ul className="team-day-events">
-                {group.events.map((event) => (
-                  <TeamActivityRow
-                    key={event.id}
-                    event={event}
-                    showProject={projectFilter === null}
-                    now={now}
-                  />
-                ))}
-              </ul>
+              {group.updates.map((update) => (
+                <TeamUpdateCard
+                  key={update.id}
+                  update={update}
+                  expanded={expandedId === update.id}
+                  onToggleExpanded={onToggleExpanded}
+                  isNew={unseenIds.has(update.id)}
+                  now={now}
+                />
+              ))}
             </section>
           ))}
 
@@ -158,8 +160,8 @@ export function TeamActivityFeed({ events, projectFilter, now }: TeamActivityFee
               it is cheaper than someone inferring that a quiet teammate did
               nothing, when in truth they never pushed. */}
           <p className="team-feed-footnote">
-            This log is built from your repository. Work that was never pushed — and teammates who
-            do not use Ship Studio — appear here only through their commits.
+            Built from your repository. Work nobody pushed — and teammates whose agent wrote no
+            summary — appear here only as the bare fact that something changed.
           </p>
         </div>
       )}

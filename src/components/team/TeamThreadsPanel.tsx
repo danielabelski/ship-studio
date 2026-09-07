@@ -31,9 +31,16 @@ interface TeamThreadsPanelProps {
   threads: TeamThread[];
   showProject: boolean;
   now: number;
+  /** Stacks the list over the reader for the 420px workspace panel. */
+  compact?: boolean;
 }
 
-export function TeamThreadsPanel({ threads, showProject, now }: TeamThreadsPanelProps) {
+export function TeamThreadsPanel({
+  threads,
+  showProject,
+  now,
+  compact = false,
+}: TeamThreadsPanelProps) {
   const [filter, setFilter] = useState<ThreadFilter>('open');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -58,7 +65,7 @@ export function TeamThreadsPanel({ threads, showProject, now }: TeamThreadsPanel
   const openCount = threads.filter((thread) => !thread.resolved).length;
 
   return (
-    <div className="team-threads">
+    <div className={`team-threads${compact ? ' is-compact' : ''}`}>
       <div className="team-threads-controls">
         <SegmentedControl
           aria-label="Filter comments"

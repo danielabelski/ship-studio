@@ -1,0 +1,397 @@
+/* Team — multiplayer Ship Studio (vision prototype).
+
+   Split by surface rather than kept as one sheet, matching how `branches/` and
+   `workspace/` are laid out: the feature spans a home screen, a floating panel
+   inside the workspace and a header control, and those get edited separately.
+*/
+
+/* ------------------------------------------------------------------- feed */
+
+.team-feed {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--spacing-md);
+}
+
+.team-feed-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.team-search {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex: 1 1 220px;
+  min-width: 0;
+  height: var(--control-height-standard);
+  padding: 0 var(--spacing-md);
+  background: var(--surface-control);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-muted);
+}
+
+.team-search:focus-within {
+  border-color: var(--accent-focus);
+}
+
+.team-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-body-md);
+}
+
+.team-search input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Chrome draws its own clear affordance on `type=search`, which lands on a
+   different baseline to ours and only appears once there is text. */
+.team-search input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.team-feed-filters {
+  display: flex;
+  align-items: stretch;
+  gap: var(--spacing-xs);
+}
+
+.team-feed-filters > .segmented-control,
+.team-feed-filters > .button {
+  height: auto;
+}
+
+.team-feed-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.team-feed-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.team-day + .team-day {
+  margin-top: var(--spacing-lg);
+}
+
+/* Sticky, because the whole point of a day heading is knowing which day you
+   are reading once you have scrolled past its top. */
+.team-day-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 var(--spacing-xs);
+  padding: var(--spacing-2xs) 0;
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  font-size: var(--font-size-body-sm);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+}
+
+.team-day-events {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ------------------------------------------------------------ update card */
+
+/* The row leads with a sentence, so the card is a small piece of writing
+   rather than a table row: real line length, paragraph spacing, and the
+   metadata pushed down into a quiet footer. */
+.team-update {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-md);
+  background: var(--surface-recessed);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+
+.team-update + .team-update {
+  margin-top: var(--spacing-xs);
+}
+
+/* Arrived since you last looked. A left edge rather than a background, so a
+   run of new rows still reads as a list instead of one solid block. */
+.team-update.is-new {
+  border-left-color: var(--accent-active);
+  border-left-width: 2px;
+}
+
+/* Ship Studio saw a push and no agent left a summary, so the row has nothing
+   to say beyond the fact. Drawn as the lesser thing it is — the visible gap
+   between this and an explained row is the argument for the skill. */
+.team-update.is-thin {
+  background: none;
+  border-style: dashed;
+}
+
+.team-update-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.team-update-who {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.team-update-name {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-md);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+}
+
+.team-update-when {
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+  white-space: nowrap;
+}
+
+/* Attribution for the summary, not for the work. Quiet, because who wrote the
+   sentence matters far less than what it says. */
+.team-update-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  color: var(--text-faint);
+  font-size: var(--font-size-micro);
+  white-space: nowrap;
+}
+
+.team-status {
+  flex: none;
+  padding: var(--spacing-3xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: var(--text-muted);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-compact);
+  white-space: nowrap;
+}
+
+.team-status[data-status='needs-review'],
+.team-status[data-status='in-review'] {
+  background: var(--team-review-surface);
+  color: var(--team-review-accent);
+}
+
+.team-status[data-status='deployed'],
+.team-status[data-status='merged'] {
+  background: rgba(var(--accent-success-rgb), 0.12);
+  color: var(--accent-success);
+}
+
+.team-status[data-status='broken'] {
+  background: rgba(var(--accent-error-rgb), 0.12);
+  color: var(--accent-error-light);
+}
+
+/* The line people came for. */
+.team-update-headline {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-lg);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+  overflow-wrap: anywhere;
+}
+
+.team-update.is-thin .team-update-headline {
+  color: var(--text-muted);
+  font-weight: var(--font-weight-body);
+}
+
+.team-update-why {
+  margin: 0;
+  max-width: 76ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-reading);
+}
+
+.team-update-changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3xs);
+  margin: 0;
+  padding-left: var(--spacing-lg);
+  max-width: 76ch;
+  color: var(--text-muted);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-help);
+}
+
+.team-update-changes li::marker {
+  color: var(--text-faint);
+}
+
+.team-update-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2xs);
+  margin: 0;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: rgba(var(--accent-error-rgb), 0.08);
+  border-radius: var(--radius-sm);
+  color: var(--accent-error-light);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-help);
+}
+
+.team-update-error code {
+  font-family: var(--font-code);
+  overflow-wrap: anywhere;
+}
+
+/* The only part of a card addressed to the reader. Given its own treatment
+   because a feed where everything looks urgent teaches people to skim it. */
+.team-update-ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3xs);
+  margin: 0;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: rgba(var(--accent-active-rgb), 0.08);
+  border-radius: var(--radius-sm);
+  max-width: 76ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-help);
+}
+
+.team-update-ask-label {
+  color: var(--accent-active);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-label);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.team-update-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: var(--spacing-3xs);
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+}
+
+.team-branch-chip,
+.team-pr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  padding: var(--spacing-3xs) var(--spacing-xs);
+  background: var(--surface-control);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-family: var(--font-code);
+  font-size: var(--font-size-body-sm);
+  white-space: nowrap;
+}
+
+/* Evidence is one line until you ask for it. Leading with commits and diffs
+   buries the only part most people need. */
+.team-evidence-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  margin-left: auto;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: var(--font-size-body-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.team-evidence-toggle:hover {
+  color: var(--text-muted);
+}
+
+.team-diff-add {
+  color: var(--accent-success);
+}
+
+.team-diff-del {
+  color: var(--accent-error-light);
+}
+
+.team-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-2xs);
+  padding-top: var(--spacing-sm);
+  border-top: var(--border-width-default) solid var(--border-subtle);
+}
+
+.team-evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-evidence-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  min-width: 0;
+  font-size: var(--font-size-body-sm);
+}
+
+.team-sha,
+.team-evidence-path {
+  flex: none;
+  font-family: var(--font-code);
+  color: var(--text-muted);
+}
+
+.team-evidence-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-evidence-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

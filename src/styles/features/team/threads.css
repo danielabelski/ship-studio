@@ -1,0 +1,352 @@
+/* Team — multiplayer Ship Studio (vision prototype).
+
+   Split by surface rather than kept as one sheet, matching how `branches/` and
+   `workspace/` are laid out: the feature spans a home screen, a floating panel
+   inside the workspace and a header control, and those get edited separately.
+*/
+
+/* ---------------------------------------------------------------- threads */
+
+.team-threads {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--spacing-md);
+}
+
+.team-threads-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+/* Same two-pane geometry as .inbox-body — a list that drives a reader. */
+.team-threads-body {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  flex: 1 1 0;
+  min-height: 340px;
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--surface-recessed);
+}
+
+.team-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3xs);
+  min-width: 0;
+  padding: var(--spacing-sm);
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-right: var(--border-width-default) solid var(--border-subtle);
+  scrollbar-width: none;
+}
+
+.team-thread-list::-webkit-scrollbar {
+  display: none;
+}
+
+.team-thread-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xs);
+  min-width: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: none;
+  border: var(--border-width-default) solid transparent;
+  border-radius: var(--radius-card);
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: background var(--transition-interaction);
+}
+
+.team-thread-item:hover {
+  background: var(--surface-control-hover);
+}
+
+.team-thread-item.is-selected {
+  background: var(--surface-selected);
+  border-color: var(--border-default);
+}
+
+.team-thread-item.is-resolved .team-thread-target,
+.team-thread-item.is-resolved .team-thread-preview {
+  color: var(--text-faint);
+}
+
+.team-thread-item-top {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+/* The number drawn on the preview pin, so a person and an agent can both say
+   "comment 2" and mean the same element. Outlined once resolved, matching how
+   a sent pin is drawn on the canvas. */
+.team-thread-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-active);
+  color: var(--text-on-accent);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-label);
+  line-height: 1;
+}
+
+.team-thread-pin[data-resolved='true'] {
+  background: none;
+  box-shadow: inset 0 0 0 var(--border-width-default) var(--border-strong);
+  color: var(--text-faint);
+}
+
+.team-thread-target {
+  min-width: 0;
+  flex: 1;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-md);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-thread-age {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-body-sm);
+  white-space: nowrap;
+}
+
+.team-thread-preview {
+  color: var(--text-muted);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-compact);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.team-thread-item-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: var(--spacing-3xs);
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-compact);
+}
+
+.team-thread-route {
+  font-family: var(--font-code);
+  white-space: nowrap;
+}
+
+.team-thread-count {
+  white-space: nowrap;
+}
+
+/* ---- reader ---- */
+
+.team-thread-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.team-thread-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  flex: none;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: var(--border-width-default) solid var(--border-subtle);
+}
+
+.team-thread-header-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.team-thread-heading {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-subhead);
+  font-weight: var(--font-weight-heading);
+  line-height: var(--line-height-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-thread-header-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: var(--font-size-body-sm);
+}
+
+.team-thread-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  font-family: var(--font-code);
+  white-space: nowrap;
+}
+
+.team-thread-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--spacing-lg);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.team-thread-messages::-webkit-scrollbar {
+  display: none;
+}
+
+.team-message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  min-width: 0;
+}
+
+.team-message-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xs);
+  min-width: 0;
+  flex: 1;
+}
+
+.team-message-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.team-message-author {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-md);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+}
+
+.team-message-age {
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+}
+
+/* Not an error and not a success — a true statement about where this message
+   currently exists. Warning-tinted because it is the state that will surprise
+   someone if it lasts. */
+.team-message-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  padding: var(--spacing-3xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--accent-warning-rgb), 0.12);
+  color: var(--accent-warning);
+  font-size: var(--font-size-micro);
+  white-space: nowrap;
+}
+
+.team-message-text {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-lg);
+  line-height: var(--line-height-reading);
+  overflow-wrap: break-word;
+}
+
+.team-thread-resolved-note {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--spacing-2xs);
+  padding: var(--spacing-2xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--accent-success-rgb), 0.1);
+  color: var(--accent-success);
+  font-size: var(--font-size-body-sm);
+}
+
+.team-thread-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  flex: none;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--surface-panel);
+  border-top: var(--border-width-default) solid var(--border-subtle);
+}
+
+.team-thread-input {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-control);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-reading);
+  resize: vertical;
+}
+
+.team-thread-input:focus {
+  outline: none;
+  border-color: var(--accent-focus);
+}
+
+.team-thread-input::placeholder {
+  color: var(--text-muted);
+}
+
+.team-thread-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.team-thread-hint {
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+}
+
+.team-thread-composer-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}

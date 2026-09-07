@@ -5,12 +5,30 @@
  * fixtures. What is real is the *shape*, because the shape is the design
  * decision everything else has to live with.
  *
+ * ## The unit is what someone did, not what git recorded
+ *
+ * The first version of this modelled git events — pushed, merged, branched —
+ * and it was useless. "Maya pushed 3 commits" tells you nothing you can act
+ * on; a wall of those is a git log with faces on it, and nobody opens it
+ * twice. Commit messages are written for the person who wrote them, an hour
+ * later, and they never say *why*.
+ *
+ * So the unit here is a `TeamUpdate`: one sentence about what changed, why it
+ * changed, and what it needs from you. The commits and files hang off it as
+ * evidence you can expand — receipts for a claim, not the claim itself.
+ *
+ * That is what an agent is *for*. It just did the work, it has the whole
+ * session in context, and it can say "the flex version could not hold three
+ * columns at 1024 without wrapping, so I moved it to grid" — which no commit
+ * message and no diff will ever tell you. Ship Studio can observe that a push
+ * happened. Only the agent can say what it meant.
+ *
  * ## Git is the database
  *
- * There is no Ship Studio server, no websocket and no hosted database, and
- * there is not going to be one. A team's shared state is files in their own
- * git repository, and the network is `git fetch` / `git push`. That buys the
- * six things a multiplayer backend is normally built to provide:
+ * There is no Ship Studio server, no websocket and no hosted database. A
+ * team's shared state is files in their own git repository, and the network is
+ * `git fetch` / `git push`. That buys the six things a multiplayer backend is
+ * normally built to provide:
  *
  * | Problem       | Solved by                                              |
  * | ------------- | ------------------------------------------------------ |
@@ -21,36 +39,35 @@
  * | Review        | pull requests                                           |
  * | Offline       | native; a clone is a full replica                       |
  *
- * ## Append-only, one file per event
+ * ## Append-only, one file per update
  *
- * The single decision this feature lives or dies on. Every record below is
- * written **once**, to its own file named by its own id, and never modified:
+ * The single decision this feature lives or dies on. Every record is written
+ * **once**, to its own file named by its own id, and never modified:
  *
- *     .shipstudio-team/events/2026-09-07/01K4J8Q2-maya.json
+ *     .shipstudio-team/updates/2026-09-07/01K4J8Q2-mayareed.json
  *
- * Two people acting in the same second produce two different files, so git
+ * Two people writing in the same second produce two different files, so git
  * merges them with no conflict — by construction, not by luck. Put the same
- * data in one `activity.json` and every concurrent action is a merge conflict
+ * data in one `activity.json` and every concurrent write is a merge conflict
  * in a JSON blob, which is the failure that ends the feature in week one.
  *
- * Mutation is therefore also an append. "Resolve this comment" is a new
- * `comment.resolved` event, not an edit of the comment. Current state is a
- * fold over the events, computed at read time. This is why the activity feed
- * is a byproduct of the design rather than a feature built on top of it — the
- * log *is* the database.
+ * Mutation is therefore also an append: resolving a comment writes a new
+ * record rather than editing the old one, and current state is a fold over
+ * the records, computed at read time.
  *
- * ## Two provenances, and why the UI shows the difference
+ * ## Who writes an update
  *
- * `git` — reconstructed from git history itself: commits, branches, merges.
- * Cannot be forged without rewriting published history.
+ * `writtenBy` says which of three writers produced it, and the UI shows the
+ * difference because they are not equally informative:
  *
- * `event` — a file some teammate's Ship Studio appended. Honest in practice
- * and unverifiable in principle: anyone who can push can write one, edit one,
- * or force-push the lot away.
- *
- * So this is an **activity feed, not an audit log**, and `TeamEvent.source`
- * exists so the UI can never quietly imply otherwise. Ship Studio does not
- * display data it cannot stand behind.
+ * - `agent`  — the agent that did the work, through a schema-checked tool.
+ *              The rich ones. This is the path that makes the feed worth
+ *              reading, and the one the bundled skill exists to teach.
+ * - `person` — someone typed it (a comment, a note to the team).
+ * - `app`    — Ship Studio noticed a push with no summary attached and
+ *              recorded the bare fact. The thin fallback. It exists so that
+ *              silence from an agent costs you the explanation rather than
+ *              the entry, and it is deliberately drawn as the lesser row.
  *
  * @module lib/team
  */
@@ -59,8 +76,7 @@
 export interface TeamActor {
   /**
    * GitHub login. The only globally unique handle available without a server,
-   * and the join key against repo collaborators. Null for a commit whose
-   * author never signed in to GitHub through Ship Studio.
+   * and the join key against repo collaborators.
    */
   login: string | null;
   /** `git config user.name`, or the GitHub display name. */
@@ -70,99 +86,99 @@ export interface TeamActor {
 }
 
 /**
- * Where a row came from, and therefore how much it can be trusted.
- *
- * - `git`   — derived from commits/branches. Verifiable against the repo.
- * - `event` — appended by a teammate's Ship Studio. Self-reported.
+ * Which writer produced an update. See the module docs — this drives how much
+ * the row is allowed to claim, and how prominently it is drawn.
  */
-export type TeamEventSource = 'git' | 'event';
+export type TeamUpdateAuthor = 'agent' | 'person' | 'app';
 
 /**
- * What kind of thing happened.
+ * Where a piece of work has got to.
  *
- * Every kind maps to a Ship Studio feature that already exists, which is the
- * test for whether it belongs here: the feed reports the app's real work
- * rather than inventing telemetry to look busy.
+ * Every one of these is observable without a server: a branch exists, a PR is
+ * open, a deployment matched the SHA. Nothing here is self-declared progress.
  */
-export type TeamEventKind =
-  | 'commit.pushed'
-  | 'branch.created'
-  | 'pr.opened'
-  | 'pr.merged'
-  | 'comment.added'
-  | 'comment.resolved'
-  | 'workflow.ran'
-  | 'finding.filed'
-  | 'finding.fixed'
-  | 'agent.session'
-  | 'deploy.succeeded'
-  | 'deploy.failed'
-  | 'snapshot.restored';
+export type TeamUpdateStatus =
+  | 'working' // branch has moved recently, no PR yet
+  | 'needs-review' // PR open, no review
+  | 'in-review' // PR open, review requested or in progress
+  | 'merged'
+  | 'deployed'
+  | 'broken'; // pushed, and the host's build failed
 
-/** The badge column — one per area of the app, mirroring the sidebar. */
-export type TeamCategory = 'code' | 'review' | 'agent' | 'deploy' | 'findings';
-
-export const TEAM_CATEGORY_LABEL: Record<TeamCategory, string> = {
-  code: 'Code',
-  review: 'Review',
-  agent: 'Agent',
-  deploy: 'Deploy',
-  findings: 'Findings',
+export const TEAM_STATUS_LABEL: Record<TeamUpdateStatus, string> = {
+  working: 'In progress',
+  'needs-review': 'Needs review',
+  'in-review': 'In review',
+  merged: 'Merged',
+  deployed: 'Live',
+  broken: 'Build failed',
 };
 
-/** Which badge a kind wears. Exhaustive, so a new kind can't fall through. */
-export const TEAM_EVENT_CATEGORY: Record<TeamEventKind, TeamCategory> = {
-  'commit.pushed': 'code',
-  'branch.created': 'code',
-  'snapshot.restored': 'code',
-  'pr.opened': 'review',
-  'pr.merged': 'review',
-  'comment.added': 'review',
-  'comment.resolved': 'review',
-  'workflow.ran': 'agent',
-  'agent.session': 'agent',
-  'finding.filed': 'findings',
-  'finding.fixed': 'findings',
-  'deploy.succeeded': 'deploy',
-  'deploy.failed': 'deploy',
-};
-
-/**
- * A pointer back into the repo, so a row can be checked rather than believed.
- * A feed of unverifiable sentences is a rumour mill.
- */
-export interface TeamEventRef {
-  /** `commit` → a SHA, `pr` → a number, `branch` → a name, `file` → a path. */
-  kind: 'commit' | 'pr' | 'branch' | 'file' | 'url';
-  label: string;
-  /** Opened externally when present (a PR, a deployment). */
-  href?: string;
+/** A file the update touched, with the shape of the change. */
+export interface TeamFileTouch {
+  path: string;
+  added: number;
+  removed: number;
 }
 
-/** One row in the feed — exactly the JSON that would sit in one file. */
-export interface TeamEvent {
+/** A commit backing an update. Evidence, not content. */
+export interface TeamCommit {
+  sha: string;
+  message: string;
+}
+
+/**
+ * One thing someone did — the unit the whole feature is built on.
+ *
+ * Read the first three fields aloud and you have the standup. Everything
+ * below `branch` is the receipt.
+ */
+export interface TeamUpdate {
   /** ULID. Chronologically sortable and unique with no coordination. */
   id: string;
   /**
    * Unix ms, from the author's clock.
    *
    * There is no server clock to correct against, so two machines with skewed
-   * clocks interleave slightly wrong. The feed is grouped by day and shown in
-   * relative time, which keeps skew below the resolution anyone reads.
+   * clocks interleave slightly wrong. Times are shown relative and grouped by
+   * day, which keeps skew below the resolution anyone reads.
    */
   at: number;
   actor: TeamActor;
-  kind: TeamEventKind;
-  source: TeamEventSource;
+  writtenBy: TeamUpdateAuthor;
+  /** Which agent wrote it, when `writtenBy` is `agent`. For attribution. */
+  agentName: string | null;
+
+  /**
+   * What changed, in one line, in plain language. The row.
+   * "Rebuilt the pricing tiers as a 3-up grid" — not "pushed 3 commits".
+   */
+  headline: string;
+  /**
+   * Why. The thing a commit message never says and a diff cannot show.
+   * Null on an `app`-written row, which by definition does not know.
+   */
+  why: string | null;
+  /** The specific changes, as a person would list them. */
+  changes: string[];
+  /**
+   * What this needs from whoever is reading, if anything. Null is the common
+   * case and must stay cheap — a feed where every row demands something is a
+   * feed people stop opening.
+   */
+  asks: string | null;
+
+  branch: string;
+  status: TeamUpdateStatus;
   projectName: string;
   projectPath: string;
-  /** Branch the actor was on. Null for repo-wide events. */
-  branch: string | null;
-  /** Past tense, no subject: "pushed 3 commits to main". */
-  summary: string;
-  /** Second line, or null. Never padded with filler to make a row look full. */
-  detail: string | null;
-  refs: TeamEventRef[];
+
+  // ---- evidence, collapsed by default ----
+  commits: TeamCommit[];
+  files: TeamFileTouch[];
+  prNumber: number | null;
+  /** Set when the host reported a failure, so the row can show the error. */
+  buildError: string | null;
 }
 
 /**
@@ -183,14 +199,14 @@ export interface TeamMember {
   projectName: string | null;
   /** When that commit landed. The only timestamp we can stand behind. */
   lastPushedAt: number | null;
-  /** Commits on their branch not on the default branch. */
   commitsAhead: number;
-  /** Open PR for that branch, when there is one. */
   prNumber: number | null;
+  /** One line on what they are up to, from their most recent update. */
+  doing: string | null;
   isSelf: boolean;
 }
 
-/** A comment thread, folded from its `comment.*` events. */
+/** A comment thread, folded from its comment records. */
 export interface TeamThread {
   id: string;
   projectName: string;
@@ -198,7 +214,7 @@ export interface TeamThread {
   branch: string;
   /** The route the element was on, e.g. `/pricing`. */
   route: string;
-  /** How a person would name the target: "section · Simple pricing". */
+  /** How a person would name the target: "h1 · Simple pricing". */
   target: string;
   /** The pin number drawn on the preview, so a person and an agent agree. */
   pin: number;
@@ -225,21 +241,21 @@ export interface TeamMessage {
 export interface TeamSyncStatus {
   /** `owner/repo`, or null when the project has no GitHub remote. */
   repo: string | null;
-  /** Last successful fetch. Null = never synced this session. */
   lastSyncedAt: number | null;
-  /** Written locally, not yet pushed. */
   pendingCount: number;
   /** Last sync failure, verbatim. Shown, never swallowed. */
   error: string | null;
   syncing: boolean;
 }
 
-/** Everything the Team screens read. */
+/** Everything the Team surfaces read. */
 export interface TeamSnapshot {
-  events: TeamEvent[];
+  updates: TeamUpdate[];
   members: TeamMember[];
   threads: TeamThread[];
   sync: TeamSyncStatus;
+  /** Updates the user has already seen, so "new since you were here" works. */
+  seenIds: string[];
 }
 
 // ---------------------------------------------------------------- helpers
@@ -269,7 +285,11 @@ export function actorSwatch(actor: TeamActor, swatches: number): number {
   return Math.abs(hash) % swatches;
 }
 
-/** Day bucket for grouping the feed. Local midnight, matching the reader. */
+export function actorKey(actor: TeamActor): string {
+  return actor.login ?? actor.name;
+}
+
+/** Day bucket for grouping. Local midnight, matching the reader. */
 export function dayKey(timestamp: number): string {
   const d = new Date(timestamp);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -289,19 +309,27 @@ export function dayLabel(timestamp: number, now = Date.now()): string {
 export interface TeamDayGroup {
   key: string;
   label: string;
-  events: TeamEvent[];
+  updates: TeamUpdate[];
 }
 
-/** Groups events into day buckets, preserving the order given. */
-export function groupByDay(events: TeamEvent[], now = Date.now()): TeamDayGroup[] {
+/** Groups updates into day buckets, preserving the order given. */
+export function groupByDay(updates: TeamUpdate[], now = Date.now()): TeamDayGroup[] {
   const groups: TeamDayGroup[] = [];
-  for (const event of events) {
-    const key = dayKey(event.at);
+  for (const update of updates) {
+    const key = dayKey(update.at);
     const last = groups[groups.length - 1];
-    if (last && last.key === key) last.events.push(event);
-    else groups.push({ key, label: dayLabel(event.at, now), events: [event] });
+    if (last && last.key === key) last.updates.push(update);
+    else groups.push({ key, label: dayLabel(update.at, now), updates: [update] });
   }
   return groups;
+}
+
+/** Net lines touched, for the one-line evidence summary. */
+export function fileTotals(files: TeamFileTouch[]): { added: number; removed: number } {
+  return files.reduce(
+    (total, file) => ({ added: total.added + file.added, removed: total.removed + file.removed }),
+    { added: 0, removed: 0 }
+  );
 }
 
 export function lastMessageAt(thread: TeamThread): number {
@@ -323,10 +351,20 @@ export function threadParticipants(thread: TeamThread): TeamActor[] {
   const seen = new Set<string>();
   const actors: TeamActor[] = [];
   for (const message of thread.messages) {
-    const key = message.actor.login ?? message.actor.name;
+    const key = actorKey(message.actor);
     if (seen.has(key)) continue;
     seen.add(key);
     actors.push(message.actor);
   }
   return actors;
+}
+
+/**
+ * Teammates with work in flight on this project, most recently active first.
+ * The signed-in user is excluded — the header cluster answers "who else".
+ */
+export function activeTeammates(members: TeamMember[]): TeamMember[] {
+  return members
+    .filter((member) => !member.isSelf && member.lastPushedAt !== null)
+    .sort((a, b) => (b.lastPushedAt ?? 0) - (a.lastPushedAt ?? 0));
 }

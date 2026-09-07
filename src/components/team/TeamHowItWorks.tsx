@@ -71,7 +71,7 @@ export function TeamHowItWorks({ onClose }: TeamHowItWorksProps) {
         <div className="team-how-block">
           <h4 className="team-how-block-title">What gets written</h4>
           <pre className="team-how-path">
-            <code>{'.shipstudio-team/events/2026-09-07/\n  01K4J8Q2-mayareed.json'}</code>
+            <code>{'.shipstudio-team/updates/2026-09-07/\n  01K4J8Q2-mayareed.json'}</code>
           </pre>
           <p className="team-how-note">
             One file per event, named by its own id, never edited after it is written. Two people

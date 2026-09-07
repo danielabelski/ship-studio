@@ -47,15 +47,15 @@ export function useTeamCommands({ setView }: UseTeamCommandsParams) {
         icon: <CollaboratorsIcon size={14} />,
         category: 'navigation',
         keywords: ['collaborators', 'multiplayer', 'who', 'together', 'shared'],
-        run: () => go('activity'),
+        run: () => go('updates'),
       },
       {
-        id: 'team.activity',
-        title: 'Team activity log',
+        id: 'team.updates',
+        title: 'What the team has been doing',
         icon: <HistoryIcon size={14} />,
         category: 'navigation',
         keywords: ['audit', 'history', 'feed', 'what happened', 'changes', 'log'],
-        run: () => go('activity'),
+        run: () => go('updates'),
       },
       {
         id: 'team.people',
@@ -79,7 +79,7 @@ export function useTeamCommands({ setView }: UseTeamCommandsParams) {
         icon: <InfoIcon size={14} />,
         category: 'navigation',
         keywords: ['privacy', 'what gets committed', 'who can see', 'git', 'explain'],
-        run: () => go('activity', true),
+        run: () => go('updates', true),
       },
     ],
     [setView, unresolved]

@@ -1,27 +1,31 @@
 /**
  * Fixture data for the Team prototype.
  *
- * PROTOTYPE ONLY. Every person, commit SHA, PR number and comment below is
- * invented. This file exists so the Team screens can be looked at and clicked
- * through before a line of git plumbing is written, and it is the first thing
- * deleted when `teamStore` starts reading real events.
+ * PROTOTYPE ONLY. Every person, SHA, PR number and sentence below is invented.
+ * This file exists so the Team surfaces can be used before a line of git
+ * plumbing is written, and it is the first thing deleted when `teamStore`
+ * starts reading real records.
  *
- * It is a separate module from the store on purpose: when the store is wired
- * to the backend, this file is removed and nothing else changes shape. Two
- * rules keep that true —
+ * Two rules keep it honest as a preview of the real thing:
  *
- * 1. Nothing here is generated at import time from anything a real backend
- *    could not also produce. Timestamps are offsets from a fixed `now` so the
- *    feed reads sensibly whenever it is opened.
- * 2. `avatarUrl` is null for everyone. A real GitHub avatar is a network image;
- *    inventing URLs here would photograph a broken image in the UI harness and
- *    tell us nothing. The initials treatment is the design for a missing
- *    avatar, so the fixtures exercise the path that actually has to be good.
+ * 1. **It adopts whichever project you actually opened.** The point is to see
+ *    your own project with people in it, so the fixture takes the open
+ *    project's name and path rather than inventing a repo you have never
+ *    heard of.
+ * 2. **`avatarUrl` is null for everyone.** A real GitHub avatar is a network
+ *    image; inventing URLs would photograph a broken image and tell us
+ *    nothing. Initials are the design for a missing avatar, so the fixtures
+ *    exercise the path that actually has to be good.
+ *
+ * The updates are written the way an agent would write them under the bundled
+ * skill: what changed, why, what it touched, what it needs. That is the whole
+ * argument for this feature, so the fixture has to hold itself to it — if
+ * these read like commit messages, the design is wrong.
  *
  * @module lib/teamFixtures
  */
 
-import type { TeamActor, TeamEvent, TeamMember, TeamSnapshot, TeamThread } from './team';
+import type { TeamActor, TeamMember, TeamSnapshot, TeamThread, TeamUpdate } from './team';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -30,241 +34,264 @@ const DAY = 24 * HOUR;
 const actor = (login: string, name: string): TeamActor => ({ login, name, avatarUrl: null });
 
 export const FIXTURE_ACTORS = {
-  self: actor('juliangalluzzo', 'Julian Galluzzo'),
+  self: actor('you', 'You'),
   maya: actor('mayareed', 'Maya Reed'),
   jordan: actor('jordanchen', 'Jordan Chen'),
   enid: actor('enidshah', 'Enid Shah'),
   sarah: actor('sarahpark', 'Sarah Park'),
-  /** Someone who has committed but never signed in to Ship Studio. */
-  contractor: { login: null, name: 'dev@contractor.io', avatarUrl: null } as TeamActor,
 };
 
-const MARKETING = '/Users/harness/ShipStudio/acme-marketing';
-const DASHBOARD = '/Users/harness/ShipStudio/clarity-dashboard';
+export interface TeamFixtureOptions {
+  now?: number;
+  /** The project the user actually has open, so the fixture is about it. */
+  projectName?: string;
+  projectPath?: string;
+  /** The signed-in user's real display name, when we know it. */
+  selfName?: string;
+}
 
 /** Builds the snapshot relative to a `now`, so ages read correctly on open. */
-export function buildTeamFixture(now = Date.now()): TeamSnapshot {
+export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot {
+  const { now = Date.now(), projectName = 'your project', projectPath = '', selfName } = options;
+
+  const self: TeamActor = selfName
+    ? { ...FIXTURE_ACTORS.self, name: selfName }
+    : FIXTURE_ACTORS.self;
   const at = (ms: number) => now - ms;
 
   let seq = 0;
-  const event = (
+  const update = (
     ms: number,
-    partial: Omit<TeamEvent, 'id' | 'at' | 'projectName' | 'projectPath'> &
-      Partial<Pick<TeamEvent, 'projectName' | 'projectPath'>>
-  ): TeamEvent => {
+    partial: Omit<TeamUpdate, 'id' | 'at' | 'projectName' | 'projectPath'>
+  ): TeamUpdate => {
     seq += 1;
     return {
       id: `01K4J8Q2${String(seq).padStart(4, '0')}`,
       at: at(ms),
-      projectName: 'acme-marketing',
-      projectPath: MARKETING,
+      projectName,
+      projectPath,
       ...partial,
     };
   };
 
-  const events: TeamEvent[] = [
-    event(3 * MINUTE, {
+  const updates: TeamUpdate[] = [
+    update(6 * MINUTE, {
       actor: FIXTURE_ACTORS.maya,
-      kind: 'commit.pushed',
-      source: 'git',
-      branch: 'feat/pricing-tiers',
-      summary: 'pushed 3 commits to feat/pricing-tiers',
-      detail: 'Rework the tier cards to a 3-up grid at ≥1024px',
-      refs: [
-        { kind: 'commit', label: 'a3f2c81' },
-        { kind: 'branch', label: 'feat/pricing-tiers' },
+      writtenBy: 'agent',
+      agentName: 'Claude Code',
+      headline: 'Rebuilt the pricing tiers as a CSS grid',
+      why: 'The flex row could not hold three columns at 1024px without the third wrapping under the first two, and the fix people kept reaching for was a hardcoded width that broke again at every new tier.',
+      changes: [
+        'Replaced the flex row with a 3-up grid that collapses to 1-up under 768px',
+        'Removed the four hardcoded card widths this was working around',
+        'Tier badges now sit in the card flow instead of absolutely positioned',
       ],
-    }),
-    event(11 * MINUTE, {
-      actor: FIXTURE_ACTORS.jordan,
-      kind: 'comment.added',
-      source: 'event',
+      asks: 'The middle tier is visually taller than the others now. That looks deliberate to me, but it was not before — worth a look.',
       branch: 'feat/pricing-tiers',
-      summary: 'left a comment on the pricing hero',
-      detail: '“This headline wraps to three lines on a 390px screen.”',
-      refs: [{ kind: 'file', label: 'src/pages/pricing.astro' }],
+      status: 'needs-review',
+      commits: [
+        { sha: 'a3f2c81', message: 'Move pricing tiers to grid' },
+        { sha: '9d1e04b', message: 'Drop the hardcoded card widths' },
+        { sha: '2b77fa9', message: 'Reflow tier badges' },
+      ],
+      files: [
+        { path: 'src/components/PricingTiers.astro', added: 41, removed: 78 },
+        { path: 'src/styles/pricing.css', added: 18, removed: 52 },
+      ],
+      prNumber: 142,
+      buildError: null,
     }),
-    event(24 * MINUTE, {
-      actor: FIXTURE_ACTORS.self,
-      kind: 'agent.session',
-      source: 'event',
-      branch: 'fix/nav-overflow',
-      summary: 'ran an agent session on fix/nav-overflow',
-      detail: 'Claude Code · 14 files read, 3 edited, 6m 20s',
-      refs: [{ kind: 'branch', label: 'fix/nav-overflow' }],
-    }),
-    event(48 * MINUTE, {
+
+    update(52 * MINUTE, {
       actor: FIXTURE_ACTORS.enid,
-      kind: 'deploy.failed',
-      source: 'event',
+      writtenBy: 'app',
+      agentName: null,
+      headline: 'Pushed 1 commit to main',
+      // `app`-written rows genuinely do not know why. Padding this with a
+      // guess is exactly the thing the whole feature is trying not to do.
+      why: null,
+      changes: [],
+      asks: null,
       branch: 'main',
-      summary: 'pushed main — the Vercel build failed',
-      detail: "Type error: Property 'tier' does not exist on type 'Plan'. (src/lib/plans.ts:42)",
-      refs: [
-        { kind: 'commit', label: '77b0e14' },
-        { kind: 'url', label: 'Vercel build log', href: 'https://vercel.com' },
-      ],
+      status: 'broken',
+      commits: [{ sha: '77b0e14', message: 'wip' }],
+      files: [{ path: 'src/lib/plans.ts', added: 6, removed: 2 }],
+      prNumber: null,
+      buildError:
+        "Type error: Property 'tier' does not exist on type 'Plan'. (src/lib/plans.ts:42)",
     }),
-    event(1 * HOUR + 20 * MINUTE, {
-      actor: FIXTURE_ACTORS.sarah,
-      kind: 'pr.opened',
-      source: 'git',
-      branch: 'feat/locale-switcher',
-      summary: 'opened pull request #142',
-      detail: 'Add a locale switcher to the marketing header',
-      refs: [{ kind: 'pr', label: '#142', href: 'https://github.com' }],
-    }),
-    event(2 * HOUR, {
-      actor: FIXTURE_ACTORS.maya,
-      kind: 'finding.filed',
-      source: 'event',
-      branch: 'main',
-      projectName: 'clarity-dashboard',
-      projectPath: DASHBOARD,
-      summary: 'filed 2 findings from Dependency drift',
-      detail: '1 critical, 1 warning — `undici` advisory has a published fix',
-      refs: [{ kind: 'file', label: 'pnpm-lock.yaml' }],
-    }),
-    event(3 * HOUR + 10 * MINUTE, {
+
+    update(2 * HOUR + 10 * MINUTE, {
       actor: FIXTURE_ACTORS.jordan,
-      kind: 'workflow.ran',
-      source: 'event',
+      writtenBy: 'agent',
+      agentName: 'Codex',
+      headline: 'Made the mobile nav usable one-handed',
+      why: 'The menu opened from the top of a 780px-tall sheet, so every link on a phone was out of thumb reach. Reported twice in support and worked around both times by scrolling.',
+      changes: [
+        'Menu now opens from the bottom and caps at 60vh',
+        'Primary links sit in the lower half, secondary above the fold line',
+        'Backdrop closes on tap — it previously only closed via the X',
+      ],
+      asks: null,
+      branch: 'fix/nav-reach',
+      status: 'in-review',
+      commits: [
+        { sha: 'c40a1d2', message: 'Bottom-anchored mobile nav' },
+        { sha: 'ee9b330', message: 'Close nav on backdrop tap' },
+      ],
+      files: [
+        { path: 'src/components/MobileNav.tsx', added: 63, removed: 44 },
+        { path: 'src/styles/nav.css', added: 27, removed: 11 },
+      ],
+      prNumber: 141,
+      buildError: null,
+    }),
+
+    update(5 * HOUR, {
+      actor: FIXTURE_ACTORS.sarah,
+      writtenBy: 'person',
+      agentName: null,
+      headline: 'Pulled the launch banner until legal sign-off',
+      why: 'The pricing claim in it has not been approved and we are one push away from it being live. Reverting is cheaper than explaining.',
+      changes: ['Banner component removed from the layout, not deleted — the branch still has it'],
+      asks: 'Nobody re-add this until legal comes back. I will put the date in here when I have it.',
       branch: 'main',
-      summary: 'ran Pre-release check',
-      detail: 'Read-only · found nothing',
-      refs: [{ kind: 'file', label: '.shipstudio/workflows/pre-release.md' }],
+      status: 'deployed',
+      commits: [{ sha: '5f0c9aa', message: 'Remove launch banner from layout' }],
+      files: [{ path: 'src/layouts/Base.astro', added: 0, removed: 4 }],
+      prNumber: null,
+      buildError: null,
     }),
-    event(5 * HOUR, {
-      actor: FIXTURE_ACTORS.self,
-      kind: 'comment.resolved',
-      source: 'event',
-      branch: 'feat/pricing-tiers',
-      summary: 'resolved a comment on the FAQ accordion',
-      detail: null,
-      refs: [{ kind: 'file', label: 'src/components/Faq.astro' }],
+
+    update(DAY + 3 * HOUR, {
+      actor: FIXTURE_ACTORS.maya,
+      writtenBy: 'agent',
+      agentName: 'Claude Code',
+      headline: 'Cut the largest image on the homepage from 2.4MB to 180KB',
+      why: 'The hero was shipping a full-resolution PNG export. On a throttled 4G profile it was 3.1s of the 4.4s LCP by itself.',
+      changes: [
+        'Hero converted to AVIF with a WebP fallback',
+        'Added width/height so it stops shifting the layout while it loads',
+        'Four other unoptimised PNGs found in the same pass, listed below',
+      ],
+      asks: 'The other four are the same one-line fix if someone wants an easy one.',
+      branch: 'perf/hero-image',
+      status: 'merged',
+      commits: [
+        { sha: '81ce773', message: 'AVIF hero with WebP fallback' },
+        { sha: 'b0d4e19', message: 'Add intrinsic dimensions to hero' },
+      ],
+      files: [
+        { path: 'src/components/Hero.astro', added: 22, removed: 9 },
+        { path: 'public/hero.avif', added: 1, removed: 0 },
+      ],
+      prNumber: 138,
+      buildError: null,
     }),
-    event(DAY + 2 * HOUR, {
+
+    update(DAY + 7 * HOUR, {
+      actor: FIXTURE_ACTORS.jordan,
+      writtenBy: 'agent',
+      agentName: 'Codex',
+      headline: 'Deleted the duplicate Button component',
+      why: 'There were two — one in components/ and one in ui/ — and new code had been picking whichever it found first for about three months. They had drifted on focus rings and disabled states.',
+      changes: [
+        'ui/Button.tsx removed; 23 imports repointed at components/Button.tsx',
+        'Kept the ui/ focus ring, which was the accessible one of the two',
+      ],
+      asks: null,
+      branch: 'chore/one-button',
+      status: 'merged',
+      commits: [{ sha: '3ac7f01', message: 'Consolidate Button' }],
+      files: [
+        { path: 'src/components/Button.tsx', added: 14, removed: 3 },
+        { path: 'src/ui/Button.tsx', added: 0, removed: 91 },
+      ],
+      prNumber: 136,
+      buildError: null,
+    }),
+
+    update(2 * DAY + 4 * HOUR, {
       actor: FIXTURE_ACTORS.enid,
-      kind: 'pr.merged',
-      source: 'git',
-      branch: 'main',
-      summary: 'merged pull request #138 into main',
-      detail: 'Replace the hand-rolled carousel with a CSS scroll-snap rail',
-      refs: [
-        { kind: 'pr', label: '#138', href: 'https://github.com' },
-        { kind: 'commit', label: '4c19ba0' },
+      writtenBy: 'agent',
+      agentName: 'Claude Code',
+      headline: 'Contact form was silently dropping submissions',
+      why: 'The handler returned 200 before awaiting the send, so failures never surfaced anywhere. Going by the logs this has been happening since the 14th.',
+      changes: [
+        'Await the send and return its real status',
+        'Failures now log with the submission id instead of being swallowed',
+        'Added the one test that would have caught this',
       ],
-    }),
-    event(DAY + 3 * HOUR, {
-      actor: FIXTURE_ACTORS.contractor,
-      kind: 'commit.pushed',
-      source: 'git',
-      branch: 'main',
-      summary: 'pushed 1 commit to main',
-      detail: 'Fix the footer copyright year',
-      refs: [{ kind: 'commit', label: 'e0aa2f7' }],
-    }),
-    event(DAY + 6 * HOUR, {
-      actor: FIXTURE_ACTORS.maya,
-      kind: 'deploy.succeeded',
-      source: 'event',
-      branch: 'main',
-      summary: 'pushed main — Vercel deployed it',
-      detail: 'Ready in 48s',
-      refs: [{ kind: 'commit', label: '4c19ba0' }],
-    }),
-    event(2 * DAY + 4 * HOUR, {
-      actor: FIXTURE_ACTORS.sarah,
-      kind: 'branch.created',
-      source: 'git',
-      branch: 'feat/locale-switcher',
-      summary: 'created feat/locale-switcher from main',
-      detail: null,
-      refs: [{ kind: 'branch', label: 'feat/locale-switcher' }],
-    }),
-    event(2 * DAY + 5 * HOUR, {
-      actor: FIXTURE_ACTORS.jordan,
-      kind: 'snapshot.restored',
-      source: 'event',
-      branch: 'feat/pricing-tiers',
-      summary: 'restored a snapshot from 4 Sep, 10:02',
-      detail: 'Reverted a bad merge of the pricing grid',
-      refs: [],
-    }),
-    event(2 * DAY + 9 * HOUR, {
-      actor: FIXTURE_ACTORS.self,
-      kind: 'finding.fixed',
-      source: 'event',
-      branch: 'fix/a11y-contrast',
-      projectName: 'clarity-dashboard',
-      projectPath: DASHBOARD,
-      summary: 'fixed “Muted text fails AA on the panel surface”',
-      detail: 'Filed by Accessibility sweep · 3 occurrences',
-      refs: [{ kind: 'file', label: 'src/styles/global/tokens-semantic.css' }],
+      asks: 'Somebody should check whether anything was lost between the 14th and today. I could not tell from the logs.',
+      branch: 'fix/contact-form',
+      status: 'deployed',
+      commits: [
+        { sha: 'd82b114', message: 'Await send in contact handler' },
+        { sha: '4e0a97c', message: 'Test: failed send returns 500' },
+      ],
+      files: [
+        { path: 'src/pages/api/contact.ts', added: 19, removed: 7 },
+        { path: 'src/pages/api/contact.test.ts', added: 34, removed: 0 },
+      ],
+      prNumber: 133,
+      buildError: null,
     }),
   ];
 
   const members: TeamMember[] = [
     {
-      actor: FIXTURE_ACTORS.self,
+      actor: self,
       role: 'admin',
-      branch: 'fix/nav-overflow',
-      projectName: 'acme-marketing',
-      lastPushedAt: at(24 * MINUTE),
-      commitsAhead: 2,
+      branch: 'main',
+      projectName,
+      lastPushedAt: at(3 * HOUR),
+      commitsAhead: 0,
       prNumber: null,
+      doing: null,
       isSelf: true,
     },
     {
       actor: FIXTURE_ACTORS.maya,
       role: 'write',
       branch: 'feat/pricing-tiers',
-      projectName: 'acme-marketing',
-      lastPushedAt: at(3 * MINUTE),
-      commitsAhead: 7,
-      prNumber: null,
-      isSelf: false,
-    },
-    {
-      actor: FIXTURE_ACTORS.sarah,
-      role: 'write',
-      branch: 'feat/locale-switcher',
-      projectName: 'acme-marketing',
-      lastPushedAt: at(1 * HOUR + 20 * MINUTE),
-      commitsAhead: 4,
+      projectName,
+      lastPushedAt: at(6 * MINUTE),
+      commitsAhead: 3,
       prNumber: 142,
+      doing: 'Rebuilt the pricing tiers as a CSS grid',
       isSelf: false,
     },
     {
       actor: FIXTURE_ACTORS.jordan,
       role: 'maintainer',
-      branch: 'feat/pricing-tiers',
-      projectName: 'acme-marketing',
-      lastPushedAt: at(3 * HOUR + 10 * MINUTE),
-      commitsAhead: 7,
-      prNumber: null,
+      branch: 'fix/nav-reach',
+      projectName,
+      lastPushedAt: at(2 * HOUR + 10 * MINUTE),
+      commitsAhead: 2,
+      prNumber: 141,
+      doing: 'Made the mobile nav usable one-handed',
       isSelf: false,
     },
     {
       actor: FIXTURE_ACTORS.enid,
       role: 'admin',
       branch: 'main',
-      projectName: 'acme-marketing',
-      lastPushedAt: at(48 * MINUTE),
+      projectName,
+      lastPushedAt: at(52 * MINUTE),
       commitsAhead: 0,
       prNumber: null,
+      doing: 'Pushed to main — the build is failing',
       isSelf: false,
     },
-    // A collaborator with repo access who has pushed nothing. Real, common,
-    // and the row that proves the panel reports absence instead of hiding it.
     {
-      actor: actor('devon-ok', 'Devon Okafor'),
-      role: 'read',
-      branch: null,
-      projectName: null,
-      lastPushedAt: null,
+      actor: FIXTURE_ACTORS.sarah,
+      role: 'write',
+      branch: 'main',
+      projectName,
+      lastPushedAt: at(5 * HOUR),
       commitsAhead: 0,
       prNumber: null,
+      doing: 'Pulled the launch banner until legal sign-off',
       isSelf: false,
     },
   ];
@@ -272,8 +299,8 @@ export function buildTeamFixture(now = Date.now()): TeamSnapshot {
   const threads: TeamThread[] = [
     {
       id: 'th-1',
-      projectName: 'acme-marketing',
-      projectPath: MARKETING,
+      projectName,
+      projectPath,
       branch: 'feat/pricing-tiers',
       route: '/pricing',
       target: 'h1 · Simple pricing, no surprises',
@@ -284,24 +311,24 @@ export function buildTeamFixture(now = Date.now()): TeamSnapshot {
         {
           id: 'm-1',
           actor: FIXTURE_ACTORS.jordan,
-          at: at(11 * MINUTE),
-          body: 'This headline wraps to three lines on a 390px screen and pushes the tier cards below the fold. Can we drop to two lines?',
+          at: at(40 * MINUTE),
+          body: 'This headline wraps to three lines on a 390px screen and pushes the tier cards below the fold. Can we drop it to two?',
         },
         {
           id: 'm-2',
           actor: FIXTURE_ACTORS.maya,
-          at: at(6 * MINUTE),
-          body: "Shortening it to “Simple pricing” fixes it without a breakpoint. I'll take it on my branch.",
+          at: at(12 * MINUTE),
+          body: 'Shortening it to “Simple pricing” fixes it without a breakpoint. Taking it on my branch.',
         },
       ],
     },
     {
       id: 'th-2',
-      projectName: 'acme-marketing',
-      projectPath: MARKETING,
-      branch: 'feat/pricing-tiers',
-      route: '/pricing',
-      target: 'section · Compare plans',
+      projectName,
+      projectPath,
+      branch: 'main',
+      route: '/',
+      target: 'section · Testimonials',
       pin: 2,
       resolved: false,
       resolvedBy: null,
@@ -309,79 +336,88 @@ export function buildTeamFixture(now = Date.now()): TeamSnapshot {
         {
           id: 'm-3',
           actor: FIXTURE_ACTORS.sarah,
-          at: at(2 * HOUR + 40 * MINUTE),
-          body: 'The comparison table scrolls horizontally on tablet but there is no affordance showing it can. Add a fade on the right edge?',
+          at: at(3 * HOUR),
+          body: 'Two of these three quotes are from the same company. Can we swap one out before this goes in front of anybody?',
         },
       ],
     },
     {
       id: 'th-3',
-      projectName: 'clarity-dashboard',
-      projectPath: DASHBOARD,
+      projectName,
+      projectPath,
       branch: 'main',
-      route: '/settings/team',
-      target: 'button · Invite member',
-      pin: 1,
-      resolved: false,
-      resolvedBy: null,
+      route: '/pricing',
+      target: 'table · Compare plans',
+      pin: 3,
+      resolved: true,
+      resolvedBy: FIXTURE_ACTORS.maya,
       messages: [
         {
           id: 'm-4',
           actor: FIXTURE_ACTORS.enid,
-          at: at(4 * HOUR),
-          body: 'Primary button here competes with Save at the bottom of the same form. One of them should be secondary.',
+          at: at(DAY + 2 * HOUR),
+          body: 'The comparison table scrolls sideways on tablet with nothing showing that it can.',
         },
         {
           id: 'm-5',
-          actor: FIXTURE_ACTORS.self,
-          at: at(3 * HOUR + 30 * MINUTE),
-          body: 'Agreed — Invite is the rarer action. Making it secondary.',
-        },
-        {
-          id: 'm-6',
-          actor: FIXTURE_ACTORS.enid,
-          at: at(20 * MINUTE),
-          body: 'Still reads primary to me on the deployed build. Did that land?',
-        },
-      ],
-    },
-    {
-      id: 'th-4',
-      projectName: 'acme-marketing',
-      projectPath: MARKETING,
-      branch: 'feat/pricing-tiers',
-      route: '/',
-      target: 'section · FAQ accordion',
-      pin: 3,
-      resolved: true,
-      resolvedBy: FIXTURE_ACTORS.self,
-      messages: [
-        {
-          id: 'm-7',
           actor: FIXTURE_ACTORS.maya,
           at: at(DAY),
-          body: 'The accordion chevrons do not rotate when a panel opens.',
-        },
-        {
-          id: 'm-8',
-          actor: FIXTURE_ACTORS.self,
-          at: at(5 * HOUR),
-          body: 'Fixed — the transform was on the wrong element. Pushed to the branch.',
+          body: 'Added a fade on the right edge that disappears once you reach the end. Pushed.',
         },
       ],
     },
   ];
 
   return {
-    events,
+    updates,
     members,
     threads,
     sync: {
-      repo: 'acme-studio/acme-marketing',
+      repo: null, // filled in by the store from the project's real remote
       lastSyncedAt: at(2 * MINUTE),
       pendingCount: 0,
       error: null,
       syncing: false,
     },
+    // Everything older than the two most recent counts as already seen, so
+    // "new since you were here" has something to show on first open.
+    seenIds: updates.slice(2).map((u) => u.id),
+  };
+}
+
+/**
+ * The update that arrives while you are looking at the app.
+ *
+ * Multiplayer is a feeling before it is a feature, and the feeling is
+ * something showing up that you did not do. In the real build this is whatever
+ * the next `git fetch` pulls down; here it is one scripted arrival, so the
+ * prototype can demonstrate the moment that matters.
+ */
+export function buildIncomingUpdate(
+  projectName: string,
+  projectPath: string,
+  now = Date.now()
+): TeamUpdate {
+  return {
+    id: `01K4J8Q2LIVE${now}`,
+    at: now,
+    actor: FIXTURE_ACTORS.sarah,
+    writtenBy: 'agent',
+    agentName: 'Claude Code',
+    headline: 'Swapped the duplicate testimonial and credited both quotes',
+    why: 'Two of the three testimonials were from the same company, which reads as though we only have one happy customer.',
+    changes: [
+      'Replaced the second quote with the one from the onboarding survey',
+      'Every quote now carries a name and company — one had neither',
+    ],
+    asks: 'This resolves the comment you have open on that section.',
+    branch: 'main',
+    status: 'deployed',
+    projectName,
+    projectPath,
+    commits: [{ sha: 'f19d3c0', message: 'Swap duplicate testimonial' }],
+    files: [{ path: 'src/data/testimonials.ts', added: 11, removed: 9 }],
+    prNumber: null,
+    buildError: null,
   };
 }
