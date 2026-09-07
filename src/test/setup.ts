@@ -126,6 +126,11 @@ function installTauriMocks() {
         return '/Users/test/Library/Logs/ShipStudio';
       case 'log_frontend_event':
         return undefined;
+      case 'get_color_sampler_support':
+        return {
+          available: false,
+          reason: 'Screen color sampling is unavailable in this test environment.',
+        };
       default:
         console.warn(`[Test] No mock for invoke command: ${cmd}`, args);
         return undefined;

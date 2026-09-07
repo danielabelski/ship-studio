@@ -95,4 +95,35 @@ describe('useElementTree', () => {
     expect(result.current.selectedId).toBeNull();
     expect(result.current.affectedIds).toEqual([]);
   });
+
+  it('tracks hover messages from the preview separately from selection', () => {
+    const iframe = document.createElement('iframe');
+    document.body.appendChild(iframe);
+    const previewWindow = iframe.contentWindow;
+    expect(previewWindow).not.toBeNull();
+    vi.spyOn(previewWindow!, 'postMessage').mockImplementation(() => {});
+    const iframeRef = { current: iframe };
+
+    const { result } = renderHook(() => useElementTree({ iframeRef, enabled: true }));
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: previewWindow,
+          data: { type: 'ss:hover', nodeId: 12 },
+        })
+      );
+    });
+    expect(result.current.hoveredId).toBe(12);
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: previewWindow,
+          data: { type: 'ss:hover', nodeId: null },
+        })
+      );
+    });
+    expect(result.current.hoveredId).toBeNull();
+  });
 });

@@ -37,6 +37,7 @@ export interface WorkspacePreviewPaneProps {
   setWorkspaceTab: (tab: 'preview' | 'code' | 'branches' | 'prs') => void;
   hasPreview: boolean;
   projectTypeResolved: boolean;
+  previewConnectionEnabled: boolean;
   projectType: ProjectType;
   isWebProject: boolean;
   mobilePreviewAvailable: boolean;
@@ -110,6 +111,7 @@ export function WorkspacePreviewPane(props: WorkspacePreviewPaneProps) {
     setWorkspaceTab,
     hasPreview,
     projectTypeResolved,
+    previewConnectionEnabled,
     projectType,
     isWebProject,
     mobilePreviewAvailable,
@@ -176,6 +178,7 @@ export function WorkspacePreviewPane(props: WorkspacePreviewPaneProps) {
     ...worktreeProps
   } = branchTabs;
   const previewSlotPlugins = getSlotPlugins('preview');
+  const previewSurfaceVisible = isWebProject || !projectTypeResolved;
 
   return (
     <div className="preview-pane">
@@ -186,7 +189,7 @@ export function WorkspacePreviewPane(props: WorkspacePreviewPaneProps) {
     based on `workspaceTab`. */}
 
       {/* Tab content */}
-      {workspaceTab === 'preview' && isWebProject && shopify.showGate && (
+      {workspaceTab === 'preview' && previewSurfaceVisible && isWebProject && shopify.showGate && (
         <ShopifySetup
           key={currentProject.path}
           projectPath={currentProject.path}
@@ -195,7 +198,7 @@ export function WorkspacePreviewPane(props: WorkspacePreviewPaneProps) {
           onConnected={shopify.connect}
         />
       )}
-      {workspaceTab === 'preview' && isWebProject && !shopify.showGate && (
+      {workspaceTab === 'preview' && previewSurfaceVisible && !shopify.showGate && (
         <div style={{ flex: 1, display: 'flex' }}>
           <Preview
             key={`${currentProject.path}-${devServerPort}`}
@@ -209,6 +212,7 @@ export function WorkspacePreviewPane(props: WorkspacePreviewPaneProps) {
             port={devServerPort}
             projectPath={currentProject.path}
             isStaticProject={projectType === 'statichtml'}
+            previewConnectionEnabled={previewConnectionEnabled}
             projectType={projectType}
             onServerReady={handlePreviewReady}
             onPageChange={setCurrentPreviewPage}

@@ -3,6 +3,33 @@
  * the toolbar "1440 × 900" button and the width/height inputs it opens.
  */
 
+/* The breakpoint group gives up optional controls before its fixed-size tabs
+   can overlap. These rules live with the dimensions fallback because the
+   group and compact size trigger respond as one unit. */
+.preview-breakpoints {
+  flex: 0 0 auto;
+  width: fit-content;
+  min-width: var(--size-preview-breakpoints-min-width);
+}
+
+.preview-breakpoints__inner {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  width: fit-content;
+  align-items: center;
+  gap: var(--spacing-3xs);
+}
+
+.preview-breakpoint-tabs {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.preview-breakpoint-tabs .tabs__list {
+  flex: 0 0 auto;
+}
+
 /* Wrapper anchors the size popover inside the breakpoint control group. */
 .preview-size-wrap {
   position: relative;
@@ -14,60 +41,26 @@
   height: var(--control-height-standard);
 }
 
+/* A normal Button — base.css owns its resting, hover and pressed surfaces, so
+   it looks and behaves like the comment/edit toggles beside it. Only the bits
+   specific to showing a measurement live here. */
 .preview-dimensions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: var(--control-height-standard);
-  min-height: var(--control-height-standard);
-  width: 100%;
-  padding: 0 var(--spacing-xs);
-  border: var(--stroke-1) solid transparent;
-  border-radius: var(--radius-control);
-  background: transparent;
-  font: inherit;
+  gap: var(--spacing-3xs);
   font-size: var(--font-size-body-md);
   font-variant-numeric: tabular-nums;
-  color: var(--text-faint);
   user-select: none;
   white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color var(--transition),
-    color var(--transition),
-    border-color var(--transition);
 }
 
-.preview-dimensions > svg {
+/* The ⋯ stands in for the icon strip, so it appears only once the strip has
+   gone. */
+.preview-dimensions-dots {
   display: none;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .preview-dimensions-label {
   white-space: nowrap;
-}
-
-.preview-dimensions:hover:not(:disabled):not([aria-expanded='true']) {
-  background: var(--surface-control-hover);
-  border-color: transparent;
-  color: var(--text-primary);
-}
-
-.preview-dimensions[aria-expanded='true'],
-.preview-dimensions[aria-expanded='true']:hover:not(:disabled) {
-  background: var(--surface-control);
-  border-color: transparent;
-  box-shadow: var(--shadow-button);
-  color: var(--text-primary);
-}
-
-.preview-dimensions:focus-visible {
-  border-color: transparent;
-  color: var(--text-primary);
-}
-
-.preview-dimensions:active:not(:disabled) {
-  background: var(--border-default);
 }
 
 .preview-dimensions:disabled {
@@ -84,6 +77,8 @@
   flex-direction: column;
   gap: var(--spacing-sm);
   padding: var(--spacing-md);
+  min-width: var(--size-preview-breakpoint-menu);
+  box-sizing: border-box;
   background: var(--surface-panel);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
@@ -96,6 +91,67 @@
   font-size: var(--font-size-body-md);
   font-weight: var(--font-weight-label);
   line-height: var(--line-height-control);
+}
+
+.preview-size-breakpoints {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.preview-size-breakpoints-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-sm);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-control);
+}
+
+.preview-size-breakpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xs);
+}
+
+.preview-size-breakpoint-option.button {
+  justify-content: flex-start;
+  gap: var(--spacing-sm);
+  min-height: var(--control-height-standard);
+  padding-inline: var(--spacing-sm);
+  text-align: left;
+}
+
+.preview-size-breakpoint-option .button__icon {
+  flex: 0 0 var(--size-icon-button);
+  color: var(--text-secondary);
+}
+
+.preview-size-breakpoint-option-label {
+  flex: 1 1 auto;
+}
+
+.preview-size-breakpoint-option-width {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-family: var(--font-code);
+  font-size: var(--font-size-body-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-size-breakpoint-option.button[aria-pressed='true'] {
+  background: var(--surface-control);
+  color: var(--text-primary);
+}
+
+.preview-size-breakpoint-option.button[aria-pressed='true'] .button__icon,
+.preview-size-breakpoint-option.button[aria-pressed='true'] .preview-size-breakpoint-option-width {
+  color: var(--text-primary);
+}
+
+.preview-size-divider {
+  height: var(--size-preview-breakpoint-divider-height);
+  margin: var(--spacing-2xs) 0;
+  background: var(--border-default);
 }
 
 .preview-size-inputs {
@@ -127,22 +183,54 @@
   gap: var(--spacing-sm);
 }
 
-@container preview-pane (max-width: 800px) {
+/* These thresholds use the toolbar's own width. A pinned panel can make the
+   toolbar narrower than the outer preview pane, so querying the pane leaves
+   the dimensions label visible while the toolbar has already hidden its tabs. */
+@container preview-toolbar (max-width: 820px) {
+  /* The icon strip has gone by this width, so the button picks up the ⋯ that
+     replaces it — leading the width it is currently previewing. The wrap was
+     sized for the readout alone and now has to fit both. */
   .preview-size-wrap {
-    width: var(--control-height-standard);
-    min-width: var(--control-height-standard);
+    width: auto;
+    min-width: 0;
   }
 
-  .preview-dimensions {
-    width: var(--control-height-standard);
-    padding-inline: 0;
+  .preview-dimensions-dots {
+    display: inline-flex;
   }
+}
 
-  .preview-dimensions > svg {
-    display: block;
+/* Now the toolbar really is out of room: the readout gives way and the ⋯ is
+   left to carry the viewport list on its own. The width is still one click
+   away, at the top of the popover. */
+@container preview-toolbar (max-width: 520px) {
+  .preview-size-wrap {
+    width: auto;
+    min-width: 0;
   }
 
   .preview-dimensions-label {
+    display: none;
+  }
+}
+
+/* Never squeeze a tab into another tab: middle device options give way as
+   the compact control reaches its minimum width. The full selector remains
+   available in the size popover. */
+@container preview-toolbar (max-width: 700px) {
+  .preview-breakpoint-tab--tablet:not(.is-active) {
+    display: none;
+  }
+}
+
+@container preview-toolbar (max-width: 600px) {
+  .preview-breakpoint-tab--laptop:not(.is-active) {
+    display: none;
+  }
+}
+
+@container preview-toolbar (max-width: 550px) {
+  .preview-breakpoint-tab:not(.is-active) {
     display: none;
   }
 }

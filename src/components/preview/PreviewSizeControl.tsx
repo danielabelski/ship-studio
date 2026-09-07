@@ -6,7 +6,7 @@
  * = full available height).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { MoreHorizontalIcon } from '@/components/icons';
 import { Button } from '../primitives/Button';
 import { ValueField } from '../primitives/ValueField';
@@ -16,6 +16,13 @@ const MIN_WIDTH = 200;
 const MAX_WIDTH = 3000;
 const MIN_HEIGHT = 160;
 const MAX_HEIGHT = 3000;
+
+export interface PreviewBreakpointOption {
+  value: string;
+  label: string;
+  width: string;
+  icon: ReactNode;
+}
 
 interface PreviewSizeControlProps {
   /** True (unscaled) width the page is laid out at. */
@@ -32,6 +39,12 @@ interface PreviewSizeControlProps {
   onFit: () => void;
   /** Bump to open the popover from outside (Cmd+K command). */
   openSignal?: number;
+  /** Breakpoints to expose in the compact size popover. */
+  breakpointOptions?: PreviewBreakpointOption[];
+  /** The currently selected visible or overflow breakpoint. */
+  activeBreakpoint?: string;
+  /** Select a breakpoint from the compact size popover. */
+  onBreakpointChange?: (value: string) => void;
 }
 
 export function PreviewSizeControl({
@@ -42,6 +55,9 @@ export function PreviewSizeControl({
   onApply,
   onFit,
   openSignal = 0,
+  breakpointOptions,
+  activeBreakpoint,
+  onBreakpointChange,
 }: PreviewSizeControlProps) {
   const [open, setOpen] = useState(false);
   const [widthText, setWidthText] = useState('');
@@ -135,27 +151,77 @@ export function PreviewSizeControl({
     if (e.key === 'Enter') apply();
   };
 
+  const togglePopover = () => {
+    if (open) setOpen(false);
+    else openPopover();
+  };
+
+  const hasBreakpointOptions = Boolean(breakpointOptions?.length && onBreakpointChange);
+  const sizeButtonLabel = `Set preview size: ${width} × ${height}`;
+
   return (
     <span className="preview-size-wrap" ref={wrapRef}>
-      <button
+      {/* One control, not two: the ⋯ and the readout open the same popover, so
+          they are one button that reads as pressed while it is open — the
+          treatment every other toolbar toggle uses. The ⋯ appears only once the
+          icon strip has gone, where it stands in for the strip; the readout
+          drops at the narrowest widths, leaving the ⋯ alone. */}
+      <Button
         type="button"
+        variant="default"
         className="preview-dimensions"
-        title="Set an exact preview size"
-        aria-label={`Set preview size: ${width} × ${height}`}
+        title="Set preview size or choose a breakpoint"
+        aria-label={sizeButtonLabel}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => (open ? setOpen(false) : openPopover())}
+        onClick={togglePopover}
       >
-        <MoreHorizontalIcon size={14} aria-hidden="true" />
+        <MoreHorizontalIcon size={14} className="preview-dimensions-dots" />
         <span className="preview-dimensions-label">
           {width} × {height}
         </span>
-      </button>
+      </Button>
       {open && (
         <div className="preview-size-popover" role="dialog" aria-labelledby="preview-size-title">
           <h2 id="preview-size-title" className="preview-size-title">
             Preview size
           </h2>
+          {hasBreakpointOptions && (
+            <section
+              className="preview-size-breakpoints"
+              aria-labelledby="preview-breakpoints-title"
+            >
+              <h3 id="preview-breakpoints-title" className="preview-size-breakpoints-title">
+                Breakpoints
+              </h3>
+              <div
+                className="preview-size-breakpoint-list"
+                role="group"
+                aria-label="Preview breakpoint options"
+              >
+                {(breakpointOptions ?? []).map((option) => (
+                  <Button
+                    key={option.value}
+                    variant="ghost"
+                    size="compact"
+                    width="fill"
+                    className="preview-size-breakpoint-option"
+                    leftIcon={option.icon}
+                    aria-pressed={option.value === activeBreakpoint}
+                    title={`${option.label} (${option.width})`}
+                    onClick={() => {
+                      onBreakpointChange?.(option.value);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="preview-size-breakpoint-option-label">{option.label}</span>
+                    <span className="preview-size-breakpoint-option-width">{option.width}</span>
+                  </Button>
+                ))}
+              </div>
+            </section>
+          )}
+          {hasBreakpointOptions && <div className="preview-size-divider" aria-hidden="true" />}
           <div className="preview-size-inputs">
             <ValueField
               className="preview-size-field"

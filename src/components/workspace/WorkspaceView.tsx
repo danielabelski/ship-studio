@@ -38,10 +38,8 @@ import { WorkspacePreviewPane } from './WorkspacePreviewPane';
 import { WorkspaceTerminalPane } from './WorkspaceTerminalPane';
 import { WorkspaceHeader, HOSTING_PLUGIN_IDS } from './WorkspaceHeader';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
-import { VariablesIcon } from '@/components/icons';
 import { trackEvent } from '../../lib/analytics';
 import { useWorkspaceCommands } from '../../commands/useWorkspaceCommands';
-import { useCommands } from '../../commands/useCommands';
 import { useSnapshots } from '../../hooks/useSnapshots';
 import { useWorktreeWorkflow } from '../../hooks/useWorktreeWorkflow';
 import { PluginsDropdown } from '../plugins/PluginsDropdown';
@@ -52,10 +50,9 @@ import { useShopifyTheme } from '../../hooks/useShopifyTheme';
 import { isMac } from '../../lib/setup';
 import { kbd } from '../../lib/shortcuts';
 import type { TerminalTab } from '../../hooks/useTerminalManagement';
-import type { TerminalHandle } from '../terminal/Terminal';
+import type { AgentStatus, TerminalHandle } from '../terminal/Terminal';
 import type { Toast, ToastType } from '../../hooks/useToasts';
 import type { NotificationSettings } from '../../lib/sounds';
-import type { AgentStatus } from '../terminal/Terminal';
 import type { IntegrationState, AuthTerminalConfig } from '../../hooks/useIntegrationStatus';
 import type { BranchInfo, PullRequestInfo } from '../../lib/branches';
 import type { ChangedFile } from '../../lib/git';
@@ -65,7 +62,10 @@ import type { PinnedProjectRow } from '../../hooks/usePinnedProjects';
 import { useModal } from '../../contexts/ModalContext';
 import { sessionRegistry } from '../../lib/sessionRegistry';
 import { defaultWorkspaceTab, workspacePreviewCapabilities } from './workspaceViewState';
+import { useWorkspaceShortcutControls } from '../../hooks/useWorkspaceShortcutControls';
+import { useWorkspacePanelCommands } from '../../hooks/useWorkspacePanelCommands';
 import { useWorkspaceComments } from '../../hooks/useWorkspaceComments';
+import { useWorkspaceVariablesPanel } from '../../hooks/useWorkspaceVariablesPanel';
 import '../../styles/features/notifications.css';
 
 // ---------------------------------------------------------------------------
@@ -111,9 +111,11 @@ interface TerminalProps {
 
 interface DevServerProps {
   hasDevServer: boolean;
+  knownDevServerPort: number | null;
   healthPanelRef: RefObject<HealthTabPanelRef | null>;
   devServerPort: number;
   projectType: ProjectType;
+  projectTypeResolved: boolean;
   isRestartingDevServer: boolean;
   customDevCommand: string | null;
   devServerOutput: string;
@@ -344,6 +346,12 @@ export interface WorkspaceViewProps {
   onSelectProject: (projectPath: string) => void;
   /** Close an active project session from the sidebar. */
   onCloseProject: (projectPath: string) => void;
+  /** Rename a project folder from the sidebar context menu. */
+  onRenameProject?: (projectPath: string, newName: string) => Promise<void>;
+  /** Toggle a project's pin state from the sidebar context menu. */
+  onTogglePinProject?: (projectPath: string, shouldPin: boolean) => void | Promise<void>;
+  /** Stop a project's dev server from the sidebar context menu. */
+  onStopDevServer?: (projectPath: string) => void | Promise<void>;
   /** Switch to another project and focus a specific tab (by session id). */
   onSelectProjectTab: (projectPath: string, tabSessionId: string) => void;
   /** Navigate to the Home (projects) view. */
@@ -393,6 +401,9 @@ export const WorkspaceView = memo(function WorkspaceView({
   projectRows,
   onSelectProject,
   onCloseProject,
+  onRenameProject,
+  onTogglePinProject,
+  onStopDevServer,
   onSelectProjectTab,
   onGoHome,
   homeNav,
@@ -463,9 +474,11 @@ export const WorkspaceView = memo(function WorkspaceView({
 
   const {
     hasDevServer,
+    knownDevServerPort,
     healthPanelRef,
     devServerPort,
     projectType,
+    projectTypeResolved,
     isRestartingDevServer,
     customDevCommand,
     devServerOutput,
@@ -667,16 +680,18 @@ export const WorkspaceView = memo(function WorkspaceView({
   ]);
 
   // Reset the preview-side tab to its default whenever the user switches
-  // projects. Web projects land on Preview; generic/unknown projects land
-  // on Code (no preview available). Without this, switching from a web
-  // project while on Branches/PRs would land you on Branches/PRs in the
-  // next project too, which reads as "sticky state from the wrong place".
+  // projects. While detection is pending, stay on Preview so the workspace
+  // does not flash Code before the dev server capability is known. Once
+  // resolved, generic/unknown projects land on Code (no preview available).
+  // Without this, switching from a web project while on Branches/PRs would
+  // land you on Branches/PRs in the next project too, which reads as "sticky
+  // state from the wrong place".
   useEffect(() => {
-    setWorkspaceTab(defaultWorkspaceTab(hasPreview));
+    setWorkspaceTab(defaultWorkspaceTab(hasPreview, projectTypeResolved));
     // Only re-fire on project path change. We deliberately *don't* depend
     // on `workspaceTab` here — that would force-revert every user click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject.path, hasPreview]);
+  }, [currentProject.path, hasPreview, projectTypeResolved]);
 
   // Track terminal tab titles from PTY title changes. Titles live in the
   // session registry so (a) they're scoped per-project (tab ids are
@@ -747,25 +762,19 @@ export const WorkspaceView = memo(function WorkspaceView({
   const elementTreeAvailable =
     workspaceTab === 'preview' && !isPreviewHidden && elementTreePreviewAvailable;
   const elementTreePanelVisible = elementTreeAvailable && elementTreeVisible;
-  const [variablesPanelVisible, setVariablesPanelVisible] = useState(false);
   const [variablesPanelPinned, , toggleVariablesPanelPinned] = useLocalStorageFlag(
     'variablesPanelPinned',
     false
   );
-  const variablesPanelOpen =
-    isWebProject && workspaceTab === 'preview' && !isPreviewHidden && variablesPanelVisible;
-  useEffect(() => {
-    setVariablesPanelVisible(false);
-  }, [currentProject.path]);
-  const toggleVariablesPanel = useCallback(() => {
-    const shouldOpen = !variablesPanelOpen;
-    setVariablesPanelVisible(shouldOpen);
-    if (shouldOpen) {
-      setIsPreviewHidden(false);
-      setWorkspaceTab('preview');
-      void handleStartDevServer();
-    }
-  }, [handleStartDevServer, setIsPreviewHidden, setWorkspaceTab, variablesPanelOpen]);
+  const variables = useWorkspaceVariablesPanel({
+    isWebProject,
+    workspaceTab,
+    isPreviewHidden,
+    projectPath: currentProject.path,
+    setIsPreviewHidden,
+    setWorkspaceTab,
+    startDevServer: handleStartDevServer,
+  });
   const comments = useWorkspaceComments({
     isWebProject,
     setIsPreviewHidden,
@@ -778,70 +787,10 @@ export const WorkspaceView = memo(function WorkspaceView({
     }
     setIsAgentPanelHidden(!isAgentPanelHidden);
   }, [isAgentPanelHidden, setIsPreviewHidden]);
+  const handleSelectPreview = useCallback(() => {
+    void handleStartDevServer();
+  }, [handleStartDevServer]);
 
-  useCommands(
-    () => [
-      {
-        id: 'workspace.toggleAgentPanel',
-        title: isAgentPanelHidden ? 'Show Agent panel' : 'Hide Agent panel',
-        category: 'action',
-        when: 'project',
-        keywords: ['terminal', 'pane', 'sidebar'],
-        run: toggleAgentPanel,
-      },
-      {
-        id: 'workspace.toggleAgentPanelPin',
-        title: agentPanelPinned ? 'Float Agent panel' : 'Dock Agent panel',
-        category: 'action',
-        when: 'project',
-        keywords: ['terminal', 'pane', 'pin', 'float', 'dock'],
-        run: toggleAgentPanelPinned,
-      },
-      {
-        id: 'workspace.toggleElementTreePin',
-        title: elementTreePinned ? 'Float Elements panel' : 'Dock Elements panel',
-        category: 'action',
-        when: 'project',
-        keywords: ['elements', 'tree', 'navigator', 'pin', 'float', 'dock'],
-        run: toggleElementTreePinned,
-      },
-      {
-        id: 'workspace.toggleVariablesPanelPin',
-        title: variablesPanelPinned ? 'Float Variables panel' : 'Dock Variables panel',
-        icon: <VariablesIcon size={14} />,
-        category: 'action',
-        when: ({ kind }) => kind === 'project' && isWebProject,
-        keywords: ['variables', 'css', 'token', 'pin', 'float', 'dock'],
-        run: toggleVariablesPanelPinned,
-      },
-      {
-        id: 'css.variables',
-        title: variablesPanelOpen ? 'Hide Variables panel' : 'Show Variables panel',
-        icon: <VariablesIcon size={14} />,
-        category: 'action',
-        when: ({ kind }) => kind === 'project' && isWebProject,
-        keywords: ['css', 'variable', 'custom property', 'token', 'theme', '--'],
-        run: toggleVariablesPanel,
-      },
-    ],
-    [
-      isAgentPanelHidden,
-      toggleAgentPanel,
-      agentPanelPinned,
-      toggleAgentPanelPinned,
-      elementTreePinned,
-      toggleElementTreePinned,
-      variablesPanelPinned,
-      toggleVariablesPanelPinned,
-      isWebProject,
-      variablesPanelOpen,
-      toggleVariablesPanel,
-    ]
-  );
-
-  const setInspectTab = useCallback((tab: InspectTab) => {
-    setInspectTabRaw(tab);
-  }, []);
   // Opening the inspect panel is the adoption signal for browser tools; the
   // close and the sub-tab switches are not. Read previous state from the
   // closure (not a functional updater) to avoid double-firing under StrictMode.
@@ -849,6 +798,33 @@ export const WorkspaceView = memo(function WorkspaceView({
     if (!showPreviewLogs) void trackEvent('inspect_panel_opened');
     setShowPreviewLogs(!showPreviewLogs);
   }, [showPreviewLogs]);
+
+  useWorkspacePanelCommands({
+    isAgentPanelHidden,
+    toggleAgentPanel,
+    agentPanelPinned,
+    toggleAgentPanelPinned,
+    elementTreePinned,
+    toggleElementTreePinned,
+    variablesPanelPinned,
+    toggleVariablesPanelPinned,
+    isWebProject,
+    variablesPanelOpen: variables.open,
+    toggleVariablesPanel: variables.toggle,
+    showPreviewLogs,
+    togglePreviewLogs,
+  });
+
+  useWorkspaceShortcutControls({
+    previewRef,
+    hasPreview,
+    projectTypeResolved,
+    setIsPreviewHidden,
+    setIsAgentPanelHidden,
+    setWorkspaceTab,
+    togglePreviewLogs,
+    onSelectPreview: handleSelectPreview,
+  });
 
   // Workspace-scoped palette commands (branch + PR flows).
   useWorkspaceCommands({
@@ -950,13 +926,27 @@ export const WorkspaceView = memo(function WorkspaceView({
     return map;
   }, [currentProject.path, registryVersion]);
 
-  // Cmd/Ctrl+1-5 to switch terminal tabs, Cmd/Ctrl+T to add new tab, Cmd/Ctrl+W to close tab
+  // Cmd/Ctrl+T to add a new tab and Cmd/Ctrl+W to close the active tab.
+  // Control+1-9 switches terminal/agent tabs; the F1-F10 range remains
+  // available to the operating system and existing app controls.
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+    const switchTerminalTab = (number: number) => {
+      if (!Number.isInteger(number) || number < 1 || number > 9) return;
 
+      const index = number - 1;
+      const tab = terminalTabs[index];
+      if (!tab) {
+        // Guidance about a keystroke, not a malfunction — 'info' skips the
+        // error-report pipeline (issue #437).
+        showToast(`No terminal tab ${number} — you have ${terminalTabs.length} open`, 'info');
+        return;
+      }
+      setActiveTerminalTab(tab.id);
+    };
+
+    function handleKeyDown(e: KeyboardEvent) {
       // Cmd+W — close active terminal tab (instead of closing the window)
-      if (e.key === 'w') {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'w') {
         e.preventDefault();
         if (terminalTabs.length > 1) {
           closeTerminalTab(activeTerminalTab);
@@ -965,34 +955,39 @@ export const WorkspaceView = memo(function WorkspaceView({
       }
 
       // Cmd+T — new tab
-      if (e.key === 't') {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 't') {
         e.preventDefault();
         addTerminalTab();
         return;
       }
 
-      const num = parseInt(e.key, 10);
-      if (isNaN(num) || num < 1 || num > 5) return;
+      // Control+1-9 is intentionally distinct from Cmd+Control+1-3, which
+      // belongs to workspace modes. On non-macOS, add Alt because Ctrl+1-9
+      // is the platform's primary-modifier equivalent used for projects.
+      const isTerminalNumberShortcut = isMac()
+        ? e.ctrlKey && !e.metaKey && !e.altKey
+        : e.ctrlKey && e.altKey && !e.metaKey;
+      if (!isTerminalNumberShortcut || e.shiftKey) return;
+      const num = Number(e.key);
+      if (!Number.isInteger(num) || num < 1 || num > 9) return;
       e.preventDefault();
-      const index = num - 1;
-      const tab = terminalTabs[index];
-      if (!tab) {
-        // Guidance about a keystroke, not a malfunction — 'info' skips the
-        // error-report pipeline (issue #437).
-        showToast(`No terminal tab ${num} — you have ${terminalTabs.length} open`, 'info');
-        return;
-      }
-      setActiveTerminalTab(tab.id);
+      switchTerminalTab(num);
     }
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    const unlisten = listen<number>('switch-terminal-shortcut', ({ payload }) => {
+      switchTerminalTab(payload);
+    });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      void unlisten.then((fn) => fn());
+    };
   }, [
     terminalTabs,
     activeTerminalTab,
-    setActiveTerminalTab,
-    showToast,
     addTerminalTab,
     closeTerminalTab,
+    setActiveTerminalTab,
+    showToast,
   ]);
 
   // Listen for native menu "Close Tab" (Cmd+W) event from Tauri
@@ -1032,12 +1027,13 @@ export const WorkspaceView = memo(function WorkspaceView({
   const modesNode = (
     <WorkspaceModes
       hasPreview={hasPreview}
+      projectTypeResolved={projectTypeResolved}
       isPreviewHidden={isPreviewHidden}
       workspaceTab={workspaceTab}
       setIsPreviewHidden={setIsPreviewHidden}
       setIsAgentPanelHidden={setIsAgentPanelHidden}
       setWorkspaceTab={setWorkspaceTab}
-      onSelectPreview={() => void handleStartDevServer()}
+      onSelectPreview={handleSelectPreview}
     />
   );
 
@@ -1058,9 +1054,9 @@ export const WorkspaceView = memo(function WorkspaceView({
     onToggleElementTree: toggleElementTree,
     agentPanelVisible: !isAgentPanelHidden,
     onToggleAgentPanel: toggleAgentPanel,
-    variablesPanelVisible: variablesPanelOpen,
+    variablesPanelVisible: variables.open,
     variablesPanelAvailable: isWebProject,
-    onToggleVariablesPanel: toggleVariablesPanel,
+    onToggleVariablesPanel: variables.toggle,
     ...comments.header,
     modes: modesNode,
     headerExtras: (
@@ -1176,6 +1172,9 @@ export const WorkspaceView = memo(function WorkspaceView({
               projects={projectRows}
               onCloseProject={onCloseProject}
               onUnpinProject={onUnpinProject}
+              onRenameProject={onRenameProject}
+              onTogglePinProject={onTogglePinProject}
+              onStopDevServer={onStopDevServer}
               currentProjectPath={currentProject.path}
               currentProjectName={currentProject.name}
               onSelectProject={onSelectProject}
@@ -1206,7 +1205,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                   ? () => {
                       setWorkspaceTab('preview');
                       setShowPreviewLogs(true);
-                      setInspectTab('logs');
+                      setInspectTabRaw('logs');
                     }
                   : undefined
               }
@@ -1320,7 +1319,8 @@ export const WorkspaceView = memo(function WorkspaceView({
                       workspaceTab={workspaceTab}
                       setWorkspaceTab={setWorkspaceTab}
                       hasPreview={hasPreview}
-                      projectTypeResolved={projectType !== 'unknown'}
+                      projectTypeResolved={projectTypeResolved}
+                      previewConnectionEnabled={knownDevServerPort !== null}
                       projectType={projectType}
                       isWebProject={isWebProject}
                       mobilePreviewAvailable={mobilePreviewAvailable}
@@ -1341,7 +1341,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                       onDevServerInput={onDevServerInput}
                       onDevServerResize={onDevServerResize}
                       inspectTab={inspectTab}
-                      setInspectTab={setInspectTab}
+                      setInspectTab={setInspectTabRaw}
                       healthPanelRef={healthPanelRef}
                       handleHealthOutput={handleHealthOutput}
                       needsInstall={needsInstall}
@@ -1361,10 +1361,10 @@ export const WorkspaceView = memo(function WorkspaceView({
                       toggleElementTreePinned={toggleElementTreePinned}
                       closeElementTree={closeElementTree}
                       setElementTreePreviewAvailable={setElementTreePreviewAvailable}
-                      variablesPanelVisible={variablesPanelVisible}
+                      variablesPanelVisible={variables.open}
                       variablesPanelPinned={variablesPanelPinned}
                       toggleVariablesPanelPinned={toggleVariablesPanelPinned}
-                      closeVariablesPanel={() => setVariablesPanelVisible(false)}
+                      closeVariablesPanel={() => variables.setVisible(false)}
                       pluginProject={pluginProject}
                       pluginActions={pluginActions}
                       pluginTheme={pluginTheme}

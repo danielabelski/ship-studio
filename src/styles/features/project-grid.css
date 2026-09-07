@@ -400,6 +400,10 @@
   text-align: center;
 }
 
+.auto-accept-warning-body {
+  padding: var(--spacing-xl);
+}
+
 .auto-accept-warning-icon {
   display: flex;
   align-items: center;
@@ -421,6 +425,8 @@
   margin: 0 0 12px;
   color: var(--text-secondary);
   text-align: left;
+  font-size: var(--font-size-body-lg);
+  line-height: var(--line-height-compact);
 }
 
 .auto-accept-warning-list {
@@ -428,6 +434,8 @@
   margin: 0 0 16px;
   padding-left: 24px;
   color: var(--text-secondary);
+  font-size: var(--font-size-body-lg);
+  line-height: var(--line-height-compact);
 }
 
 .auto-accept-warning-list li {

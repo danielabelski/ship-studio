@@ -20,7 +20,10 @@ import {
   uploadProjectThumbnail,
   renameProject,
   exportProjectAsTemplate,
+  getDevServerPort,
+  setDevServerPort,
 } from '../../lib/project';
+import { preferredPortForProject } from '../../lib/ports';
 import { asCommandError, formatCommandError } from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import { trackEvent, trackError } from '../../lib/analytics';
@@ -63,7 +66,9 @@ import { useProjectBulkActions } from '../../hooks/useProjectBulkActions';
 import { useProjectViewModeCommands } from '../../hooks/useProjectViewModeCommands';
 import { useProjectRemovalActions } from '../../hooks/useProjectRemovalActions';
 import { useOptionalToast } from '../../contexts/ToastContext';
-import { SwitchWorkspaceIcon } from '@/components/icons';
+import { ProjectSettingsModal } from '../workspace/ProjectSettingsModal';
+import { DashboardWorkspaceChip } from './DashboardWorkspaceChip';
+import { ProjectThumbnailInput } from './ProjectThumbnailInput';
 import type { ProjectViewMode } from './ProjectGridView';
 
 /** Basic project info for selection callback */
@@ -146,19 +151,19 @@ export function ProjectList({
   } = useProjectListData(activeAccountId);
   const hasMultipleWorkspaces = accounts.length > 1;
   const [renameTarget, setRenameTarget] = useState<DashboardProject | null>(null);
+  const [projectSettingsTarget, setProjectSettingsTarget] = useState<DashboardProject | null>(null);
+  const [projectSettingsPort, setProjectSettingsPort] = useState<number | null>(null);
+  const projectSettingsModal = useModal('projectSettings');
 
-  // Folder navigation state
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [currentFolder, setCurrentFolder] = useState<Folder | null>(null);
   const [folderProjectPaths, setFolderProjectPaths] = useState<string[]>([]);
 
-  // Folder modal state
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<FolderInfo | null>(null);
   const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<FolderInfo | null>(null);
   const [deletingFolder, setDeletingFolder] = useState(false);
 
-  // Move to folder modal state
   const [moveProject, setMoveProject] = useState<DashboardProject | null>(null);
   const [moveProjectFolderId, setMoveProjectFolderId] = useState<string | null>(null);
 
@@ -502,6 +507,47 @@ export function ProjectList({
     });
   }, []);
 
+  const handleOpenProjectSettings = useCallback(
+    async (project: DashboardProject) => {
+      try {
+        const savedPort = await getDevServerPort(project.path);
+        setProjectSettingsTarget(project);
+        setProjectSettingsPort(savedPort ?? preferredPortForProject(project.path));
+        projectSettingsModal.open();
+      } catch (error) {
+        showToast(
+          `Couldn't load settings for ${project.name}: ${formatCommandError(asCommandError(error))}`,
+          'error'
+        );
+      }
+    },
+    [projectSettingsModal, showToast]
+  );
+
+  const handleSaveProjectSettings = useCallback(
+    async (port: number) => {
+      if (!projectSettingsTarget) return;
+      try {
+        await setDevServerPort(projectSettingsTarget.path, port);
+        setProjectSettingsPort(port);
+        showToast('Project settings saved', 'success');
+      } catch (error) {
+        showToast(
+          `Couldn't save settings for ${projectSettingsTarget.name}: ${formatCommandError(asCommandError(error))}`,
+          'error'
+        );
+      }
+    },
+    [projectSettingsTarget, showToast]
+  );
+
+  useEffect(() => {
+    if (!projectSettingsModal.isOpen) {
+      setProjectSettingsTarget(null);
+      setProjectSettingsPort(null);
+    }
+  }, [projectSettingsModal.isOpen]);
+
   const totalCount = currentFolderId
     ? filteredProjects.length
     : filteredFolders.length + filteredProjects.length;
@@ -551,19 +597,7 @@ export function ProjectList({
             onGitHubConnectForImport={onGitHubConnectForImport}
             titleAccessory={
               !currentFolderId && hasMultipleWorkspaces && activeAccount && onSwitchAccount ? (
-                <button
-                  type="button"
-                  className="dashboard-workspace-chip text-style-control-semibold"
-                  onClick={onSwitchAccount}
-                  title="Switch workspace"
-                >
-                  <span
-                    className="dashboard-workspace-chip-dot"
-                    style={{ backgroundColor: activeAccount.color }}
-                  />
-                  <span className="dashboard-workspace-chip-name">{activeAccount.name}</span>
-                  <SwitchWorkspaceIcon size={12} />
-                </button>
+                <DashboardWorkspaceChip account={activeAccount} onSwitch={onSwitchAccount} />
               ) : undefined
             }
           />
@@ -599,20 +633,21 @@ export function ProjectList({
                 someVisibleSelected={someVisibleSelected}
                 onSelectAllVisible={handleSelectAllVisible}
                 onToggleProjectSelection={handleToggleProjectSelection}
-                onSelectProject={(project) => onSelectProject(project)}
-                onDeleteProject={(project) => setDeleteConfirm(project)}
-                onRenameProject={(project) => setRenameTarget(project)}
+                onSelectProject={onSelectProject}
+                onOpenProjectSettings={(project) => void handleOpenProjectSettings(project)}
+                onDeleteProject={setDeleteConfirm}
+                onRenameProject={setRenameTarget}
                 onToggleMainBranchWarning={(path, hidden) =>
                   void handleToggleMainBranchWarning(path, hidden)
                 }
                 onOpenMoveModal={(project) => void handleOpenMoveModal(project)}
                 onOpenMoveWorkspaceModal={(project) => void handleOpenMoveWorkspaceModal(project)}
                 onExportAsTemplate={(path) => void handleExportAsTemplate(path)}
-                onUploadThumbnail={(project) => handleUploadThumbnail(project)}
-                onRemoveProject={(project) => setRemoveConfirm(project)}
-                onOpenFolder={(folderId) => setCurrentFolderId(folderId)}
-                onRenameFolder={(folder) => setRenamingFolder(folder)}
-                onDeleteFolder={(folder) => setDeleteFolderConfirm(folder)}
+                onUploadThumbnail={handleUploadThumbnail}
+                onRemoveProject={setRemoveConfirm}
+                onOpenFolder={setCurrentFolderId}
+                onRenameFolder={setRenamingFolder}
+                onDeleteFolder={setDeleteFolderConfirm}
                 pinnedSet={pinnedSet}
                 onTogglePin={onTogglePin}
                 onCreateProject={onCreateProject}
@@ -632,15 +667,9 @@ export function ProjectList({
 
         <div className="dashboard-bottom-spacer" aria-hidden />
 
-        {/* Hidden file picker reused across project cards for "Upload new
-            thumbnail". A single input is enough — handleUploadThumbnail
-            stashes the target path in a ref, then triggers .click() here. */}
-        <input
-          ref={thumbnailInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          style={{ display: 'none' }}
-          onChange={(e) => void handleThumbnailFileSelected(e)}
+        <ProjectThumbnailInput
+          inputRef={thumbnailInputRef}
+          onChange={(event) => void handleThumbnailFileSelected(event)}
         />
 
         {/* New Folder Modal */}
@@ -768,6 +797,14 @@ export function ProjectList({
           onSlackCtaHiddenChange={setSlackCtaHidden}
           onProjectsRootChanged={() => void loadProjects()}
         />
+
+        {projectSettingsTarget && projectSettingsPort !== null && (
+          <ProjectSettingsModal
+            key={projectSettingsTarget.path}
+            currentPort={projectSettingsPort}
+            onSave={(port) => void handleSaveProjectSettings(port)}
+          />
+        )}
 
         {/* What's New Modal */}
         {/* ChangelogModal is mounted globally in <AppGlobalModals>. */}
