@@ -806,7 +806,6 @@ pub fn run() {
             commands::folders::get_folder_projects,
             commands::folders::get_folder,
             // Support (cStar) — identity signing only; tickets use ChatClient SDK
-            commands::support::get_support_identity,
             // Logging
             logging::get_log_path,
             logging::log_frontend_event,

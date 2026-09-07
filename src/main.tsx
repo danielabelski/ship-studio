@@ -159,7 +159,6 @@ const OS_SKIP_SELECTOR = [
   '.dashboard-with-changelog',
   '.dashboard-scroll-container',
   '.changelog-list',
-  '.support-panel',
   // ValueField menus are fixed, body-portaled listboxes. OverlayScrollbars
   // rewrites their children and collapses the menu's max-content width in
   // WebKit, leaving an open listbox mounted but visually hidden.

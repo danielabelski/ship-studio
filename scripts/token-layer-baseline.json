@@ -1365,60 +1365,6 @@
       "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
     },
     {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--info-dark",
-      "count": 1,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--info-hover",
-      "count": 4,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--info-light",
-      "count": 2,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--info-rgb",
-      "count": 1,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--purple-deep-rgb",
-      "count": 2,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--radius-full",
-      "count": 2,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--slack-lavender",
-      "count": 1,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--slack-pink",
-      "count": 1,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/support-panel.css",
-      "token": "--transition",
-      "count": 6,
-      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
       "path": "src/styles/features/update-banner.css",
       "token": "--color-green-300",
       "count": 4,
