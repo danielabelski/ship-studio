@@ -269,7 +269,6 @@ async fn simctl_stdout(
 ///
 /// Errors if `xcrun` is unavailable (Xcode not installed). Returns an empty
 /// vec when Xcode is present but no simulator is booted.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn list_booted_simulators() -> Result<Vec<MobileSimulator>, CommandError> {
     tracing::info!("list_booted_simulators: invoked");
@@ -521,7 +520,6 @@ fn parse_adb_devices(stdout: &str) -> Vec<AndroidDevice> {
 
 /// List currently-connected, ready Android devices/emulators. Empty vec when none
 /// are running (or adb is absent); errors only on an unexpected adb failure.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn list_android_devices() -> Result<Vec<AndroidDevice>, CommandError> {
     let mut cmd = adb_command();

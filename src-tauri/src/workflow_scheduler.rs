@@ -207,23 +207,6 @@ pub fn spawn_event(
     });
 }
 
-/// Fire every `on push` workflow for a project that just pushed.
-#[tauri::command]
-#[tracing::instrument(skip(app))]
-pub async fn fire_push_workflows(
-    app: AppHandle,
-    project_path: String,
-) -> Result<(), crate::errors::CommandError> {
-    let validated = crate::utils::validate_project_path(&project_path)?;
-    fire_event(
-        &app,
-        &validated.to_string_lossy(),
-        crate::commands::workflows::WorkflowEvent::Push,
-    )
-    .await;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

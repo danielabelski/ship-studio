@@ -65,9 +65,6 @@ export interface PluginRegistryEntry {
   icon?: string;
 }
 
-/** Official Vercel plugin repository URL */
-export const VERCEL_PLUGIN_REPO = 'https://github.com/ship-studio/plugin-vercel';
-
 /**
  * Built-in hosting integrations. They install like any other plugin (cloned
  * into `.shipstudio/plugins/<id>`) but the app renders them in a dedicated

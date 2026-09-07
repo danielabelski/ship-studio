@@ -38,14 +38,6 @@ export function mockInvokeResponse(command: string, response: InvokeResponse) {
 }
 
 /**
- * Set a mock error for a Tauri invoke command
- */
-export function mockInvokeError(command: string, error: Error) {
-  invokeErrors.set(command, error);
-  invokeResponses.delete(command);
-}
-
-/**
  * Clear all mock responses
  */
 export function clearInvokeMocks() {

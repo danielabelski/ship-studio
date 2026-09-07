@@ -269,11 +269,6 @@ export async function runWorkflowNow(workflow: Workflow): Promise<WorkflowRun> {
   }
 }
 
-/** Run history for one workflow, newest first. */
-export function listRuns(workflowId: string): Promise<WorkflowRun[]> {
-  return invoke<WorkflowRun[]>('list_workflow_runs', { workflowId });
-}
-
 /* ---------------------------------------------------------------- inbox */
 
 export async function setItemRead(id: string, read: boolean): Promise<void> {

@@ -1,24 +1,21 @@
 //! # Screenshot and Playwright Commands
 //!
 //! Commands for capturing project thumbnails, full-page and viewport screenshots,
-//! image comparison, cropping, and stitching.
+//! and image cropping.
 //!
 //! Organized into submodules:
-//! - `base` — crop, read as base64, and compare screenshots
+//! - `base` — crop and read as base64
 //! - `playwright` — Playwright environment management, full-page and viewport captures
-//! - `stitch` — stitch multiple screenshots into a single full-page image
 //! - `thumbnail` — project thumbnail capture and retrieval
 //! - `webview_snapshot` — native in-app preview snapshot (no headless browser)
 
 mod base;
 mod playwright;
-mod stitch;
 mod thumbnail;
 mod webview_snapshot;
 
 pub use base::*;
 pub use playwright::*;
-pub use stitch::*;
 pub use thumbnail::*;
 pub use webview_snapshot::*;
 

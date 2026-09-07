@@ -164,11 +164,6 @@ export interface TokenCheck {
 export function getHostingStatus(projectPath: string): Promise<HostingStatus> {
   return invoke<HostingStatus>('get_hosting_status', { projectPath });
 }
-
-export function detectHostingLinks(projectPath: string): Promise<DetectedLink[]> {
-  return invoke<DetectedLink[]>('detect_hosting_links', { projectPath });
-}
-
 export function listHostingProjects(
   projectPath: string,
   provider: HostingProvider,
@@ -183,13 +178,7 @@ export function listHostingProjects(
 
 export function setHostingLink(projectPath: string, link: HostingLink): Promise<void> {
   return invoke('set_hosting_link', { projectPath, link });
-}
-
-export function clearHostingLink(projectPath: string, provider: HostingProvider): Promise<void> {
-  return invoke('clear_hosting_link', { projectPath, provider });
-}
-
-/** Recent deployments for a project, newest first. */
+} /** Recent deployments for a project, newest first. */
 export function listRecentDeployments(
   projectPath: string,
   provider: HostingProvider,
@@ -208,16 +197,7 @@ export function getDeploymentLog(
   deploymentId: string
 ): Promise<BuildLog> {
   return invoke<BuildLog>('get_deployment_log', { projectPath, provider, deploymentId });
-}
-
-export function verifyHostingToken(
-  projectPath: string,
-  provider: HostingProvider
-): Promise<TokenCheck> {
-  return invoke<TokenCheck>('verify_hosting_token', { projectPath, provider });
-}
-
-// ---------------------------------------------------------------------------
+} // ---------------------------------------------------------------------------
 // The reducer
 // ---------------------------------------------------------------------------
 

@@ -37,7 +37,7 @@ use crate::errors::CommandError;
 use crate::utils::validate_project_path;
 use model::{
     now_ms, Auth, BuildLog, Deployment, DeploymentSnapshot, DetectedLink, HostingLink,
-    HostingProjectChoice, HostingProvider, HostingStatus, Lookup, ProviderStatus, TokenCheck,
+    HostingProjectChoice, HostingProvider, HostingStatus, Lookup, ProviderStatus,
 };
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -280,24 +280,6 @@ pub async fn set_hosting_link(project_path: String, link: HostingLink) -> Result
     Ok(())
 }
 
-/// Forget a provider link.
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn clear_hosting_link(
-    project_path: String,
-    provider: HostingProvider,
-) -> Result<(), CommandError> {
-    let project = validate_project_path(&project_path)?;
-    let mut meta = link::read_metadata(&project);
-    meta.links.retain(|l| l.provider != provider);
-    if meta.last.as_ref().is_some_and(|s| s.provider == provider) {
-        meta.last = None;
-    }
-    link::write_metadata(&project, meta)?;
-    invalidate_project(&project_path);
-    Ok(())
-}
-
 /// The recent deployment history for a project, newest first.
 ///
 /// The same data the provider's dashboard leads with, so a user can see the
@@ -363,38 +345,6 @@ pub async fn get_deployment_log(
     provider::fetch_logs(&link, &resolved.token, &deployment_id)
         .await
         .map_err(|e| e.into_command_error(provider.label()))
-}
-
-/// Check a stored credential without asking about any deployment.
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn verify_hosting_token(
-    project_path: String,
-    provider: HostingProvider,
-) -> Result<TokenCheck, CommandError> {
-    let project = validate_project_path(&project_path)?;
-
-    let Some(resolved) = credentials::token_for(provider, &project) else {
-        return Ok(TokenCheck {
-            auth: Auth::NoToken,
-            token_source: None,
-            account_label: None,
-        });
-    };
-
-    match provider::verify_token(provider, &resolved.token).await {
-        Ok(account_label) => Ok(TokenCheck {
-            auth: Auth::Ok,
-            token_source: Some(resolved.source),
-            account_label,
-        }),
-        Err(http::HostingHttpError::Rejected) => Ok(TokenCheck {
-            auth: Auth::Rejected,
-            token_source: Some(resolved.source),
-            account_label: None,
-        }),
-        Err(e) => Err(e.into_command_error(provider.label())),
-    }
 }
 
 /// Drop cached hosting answers for a project. Called when a credential changes,

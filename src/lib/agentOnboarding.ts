@@ -71,11 +71,6 @@ export async function setDefaultHost(host: HostChoice): Promise<void> {
   return invoke('set_default_host', { host });
 }
 
-/** The persisted default hosting provider, if one was chosen. */
-export async function getDefaultHost(): Promise<HostChoice | null> {
-  return invoke<HostChoice | null>('get_default_host');
-}
-
 // ============ Required items & completion ============
 
 /**

@@ -35,9 +35,6 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.1
         version: 6.43.1
-      '@cstar.help/js':
-        specifier: ^0.3.4
-        version: 0.3.4
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
@@ -359,15 +356,6 @@ packages:
   '@csstools/css-tokenizer@3.0.4':
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
-
-  '@cstar.help/js@0.3.4':
-    resolution: {integrity: sha512-pMlW1FhfAV4bj0jT84OBQcuX/Bn2FsWu+eb27Uyhg8IQeasQsdYku5hd1FIBb3cIK1M6tLy6hbcEuSwBV0/XRw==}
-    engines: {node: '>=18.0.0'}
-    peerDependencies:
-      '@supabase/supabase-js': '>=2.0.0'
-    peerDependenciesMeta:
-      '@supabase/supabase-js':
-        optional: true
 
   '@esbuild/aix-ppc64@0.27.2':
     resolution: {integrity: sha512-GZMB+a0mOMZs4MpDbj8RJp4cw+w1WV5NYD6xzgvzUJ5Ek2jerwfO2eADyI6ExDSUED+1X8aMbegahsJi+8mgpw==}
@@ -3088,8 +3076,6 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
 
   '@csstools/css-tokenizer@3.0.4': {}
-
-  '@cstar.help/js@0.3.4': {}
 
   '@esbuild/aix-ppc64@0.27.2':
     optional: true

@@ -66,7 +66,6 @@
 @import './features/visual-editor/properties.css';
 @import './features/visual-editor-image.css';
 @import './features/visual-editor-classes.css';
-@import './features/visual-editor-css-mode.css';
 @import './features/css-cascade/main.css';
 @import './features/css-cascade/chips.css';
 @import './features/css-cascade/popovers.css';
@@ -113,7 +112,6 @@
 @import './features/settings.css';
 @import './features/settings-forms.css';
 @import './features/attached-libraries.css';
-@import './features/support-panel.css';
 @import './features/project-rail.css';
 @import './features/shopify.css';
 @import './features/workflows.css';

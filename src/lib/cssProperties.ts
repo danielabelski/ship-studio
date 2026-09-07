@@ -415,30 +415,6 @@ const VALUE_KEYWORDS: Record<string, string[]> = {
   'mix-blend-mode': ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference'],
 };
 
-/** Property names whose value is typically a color (so `var(--…)` colors / named
- *  colors are worth suggesting). */
-const COLOR_PROPS = new Set([
-  'color',
-  'background',
-  'background-color',
-  'border-color',
-  'border-top-color',
-  'border-right-color',
-  'border-bottom-color',
-  'border-left-color',
-  'outline-color',
-  'fill',
-  'stroke',
-  'caret-color',
-  'text-decoration-color',
-  'column-rule-color',
-  'accent-color',
-]);
-
-export function isColorProperty(property: string): boolean {
-  return COLOR_PROPS.has(property.trim().toLowerCase());
-}
-
 /** Properties whose value references a `@keyframes` animation by name (so the
  *  project's keyframe names are worth suggesting first). */
 const ANIMATION_PROPS = new Set(['animation', 'animation-name']);
@@ -560,13 +536,6 @@ export const COMMON_AT_RULES: string[] = [
   '@media print',
   '@supports (display: grid)',
 ];
-
-/** Suggest at-rule preludes for a typed fragment (always lets you keep your own text). */
-export function suggestAtRules(query: string, limit = 8): string[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return COMMON_AT_RULES.slice(0, limit);
-  return COMMON_AT_RULES.filter((a) => a.toLowerCase().includes(q)).slice(0, limit);
-}
 
 /** Common `@media` conditions (without the `@media` keyword) for editing an at-rule. */
 export const COMMON_MEDIA_CONDITIONS: string[] = [

@@ -92,8 +92,6 @@ type SessionWriter = Mutex<Option<Box<dyn std::io::Write + Send>>>;
 
 struct Session {
     pid: u32,
-    project_path: Option<String>,
-    tab_session_id: Option<String>,
     alive: AtomicBool,
     attached: AtomicBool,
     exit_code: Mutex<Option<i32>>,
@@ -103,7 +101,6 @@ struct Session {
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     /// `None` once the session has exited (issue #540).
     master: Mutex<Option<Box<dyn portable_pty::MasterPty + Send>>>,
-    created_at_ms: u64,
 }
 
 impl Session {
@@ -138,14 +135,6 @@ impl Session {
 
 static REGISTRY: LazyLock<Mutex<HashMap<String, Arc<Session>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-
-fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 /// Windows system vars that cmd.exe / ConPTY / Node require. Mirrors the
 /// critical subset of `get_system_env` in `commands/pty/mod.rs` — injected
@@ -285,17 +274,6 @@ pub struct AttachResult {
     pub end_offset: u64,
 }
 
-#[derive(Serialize)]
-pub struct SessionListItem {
-    pub session_id: String,
-    pub pid: u32,
-    pub alive: bool,
-    pub exit_code: Option<i32>,
-    pub project_path: Option<String>,
-    pub tab_session_id: Option<String>,
-    pub created_at_ms: u64,
-}
-
 /// Open a PTY for a tab. The caller provides a stable `session_id` (usually
 /// a UUID from the frontend's tab model) so re-open attempts are idempotent
 /// and so the same id routes through write/attach/kill later.
@@ -312,7 +290,6 @@ pub async fn pty_session_open(
     cols: u16,
     rows: u16,
     project_path: Option<String>,
-    tab_session_id: Option<String>,
 ) -> Result<OpenSessionResult, CommandError> {
     // Idempotent: if a live session already exists for this id, return it.
     // If an exited session exists under this id (e.g. resume-failed retry
@@ -420,8 +397,6 @@ pub async fn pty_session_open(
 
     let session = Arc::new(Session {
         pid,
-        project_path: project_path.clone(),
-        tab_session_id: tab_session_id.clone(),
         alive: AtomicBool::new(true),
         attached: AtomicBool::new(false),
         exit_code: Mutex::new(None),
@@ -429,7 +404,6 @@ pub async fn pty_session_open(
         writer: Mutex::new(Some(writer)),
         child_killer: Mutex::new(child_killer),
         master: Mutex::new(Some(pair.master)),
-        created_at_ms: now_ms(),
     });
 
     REGISTRY
@@ -756,39 +730,6 @@ pub fn pty_session_detach(session_id: String) -> Result<(), CommandError> {
     Ok(())
 }
 
-#[tauri::command]
-#[tracing::instrument]
-pub fn pty_session_list(
-    project_path: Option<String>,
-) -> Result<Vec<SessionListItem>, CommandError> {
-    let map = REGISTRY
-        .lock()
-        .map_err(|e| format!("pty registry poisoned: {e}"))?;
-    let mut items = Vec::new();
-    for (session_id, session) in map.iter() {
-        if let Some(ref wanted) = project_path {
-            if session.project_path.as_deref() != Some(wanted.as_str()) {
-                continue;
-            }
-        }
-        let alive = session.alive.load(Ordering::Relaxed);
-        let exit_code = *session
-            .exit_code
-            .lock()
-            .map_err(|e| format!("exit lock poisoned: {e}"))?;
-        items.push(SessionListItem {
-            session_id: session_id.clone(),
-            pid: session.pid,
-            alive,
-            exit_code,
-            project_path: session.project_path.clone(),
-            tab_session_id: session.tab_session_id.clone(),
-            created_at_ms: session.created_at_ms,
-        });
-    }
-    Ok(items)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,8 +770,6 @@ mod tests {
 
             Arc::new(Session {
                 pid: 0,
-                project_path: None,
-                tab_session_id: None,
                 alive: AtomicBool::new(false),
                 attached: AtomicBool::new(false),
                 exit_code: Mutex::new(Some(0)),
@@ -838,7 +777,6 @@ mod tests {
                 writer: Mutex::new(Some(writer)),
                 child_killer: Mutex::new(killer),
                 master: Mutex::new(Some(pair.master)),
-                created_at_ms: 0,
             })
         }
 

@@ -108,38 +108,6 @@ pub fn get_reserved_port_for_window(window_label: String, project_path: String) 
     result
 }
 
-/// Find an available port starting from the preferred port.
-///
-/// Tries the preferred port first, then increments until finding an available one.
-/// Also checks against reserved ports to avoid race conditions in multi-window scenarios.
-/// Returns the first available port found.
-#[tauri::command]
-#[tracing::instrument]
-pub fn find_available_port(preferred_port: u16) -> Result<u16, CommandError> {
-    use std::net::TcpListener;
-
-    // Try ports starting from preferred, up to preferred + 100
-    for port in preferred_port..preferred_port.saturating_add(100) {
-        // Check if port is reserved by another window (prevents race condition)
-        if crate::state::is_port_reserved(port) {
-            tracing::debug!("Port {} is reserved by another window, skipping", port);
-            continue;
-        }
-
-        // Check if port is actually available (not bound by another process)
-        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return Ok(port);
-        }
-    }
-
-    Err((format!(
-        "Could not find available port in range {}-{}",
-        preferred_port,
-        preferred_port.saturating_add(99)
-    ))
-    .into())
-}
-
 /// Find and reserve an available port for a `(window, project)` pair.
 /// Atomically finds a port and reserves it. If the pair already holds one,
 /// returns it (idempotent) — different projects in the same window each get

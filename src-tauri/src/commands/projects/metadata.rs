@@ -1,11 +1,10 @@
 //! Project metadata read/write commands.
 //!
-//! Generic read/write of `.shipstudio/project.json`, plus the `has_vercel_config`
-//! check. Per-topic metadata accessors live in sibling modules (`ui_state`,
-//! `dev_server`).
+//! Generic read/write of `.shipstudio/project.json`. Per-topic metadata
+//! accessors live in sibling modules (`ui_state`, `dev_server`).
 
 use crate::errors::CommandError;
-use crate::types::{ProjectMetadata, PROJECT_METADATA_SCHEMA_VERSION};
+use crate::types::ProjectMetadata;
 use crate::utils::validate_project_path;
 
 /// Persist `metadata` to `<project>/.shipstudio/project.json`, creating the
@@ -77,33 +76,10 @@ pub async fn read_project_metadata(
     read_project_metadata_sync(&project)
 }
 
-/// Writes project metadata to .shipstudio/project.json
-/// Always ensures the schema_version is set to the current version.
-#[tauri::command]
-#[tracing::instrument(skip(metadata), fields(project = %project_path))]
-pub async fn write_project_metadata(
-    project_path: String,
-    mut metadata: ProjectMetadata,
-) -> Result<(), CommandError> {
-    let project = validate_project_path(&project_path)?;
-
-    // Ensure schema_version is current when writing
-    metadata.schema_version = PROJECT_METADATA_SCHEMA_VERSION;
-
-    save_project_metadata(&project, &metadata)
-}
-
-/// Checks whether a project has a `.vercel/project.json` config file.
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn has_vercel_config(project_path: String) -> Result<bool, CommandError> {
-    let project = validate_project_path(&project_path)?;
-    Ok(project.join(".vercel").join("project.json").exists())
-}
-
 #[cfg(test)]
 mod save_project_metadata_tests {
     use super::*;
+    use crate::types::PROJECT_METADATA_SCHEMA_VERSION;
 
     #[test]
     fn roundtrips_metadata_and_creates_shipstudio_dir() {
