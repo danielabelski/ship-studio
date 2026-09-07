@@ -215,6 +215,31 @@ export async function setCommitAttributionEnabled(enabled: boolean): Promise<voi
   }
 }
 
+// ============ Team records ============
+
+/**
+ * Whether pushing from Ship Studio also writes a team record.
+ *
+ * Defaults to on, and to on when the read fails, matching the backend. A feed
+ * nobody writes to is the GitHub half forever.
+ */
+export async function getTeamSharingEnabled(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('get_team_sharing_enabled');
+  } catch {
+    return true;
+  }
+}
+
+/** Turn team records on or off. */
+export async function setTeamSharingEnabled(enabled: boolean): Promise<void> {
+  try {
+    await invoke('set_team_sharing_enabled', { enabled });
+  } catch {
+    // Silently fail, matching the other non-critical UI preferences.
+  }
+}
+
 // ============ Element breadcrumb ============
 
 /** Whether the selected element's DOM breadcrumb is shown in the preview. */

@@ -222,6 +222,26 @@ pub fn get_element_breadcrumb_enabled() -> Result<bool, CommandError> {
     Ok(state.element_breadcrumb_enabled.unwrap_or(true))
 }
 
+/// Whether pushing from Ship Studio writes a team record.
+#[tauri::command]
+#[tracing::instrument]
+pub fn get_team_sharing_enabled() -> Result<bool, CommandError> {
+    Ok(crate::commands::team::sharing_enabled())
+}
+
+/// Turn team records on or off.
+///
+/// Off still gets you the agent's commit message, which is a private, local
+/// improvement either way. What it stops is anything being written into
+/// `.shipstudio-team/` for teammates to read.
+#[tauri::command]
+#[tracing::instrument]
+pub fn set_team_sharing_enabled(enabled: bool) -> Result<(), CommandError> {
+    let mut state = read_app_state();
+    state.team_sharing_enabled = Some(enabled);
+    write_app_state(&state).map_err(CommandError::from)
+}
+
 /// Whether commits Ship Studio makes carry the `Made-With` attribution trailer.
 #[tauri::command]
 #[tracing::instrument]

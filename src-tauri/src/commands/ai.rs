@@ -680,6 +680,55 @@ pub async fn resolve_commit_message(
     }
 }
 
+/// Run one prompt through the active agent's headless mode, against the
+/// project's working tree.
+///
+/// The plumbing `generate_commit_message_for_path` had inline, lifted out so
+/// the Team summariser can reuse it rather than reimplement the agent-picking,
+/// binary-finding and "nothing changed" guards. All three failure modes stay
+/// `Expected`: no headless agent, no CLI installed, nothing to summarise. Every
+/// caller falls back to something, because none of this may block a push.
+pub async fn run_working_tree_prompt(
+    path: &Path,
+    build: impl FnOnce(&str, &str) -> String,
+    timeout_secs: u64,
+) -> Result<String, CommandError> {
+    let agent = get_active_agent();
+
+    if headless_invocation(agent, "").is_none() {
+        return Err(CommandError::expected(format!(
+            "{} has no headless mode, so it cannot write a summary. Set an agent that does as \
+             your default in Settings.",
+            agent.display_name
+        )));
+    }
+    let agent_path = find_agent_binary().ok_or_else(|| {
+        CommandError::expected(format!("{} CLI is not installed", agent.display_name))
+    })?;
+
+    // Cheap guard: if nothing changed, skip the agent call entirely.
+    let status = git_status_porcelain(path)?;
+    if status.trim().is_empty() {
+        return Err(CommandError::expected("No changes to summarize"));
+    }
+    let diff = truncate_diff(&git_working_diff(path));
+
+    debug!(
+        "Calling {} CLI for a working-tree summary",
+        agent.display_name
+    );
+    run_agent_headless(
+        agent,
+        &agent_path,
+        &build(&status, &diff),
+        path,
+        HashMap::new(),
+        timeout_secs,
+    )
+    .await
+    .map_err(soften_commit_timeout)
+}
+
 /// Generate a concise, single-line commit subject from the project's current
 /// uncommitted changes using the active agent CLI in print mode.
 ///

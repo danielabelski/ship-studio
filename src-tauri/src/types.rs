@@ -900,6 +900,11 @@ pub struct AppState {
     /// cost of leaving it on is one line nobody reads twice.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commit_attribution_enabled: Option<bool>,
+    /// Whether pushing from Ship Studio also writes a team record into
+    /// `.shipstudio-team/`. Defaults to on: a feed nobody writes to is the
+    /// GitHub half forever, which is the state the feature exists to improve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_sharing_enabled: Option<bool>,
     /// Consent for automatic project-thumbnail capture. `None` = the user has
     /// never been asked (the in-app explainer is shown before the first
     /// auto-capture), `Some(true)` = allowed, `Some(false)` = opted out or a

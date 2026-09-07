@@ -36,8 +36,10 @@ import {
   setCompactWorkspaceToolbarEnabled,
   getCommitAttributionEnabled,
   getElementBreadcrumbEnabled,
+  getTeamSharingEnabled,
   setCommitAttributionEnabled,
   setElementBreadcrumbEnabled,
+  setTeamSharingEnabled,
   ELEMENT_BREADCRUMB_ENABLED_CHANGED_EVENT,
   getThumbnailsEnabled,
   setThumbnailsEnabled,
@@ -103,6 +105,7 @@ export function SettingsModal({
   const [compactWorkspaceToolbarEnabled, setLocalCompactWorkspaceToolbarEnabled] = useState(false);
   const [elementBreadcrumbEnabled, setLocalElementBreadcrumbEnabled] = useState(true);
   const [commitAttributionEnabled, setLocalCommitAttributionEnabled] = useState(true);
+  const [teamSharingEnabled, setLocalTeamSharingEnabled] = useState(true);
   const [thumbnailsOn, setLocalThumbnailsOn] = useState(true);
   const [spotifyWidgetEnabled, setLocalSpotifyWidgetEnabled] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('general');
@@ -129,6 +132,7 @@ export function SettingsModal({
         compactToolbarEnabled,
         breadcrumbEnabled,
         attributionEnabled,
+        sharingEnabled,
         thumbnails,
         spotifyEnabled,
         root,
@@ -143,6 +147,7 @@ export function SettingsModal({
         getCompactWorkspaceToolbarEnabled(),
         getElementBreadcrumbEnabled(),
         getCommitAttributionEnabled(),
+        getTeamSharingEnabled(),
         getThumbnailsEnabled(),
         isMac() ? getSpotifyWidgetEnabled() : Promise.resolve(false),
         getProjectsRoot().catch(() => ''),
@@ -158,6 +163,7 @@ export function SettingsModal({
         setLocalCompactWorkspaceToolbarEnabled(compactToolbarEnabled);
         setLocalElementBreadcrumbEnabled(breadcrumbEnabled);
         setLocalCommitAttributionEnabled(attributionEnabled);
+        setLocalTeamSharingEnabled(sharingEnabled);
         // `null` = not asked yet; the toggle reflects the default-on behavior
         // (the first auto-capture will show the in-app explainer).
         setLocalThumbnailsOn(thumbnails !== false);
@@ -326,6 +332,17 @@ export function SettingsModal({
       $screen_name: 'Settings',
     });
   }, [commitAttributionEnabled]);
+
+  const handleTeamSharingToggle = useCallback(() => {
+    const enabled = !teamSharingEnabled;
+    setLocalTeamSharingEnabled(enabled);
+    void setTeamSharingEnabled(enabled);
+    void trackEvent('setting_changed', {
+      setting: 'team_sharing',
+      value: enabled,
+      $screen_name: 'Settings',
+    });
+  }, [teamSharingEnabled]);
 
   const handleThumbnailsToggle = useCallback(() => {
     const newEnabled = !thumbnailsOn;
@@ -562,6 +579,34 @@ export function SettingsModal({
                     disabled={loading}
                     role="switch"
                     aria-checked={thumbnailsOn}
+                  >
+                    <span className="settings-toggle-track">
+                      <span className="settings-toggle-thumb" />
+                    </span>
+                  </button>
+                </div>
+                {/* The one thing in this app that writes words into a shared
+                    repository, so it says exactly what it writes and exactly
+                    who reads it, in the row itself rather than in a doc. */}
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">
+                      Share what you changed with your team
+                    </span>
+                    <span className="settings-row-description">
+                      When you push, your agent writes a short summary of the change and why you
+                      made it into <code>.shipstudio-team/</code> in the repo, so teammates see more
+                      than a commit subject. Never your prompts, your conversation or your terminal.
+                      Anyone who can read the repository can read these.
+                    </span>
+                  </div>
+                  <button
+                    className={`settings-toggle ${teamSharingEnabled ? 'on' : 'off'}`}
+                    onClick={handleTeamSharingToggle}
+                    disabled={loading}
+                    role="switch"
+                    aria-label="Share what you changed with your team"
+                    aria-checked={teamSharingEnabled}
                   >
                     <span className="settings-toggle-track">
                       <span className="settings-toggle-thumb" />

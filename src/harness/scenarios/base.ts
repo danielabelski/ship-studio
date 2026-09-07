@@ -102,6 +102,7 @@ export const baseCommands: CommandMap = {
   // Both default-on in the product, so captures show what people actually see.
   get_element_breadcrumb_enabled: true,
   get_commit_attribution_enabled: true,
+  get_team_sharing_enabled: true,
   get_analytics_enabled: true,
   get_app_icon: 'brand',
   // `null` is the real third state here: never asked. The toggle then reflects

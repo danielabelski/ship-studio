@@ -50,12 +50,18 @@
 //! could put something in the repo permanently.
 
 mod derive;
-mod records;
+mod push;
+pub(crate) mod records;
 mod snapshot;
+mod summarise;
 mod trailers;
+pub(crate) mod writer;
 
+pub use push::{prepare as prepare_push, sharing_enabled, PushContent};
 pub use snapshot::*;
+pub use summarise::summarise_working_tree;
 pub use trailers::*;
+pub use writer::TeamSummary;
 
 use serde::{Deserialize, Serialize};
 

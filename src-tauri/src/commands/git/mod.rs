@@ -363,6 +363,22 @@ pub fn git_stage_and_commit_authored(
     message: &str,
     agent: Option<&str>,
 ) -> Result<bool, CommandError> {
+    git_stage_and_commit_tracked(path, message, agent, None)
+}
+
+/// [`git_stage_and_commit_authored`], carrying the `Ship-Studio-Update` trailer
+/// that links this commit to the record explaining it.
+///
+/// The record file is written into the working tree *before* this is called, so
+/// the `git add -A` below sweeps it into the same commit as the work. That is
+/// the point: one commit means there is never a record about a commit that was
+/// not pushed, and never a commit whose explanation is still sitting locally.
+pub fn git_stage_and_commit_tracked(
+    path: &std::path::Path,
+    message: &str,
+    agent: Option<&str>,
+    update_id: Option<&str>,
+) -> Result<bool, CommandError> {
     // Defense-in-depth backstop for #345: even if a too-broad path slipped past
     // registration, never run `git add -A` across the home tree.
     if crate::utils::is_forbidden_project_root(path) {
@@ -426,7 +442,7 @@ pub fn git_stage_and_commit_authored(
     // "nothing to commit" check, so a no-op costs no work — and they are
     // appended by `git interpret-trailers` rather than by string concatenation,
     // because a trailer block git cannot parse is worse than no trailer at all.
-    let message = crate::commands::team::with_trailers(path, message, agent, None);
+    let message = crate::commands::team::with_trailers(path, message, agent, update_id);
 
     // Commit — same index.lock retry as the staging step (#377).
     let commit_output = crate::utils::output_retrying_index_lock(|| {
