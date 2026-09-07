@@ -155,11 +155,8 @@
     display: none;
   }
 
-  .preview-toolbar > .preview-breakpoints {
-    border: none;
-    background: none;
-    padding: 0;
-  }
+  /* The group keeps its pill: it still holds the dimensions readout and the
+     ⋯ that opens the viewport list, so it is a control, not an empty box. */
 }
 
 @container preview-toolbar (max-width: 660px) {

@@ -228,6 +228,26 @@
    toolbar narrower than the outer preview pane, so querying the pane leaves
    the dimensions label visible while the toolbar has already hidden its tabs. */
 @container preview-toolbar (max-width: 820px) {
+  /* The icon strip has gone by this width, which frees the space it occupied —
+     so the readout stays and the ⋯ joins it rather than replacing it: the width
+     you are previewing is worth more than the gap, and the ⋯ is how the
+     viewport list (canvas included) is reached now the strip is gone. */
+  .preview-size-wrap {
+    /* Sized for the readout alone; it now holds the readout AND the ⋯. */
+    width: auto;
+    min-width: 0;
+    gap: var(--spacing-3xs);
+  }
+
+  .preview-dimensions--compact {
+    display: inline-flex;
+  }
+}
+
+/* Now the toolbar really is out of room: the readout gives way and the ⋯ is
+   left to carry the viewport list on its own. The width is still one click
+   away, at the top of the popover. */
+@container preview-toolbar (max-width: 520px) {
   .preview-size-wrap {
     width: var(--control-height-standard);
     min-width: var(--control-height-standard);
@@ -235,10 +255,6 @@
 
   .preview-dimensions--label {
     display: none;
-  }
-
-  .preview-dimensions--compact {
-    display: inline-flex;
   }
 }
 
