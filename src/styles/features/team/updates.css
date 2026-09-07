@@ -93,8 +93,8 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  margin: 0 0 var(--spacing-xs);
-  padding: var(--spacing-2xs) 0;
+  margin: 0 0 var(--spacing-sm);
+  padding: var(--spacing-xs) 0;
   background: var(--surface-panel);
   color: var(--text-muted);
   font-size: var(--font-size-body-sm);
@@ -118,7 +118,7 @@
 .team-update {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-sm);
   padding: var(--spacing-md);
   background: var(--surface-recessed);
   border: var(--border-width-default) solid var(--border-subtle);
@@ -126,27 +126,37 @@
 }
 
 .team-update + .team-update {
-  margin-top: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
 }
 
 /* Arrived since you last looked.
-   A dot beside the name, the way unread mail has always done it — not a
-   coloured edge on the card. A 2px accent rail down one side of every unread
-   row draws a set of stripes the eye reads before it reads any of the writing,
-   and a dashed one (an unread thin row) is worse again. The dot sits inside
-   the row it belongs to and disappears the moment it stops being true. */
-.team-update-new-dot {
+   Not a coloured edge on the card — a 2px accent rail down one side of every
+   unread row draws a set of stripes the eye reads before any of the writing.
+   And not a column of its own either: that left a lone dot in a gutter that
+   was empty on every other row, which read as two cards being misaligned when
+   they were not. It rides the avatar, the way a notification dot does. */
+.team-update-figure {
+  position: relative;
   flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: var(--accent-active);
+  display: inline-flex;
 }
 
-/* Held in the layout when seen, so marking a row read does not shuffle the
-   header sideways underneath the pointer. */
-.team-update-new-dot.is-seen {
-  background: none;
+.team-update-new-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-active);
+  /* Cut out of the avatar beneath so the dot reads as sitting on top of it
+     rather than as a bite taken out of the circle. */
+  box-shadow: 0 0 0 2px var(--surface-recessed);
+}
+
+/* The thin card has no fill, so the cut-out has to match the panel instead. */
+.team-update.is-thin .team-update-new-dot {
+  box-shadow: 0 0 0 2px var(--surface-panel);
 }
 
 /* Ship Studio saw a push and no agent left a summary, so the row has nothing
@@ -174,7 +184,7 @@
 .team-update-who {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-sm);
   flex-wrap: wrap;
   min-width: 0;
   flex: 1;
@@ -198,7 +208,7 @@
 .team-update-agent {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-xs);
   color: var(--text-faint);
   font-size: var(--font-size-micro);
   white-space: nowrap;
@@ -206,7 +216,7 @@
 
 .team-status {
   flex: none;
-  padding: var(--spacing-3xs) var(--spacing-xs);
+  padding: var(--spacing-2xs) var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: var(--surface-control);
   color: var(--text-muted);
@@ -258,7 +268,7 @@
 .team-update-changes {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-xs);
   margin: 0;
   padding-left: var(--spacing-lg);
   max-width: 76ch;
@@ -274,9 +284,9 @@
 .team-update-error {
   display: flex;
   align-items: flex-start;
-  gap: var(--spacing-2xs);
+  gap: var(--spacing-xs);
   margin: 0;
-  padding: var(--spacing-xs) var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
   background: rgba(var(--accent-error-rgb), 0.08);
   border-radius: var(--radius-sm);
   color: var(--accent-error-light);
@@ -301,7 +311,7 @@
 .team-update-ask {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: var(--spacing-3xs) var(--spacing-xs);
+  gap: var(--spacing-xs) var(--spacing-sm);
   margin: 0;
   padding: var(--spacing-sm) var(--spacing-md);
   background: rgba(var(--accent-active-rgb), 0.03);
@@ -336,23 +346,43 @@
   line-height: var(--line-height-reading);
 }
 
+/* Metadata, separated from the writing rather than stacked against it. The
+   rule earns its place here: the card above it is prose, and without a break
+   the branch chip reads as another line of that prose. */
 .team-update-foot {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  justify-content: space-between;
+  gap: var(--spacing-sm) var(--spacing-md);
   flex-wrap: wrap;
   min-width: 0;
-  margin-top: var(--spacing-3xs);
+  margin-top: var(--spacing-2xs);
+  padding-top: var(--spacing-sm);
+  border-top: var(--border-width-default) solid var(--border-subtle);
   color: var(--text-faint);
   font-size: var(--font-size-body-sm);
+}
+
+/* Two groups so a wrap moves a whole group, never half of one. */
+.team-update-foot-where,
+.team-update-foot-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.team-update-foot-actions {
+  margin-left: auto;
 }
 
 .team-branch-chip,
 .team-pr-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-3xs);
-  padding: var(--spacing-3xs) var(--spacing-xs);
+  gap: var(--spacing-xs);
+  padding: var(--spacing-2xs) var(--spacing-xs);
   background: var(--surface-control);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
@@ -366,7 +396,7 @@
 .team-evidence-toggle {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-xs);
   margin-left: auto;
   padding: 0;
   background: none;
@@ -384,10 +414,10 @@
 
 /* The counts read as one run with the label without this — "2 files+59−130".
    A flex gap does not save you here: the label and the two counts are separate
-   items, but --spacing-3xs is 2px, which is not a word space. */
+   flex items, but the gap was --spacing-3xs, which is 1px. */
 .team-diff-add,
 .team-diff-del {
-  margin-left: var(--spacing-2xs);
+  margin-left: var(--spacing-xs);
 }
 
 .team-diff-add {
@@ -401,7 +431,7 @@
 .team-evidence {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-md);
   margin-top: var(--spacing-2xs);
   padding-top: var(--spacing-sm);
   border-top: var(--border-width-default) solid var(--border-subtle);
@@ -410,7 +440,7 @@
 .team-evidence-list {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-xs);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -455,7 +485,7 @@
 .team-update-source-note {
   display: flex;
   align-items: flex-start;
-  gap: var(--spacing-2xs);
+  gap: var(--spacing-xs);
   margin: 0;
   max-width: 76ch;
   color: var(--text-faint);
@@ -474,7 +504,7 @@
 .team-github-link {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-xs);
   padding: 0;
   background: none;
   border: none;
@@ -497,7 +527,7 @@
 .team-coverage {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-md);
   flex-wrap: wrap;
   margin-top: var(--spacing-md);
   padding: var(--spacing-sm) var(--spacing-md);
@@ -534,7 +564,7 @@
 .team-coverage-invite {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-xs);
   flex: none;
   height: var(--control-height-compact);
   padding: 0 var(--spacing-sm);
@@ -557,7 +587,7 @@
 .team-coverage-complete {
   display: flex;
   align-items: center;
-  gap: var(--spacing-2xs);
+  gap: var(--spacing-xs);
   margin: 0;
   color: var(--accent-success);
   font-size: var(--font-size-body-sm);
@@ -569,9 +599,9 @@
 .team-github-only {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-xs);
   flex: none;
-  padding: var(--spacing-3xs) var(--spacing-xs);
+  padding: var(--spacing-2xs) var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: var(--surface-control);
   color: var(--text-faint);

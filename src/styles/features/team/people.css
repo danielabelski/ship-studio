@@ -40,7 +40,7 @@
 .team-people-list {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-2xs);
+  gap: var(--spacing-xs);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -64,7 +64,7 @@
 .team-person-body {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-xs);
   min-width: 0;
   flex: 1;
 }
@@ -91,7 +91,7 @@
 }
 
 .team-person-you {
-  padding: var(--spacing-3xs) var(--spacing-xs);
+  padding: var(--spacing-2xs) var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: rgba(var(--accent-active-rgb), 0.12);
   color: var(--accent-active);
@@ -124,7 +124,7 @@
   gap: var(--spacing-xs);
   flex-wrap: wrap;
   min-width: 0;
-  margin-top: var(--spacing-3xs);
+  margin-top: var(--spacing-2xs);
   color: var(--text-muted);
   font-size: var(--font-size-body-md);
   line-height: var(--line-height-compact);
@@ -134,8 +134,8 @@
 .team-person-pr {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-3xs);
-  padding: var(--spacing-3xs) var(--spacing-xs);
+  gap: var(--spacing-xs);
+  padding: var(--spacing-2xs) var(--spacing-xs);
   background: var(--surface-control);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
@@ -160,7 +160,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--spacing-3xs);
+  gap: var(--spacing-2xs);
   flex: none;
   text-align: right;
 }

@@ -68,14 +68,20 @@ export function TeamUpdateCard({
       data-status={update.status}
     >
       <header className="team-update-head">
-        {/* Always rendered, blank once seen, so marking a row read does not
-            shift the header sideways under the pointer. */}
-        <span
-          className={`team-update-new-dot${isNew ? '' : ' is-seen'}`}
-          aria-label={isNew ? 'New since you last looked' : undefined}
-          role={isNew ? 'img' : undefined}
-        />
-        <TeamAvatar actor={update.actor} size="md" />
+        {/* The unread mark rides the avatar rather than sitting in a gutter of
+            its own. As a column it was blank on every row but the new ones,
+            which left one lonely dot floating in empty space and made two
+            neighbouring cards look misaligned when they were not. */}
+        <span className="team-update-figure">
+          <TeamAvatar actor={update.actor} size="md" />
+          {isNew && (
+            <span
+              className="team-update-new-dot"
+              role="img"
+              aria-label="New since you last looked"
+            />
+          )}
+        </span>
         <div className="team-update-who">
           <span className="team-update-name">{update.actor.name}</span>
           <span className="team-update-when">{formatAgo(update.at, now)}</span>
@@ -142,43 +148,50 @@ export function TeamUpdateCard({
         </div>
       )}
 
+      {/* Two groups, not seven loose items. Where it lives (left) and what you
+          can do with it (right) — so a narrow panel wraps one whole group
+          under the other instead of stranding "Open in GitHub" on its own. */}
       <footer className="team-update-foot">
-        <span className="team-branch-chip">{update.branch}</span>
-        {update.prNumber !== null && (
-          <span className="team-pr-chip">
-            <PullRequestIcon size={10} />#{update.prNumber}
-          </span>
-        )}
+        <span className="team-update-foot-where">
+          <span className="team-branch-chip">{update.branch}</span>
+          {update.prNumber !== null && (
+            <span className="team-pr-chip">
+              <PullRequestIcon size={10} />#{update.prNumber}
+            </span>
+          )}
+        </span>
 
-        {/* On every row, not only the thin ones. GitHub is the one place the
-            whole team can already see, whether or not they use this app. */}
-        {githubUrl && (
-          <button
-            type="button"
-            className="team-github-link"
-            onClick={() => void openUrl(githubUrl)}
-            title={githubUrl}
-          >
-            <GitHubIcon size={11} />
-            Open in GitHub
-            <ExternalLinkIcon size={9} />
-          </button>
-        )}
+        <span className="team-update-foot-actions">
+          {(update.commits.length > 0 || update.files.length > 0) && (
+            <button
+              type="button"
+              className="team-evidence-toggle"
+              onClick={() => onToggleExpanded(update.id)}
+              aria-expanded={expanded}
+            >
+              <ChevronIcon size={9} className={expanded ? 'chevron-flipped' : undefined} />
+              {update.commits.length} {update.commits.length === 1 ? 'commit' : 'commits'} ·{' '}
+              {update.files.length} {update.files.length === 1 ? 'file' : 'files'}
+              {totals.added > 0 && <span className="team-diff-add">+{totals.added}</span>}
+              {totals.removed > 0 && <span className="team-diff-del">−{totals.removed}</span>}
+            </button>
+          )}
 
-        {(update.commits.length > 0 || update.files.length > 0) && (
-          <button
-            type="button"
-            className="team-evidence-toggle"
-            onClick={() => onToggleExpanded(update.id)}
-            aria-expanded={expanded}
-          >
-            <ChevronIcon size={9} className={expanded ? 'chevron-flipped' : undefined} />
-            {update.commits.length} {update.commits.length === 1 ? 'commit' : 'commits'} ·{' '}
-            {update.files.length} {update.files.length === 1 ? 'file' : 'files'}
-            {totals.added > 0 && <span className="team-diff-add">+{totals.added}</span>}
-            {totals.removed > 0 && <span className="team-diff-del">−{totals.removed}</span>}
-          </button>
-        )}
+          {/* On every row, not only the thin ones. GitHub is the one place the
+              whole team can already see, whether or not they use this app. */}
+          {githubUrl && (
+            <button
+              type="button"
+              className="team-github-link"
+              onClick={() => void openUrl(githubUrl)}
+              title={githubUrl}
+            >
+              <GitHubIcon size={11} />
+              Open in GitHub
+              <ExternalLinkIcon size={9} />
+            </button>
+          )}
+        </span>
       </footer>
 
       {expanded && (
