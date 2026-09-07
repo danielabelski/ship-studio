@@ -22,6 +22,18 @@ import { workspaceCommands, WORKSPACE_PROJECT } from './workspace';
 
 export const teamScenarios: Scenario[] = [
   {
+    id: 'team-coverage',
+    title: 'Team — the half of the team who are not in Ship Studio',
+    looksRightWhen:
+      'The coverage note names who pushes straight to GitHub, says exactly what is missing from their rows (the why, not the fact), and offers one action. It is a footnote after the feed, not a banner in front of it.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.team-presence',
+    requires: '.team-coverage',
+    clipSelector: '.team-coverage',
+    commands: { ...workspaceCommands },
+  },
+
+  {
     id: 'team-in-workspace',
     title: 'Team — inside the project you are working in',
     looksRightWhen:

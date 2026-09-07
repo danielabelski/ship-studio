@@ -19,12 +19,16 @@
  * @module components/team/TeamUpdateCard
  */
 
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   ChevronIcon,
   ClaudeIcon,
   CodexIcon,
   ErrorIcon,
+  ExternalLinkIcon,
+  EyeIcon,
   GenericAgentIcon,
+  GitHubIcon,
   PullRequestIcon,
 } from '@/components/icons';
 import { TeamAvatar } from './TeamAvatar';
@@ -55,6 +59,8 @@ export function TeamUpdateCard({
 }: TeamUpdateCardProps) {
   const thin = update.writtenBy === 'app';
   const totals = fileTotals(update.files);
+  const firstName = update.actor.name.split(' ')[0];
+  const githubUrl = update.githubUrl;
 
   return (
     <article
@@ -62,6 +68,13 @@ export function TeamUpdateCard({
       data-status={update.status}
     >
       <header className="team-update-head">
+        {/* Always rendered, blank once seen, so marking a row read does not
+            shift the header sideways under the pointer. */}
+        <span
+          className={`team-update-new-dot${isNew ? '' : ' is-seen'}`}
+          aria-label={isNew ? 'New since you last looked' : undefined}
+          role={isNew ? 'img' : undefined}
+        />
         <TeamAvatar actor={update.actor} size="md" />
         <div className="team-update-who">
           <span className="team-update-name">{update.actor.name}</span>
@@ -93,6 +106,20 @@ export function TeamUpdateCard({
         </ul>
       )}
 
+      {/* A row Ship Studio did not write. Naming whose it is, and what is
+          therefore missing, turns a thin card from "the app failed to explain
+          this" into "GitHub is all anyone has for this person" — which is the
+          truth, and the version a teammate can actually act on. */}
+      {thin && (
+        <p className="team-update-source-note">
+          <GitHubIcon size={11} />
+          <span>
+            Straight from GitHub. {firstName} isn&rsquo;t pushing through Ship Studio, so there is
+            no record of why this changed — only that it did.
+          </span>
+        </p>
+      )}
+
       {update.buildError && (
         <p className="team-update-error">
           <ErrorIcon size={11} />
@@ -100,14 +127,19 @@ export function TeamUpdateCard({
         </p>
       )}
 
-      {/* The one thing on the card that is addressed to the reader. Given its
-          own treatment because a feed where everything looks equally urgent
-          trains people to skim all of it. */}
+      {/* The one thing on the card addressed to the reader — a request, not a
+          status. Drawn as a quoted aside so it reads like a colleague asking
+          rather than like something that has gone wrong. */}
       {update.asks && (
-        <p className="team-update-ask">
-          <span className="team-update-ask-label">Wants a look</span>
-          {update.asks}
-        </p>
+        <div className="team-update-ask">
+          <span className="team-update-ask-icon" aria-hidden>
+            <EyeIcon size={12} />
+          </span>
+          <span className="team-update-ask-label">
+            {update.actor.name.split(' ')[0]} wants a second pair of eyes
+          </span>
+          <p className="team-update-ask-text">{update.asks}</p>
+        </div>
       )}
 
       <footer className="team-update-foot">
@@ -116,6 +148,21 @@ export function TeamUpdateCard({
           <span className="team-pr-chip">
             <PullRequestIcon size={10} />#{update.prNumber}
           </span>
+        )}
+
+        {/* On every row, not only the thin ones. GitHub is the one place the
+            whole team can already see, whether or not they use this app. */}
+        {githubUrl && (
+          <button
+            type="button"
+            className="team-github-link"
+            onClick={() => void openUrl(githubUrl)}
+            title={githubUrl}
+          >
+            <GitHubIcon size={11} />
+            Open in GitHub
+            <ExternalLinkIcon size={9} />
+          </button>
         )}
 
         {(update.commits.length > 0 || update.files.length > 0) && (

@@ -20,13 +20,17 @@ import { Dropdown, DropdownItem } from '../primitives/Dropdown';
 import { EmptyState } from '../primitives/EmptyState';
 import { MenuButton } from '../primitives/MenuButton';
 import { SegmentedControl } from '../primitives/SegmentedControl';
+import { TeamCoverageNote } from './TeamCoverageNote';
 import { TeamUpdateCard } from './TeamUpdateCard';
-import { actorKey, groupByDay, type TeamUpdate } from '../../lib/team';
+import { actorKey, groupByDay, type TeamMember, type TeamUpdate } from '../../lib/team';
 
 type Scope = 'all' | 'asks' | 'rich';
 
 interface TeamUpdatesFeedProps {
   updates: TeamUpdate[];
+  members: TeamMember[];
+  /** `owner/repo`, so the invite text names the actual project. */
+  repo: string | null;
   unseenIds: Set<string>;
   expandedId: string | null;
   onToggleExpanded: (id: string) => void;
@@ -35,6 +39,8 @@ interface TeamUpdatesFeedProps {
 
 export function TeamUpdatesFeed({
   updates,
+  members,
+  repo,
   unseenIds,
   expandedId,
   onToggleExpanded,
@@ -159,9 +165,11 @@ export function TeamUpdatesFeed({
           {/* The log is only as complete as the repo. Saying so at the end of
               it is cheaper than someone inferring that a quiet teammate did
               nothing, when in truth they never pushed. */}
+          <TeamCoverageNote members={members} repo={repo} />
+
           <p className="team-feed-footnote">
-            Built from your repository. Work nobody pushed — and teammates whose agent wrote no
-            summary — appear here only as the bare fact that something changed.
+            Built from your repository. Work nobody pushed appears nowhere at all — a git remote
+            cannot see a file that has not left someone&rsquo;s laptop.
           </p>
         </div>
       )}

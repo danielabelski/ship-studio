@@ -179,6 +179,15 @@ export interface TeamUpdate {
   prNumber: number | null;
   /** Set when the host reported a failure, so the row can show the error. */
   buildError: string | null;
+  /**
+   * Where this lives on GitHub — a commit, a PR, a compare view.
+   *
+   * Present on every row, not just the thin ones. GitHub is the shared ground
+   * truth for a repo whether or not anyone on the team uses Ship Studio, so a
+   * row that cannot be opened there is a dead end for the half of the team who
+   * are not in this app.
+   */
+  githubUrl: string | null;
 }
 
 /**
@@ -203,6 +212,14 @@ export interface TeamMember {
   prNumber: number | null;
   /** One line on what they are up to, from their most recent update. */
   doing: string | null;
+  /**
+   * Whether their pushes arrive with a Ship Studio summary attached.
+   *
+   * Derived, not declared: a teammate "uses Ship Studio" here if any record
+   * under `.shipstudio-team/` carries their login. Nobody registers, and
+   * nobody is asked to.
+   */
+  usesShipStudio: boolean;
   isSelf: boolean;
 }
 
@@ -357,6 +374,23 @@ export function threadParticipants(thread: TeamThread): TeamActor[] {
     actors.push(message.actor);
   }
   return actors;
+}
+
+/** How much of the team's activity arrives explained rather than bare. */
+export interface TeamCoverage {
+  total: number;
+  onShipStudio: number;
+  /** The ones whose pushes show up as GitHub facts and nothing more. */
+  missing: TeamMember[];
+}
+
+export function teamCoverage(members: TeamMember[]): TeamCoverage {
+  const missing = members.filter((member) => !member.usesShipStudio && !member.isSelf);
+  return {
+    total: members.length,
+    onShipStudio: members.filter((member) => member.usesShipStudio).length,
+    missing,
+  };
 }
 
 /**

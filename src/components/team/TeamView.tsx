@@ -249,6 +249,8 @@ export function TeamView() {
                 <TabsPanel value="updates">
                   <TeamUpdatesFeed
                     updates={updates}
+                    members={snapshot.members}
+                    repo={snapshot.sync.repo}
                     unseenIds={unseenIds}
                     expandedId={expandedId}
                     onToggleExpanded={toggleExpanded}

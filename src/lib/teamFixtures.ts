@@ -39,6 +39,8 @@ export const FIXTURE_ACTORS = {
   jordan: actor('jordanchen', 'Jordan Chen'),
   enid: actor('enidshah', 'Enid Shah'),
   sarah: actor('sarahpark', 'Sarah Park'),
+  /** Has repo access and has never opened Ship Studio. */
+  theo: actor('theo-vance', 'Theo Vance'),
 };
 
 export interface TeamFixtureOptions {
@@ -59,17 +61,32 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
     : FIXTURE_ACTORS.self;
   const at = (ms: number) => now - ms;
 
+  // Stands in for the project's real `owner/repo`. In the real build every one
+  // of these links is built from the remote, which is why they can be offered
+  // for a teammate who has never opened Ship Studio.
+  const repo = `acme-studio/${projectName}`;
+
   let seq = 0;
   const update = (
     ms: number,
-    partial: Omit<TeamUpdate, 'id' | 'at' | 'projectName' | 'projectPath'>
+    partial: Omit<TeamUpdate, 'id' | 'at' | 'projectName' | 'projectPath' | 'githubUrl'> & {
+      githubUrl?: string | null;
+    }
   ): TeamUpdate => {
     seq += 1;
+    // Derived rather than written out per row: a PR if there is one, otherwise
+    // the newest commit. Same rule the real one uses.
+    const derived = partial.prNumber
+      ? `https://github.com/${repo}/pull/${partial.prNumber}`
+      : partial.commits[0]
+        ? `https://github.com/${repo}/commit/${partial.commits[0].sha}`
+        : null;
     return {
       id: `01K4J8Q2${String(seq).padStart(4, '0')}`,
       at: at(ms),
       projectName,
       projectPath,
+      githubUrl: derived,
       ...partial,
     };
   };
@@ -106,7 +123,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       actor: FIXTURE_ACTORS.enid,
       writtenBy: 'app',
       agentName: null,
-      headline: 'Pushed 1 commit to main',
+      headline: 'fix plan type',
       // `app`-written rows genuinely do not know why. Padding this with a
       // guess is exactly the thing the whole feature is trying not to do.
       why: null,
@@ -114,7 +131,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       asks: null,
       branch: 'main',
       status: 'broken',
-      commits: [{ sha: '77b0e14', message: 'wip' }],
+      commits: [{ sha: '77b0e14', message: 'fix plan type' }],
       files: [{ path: 'src/lib/plans.ts', added: 6, removed: 2 }],
       prNumber: null,
       buildError:
@@ -160,6 +177,22 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commits: [{ sha: '5f0c9aa', message: 'Remove launch banner from layout' }],
       files: [{ path: 'src/layouts/Base.astro', added: 0, removed: 4 }],
       prNumber: null,
+      buildError: null,
+    }),
+
+    update(DAY + 30 * MINUTE, {
+      actor: FIXTURE_ACTORS.theo,
+      writtenBy: 'app',
+      agentName: null,
+      headline: 'Merge pull request #139 from acme-studio/copy-tweaks',
+      why: null,
+      changes: [],
+      asks: null,
+      branch: 'main',
+      status: 'merged',
+      commits: [{ sha: '1d77e42', message: 'Merge pull request #139' }],
+      files: [{ path: 'src/content/copy.json', added: 31, removed: 28 }],
+      prNumber: 139,
       buildError: null,
     }),
 
@@ -248,6 +281,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 0,
       prNumber: null,
       doing: null,
+      usesShipStudio: true,
       isSelf: true,
     },
     {
@@ -259,6 +293,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 3,
       prNumber: 142,
       doing: 'Rebuilt the pricing tiers as a CSS grid',
+      usesShipStudio: true,
       isSelf: false,
     },
     {
@@ -270,6 +305,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 2,
       prNumber: 141,
       doing: 'Made the mobile nav usable one-handed',
+      usesShipStudio: true,
       isSelf: false,
     },
     {
@@ -281,6 +317,19 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 0,
       prNumber: null,
       doing: 'Pushed to main — the build is failing',
+      usesShipStudio: false,
+      isSelf: false,
+    },
+    {
+      actor: FIXTURE_ACTORS.theo,
+      role: 'write',
+      branch: 'main',
+      projectName,
+      lastPushedAt: at(DAY + 30 * MINUTE),
+      commitsAhead: 0,
+      prNumber: null,
+      doing: 'Merged #139 — copy tweaks',
+      usesShipStudio: false,
       isSelf: false,
     },
     {
@@ -292,6 +341,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 0,
       prNumber: null,
       doing: 'Pulled the launch banner until legal sign-off',
+      usesShipStudio: true,
       isSelf: false,
     },
   ];
@@ -419,5 +469,6 @@ export function buildIncomingUpdate(
     files: [{ path: 'src/data/testimonials.ts', added: 11, removed: 9 }],
     prNumber: null,
     buildError: null,
+    githubUrl: `https://github.com/acme-studio/${projectName}/commit/f19d3c0`,
   };
 }

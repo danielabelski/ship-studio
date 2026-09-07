@@ -18,6 +18,7 @@
 import { BranchIcon, CollaboratorsIcon, PullRequestIcon } from '@/components/icons';
 import { EmptyState } from '../primitives/EmptyState';
 import { TeamAvatar } from './TeamAvatar';
+import { TeamCoverageComplete, TeamGitHubOnlyBadge } from './TeamCoverageNote';
 import { formatAgo } from '../../lib/workflows';
 import { actorKey, type TeamMember } from '../../lib/team';
 
@@ -73,6 +74,7 @@ export function TeamPeoplePanel({ members, now, compact = false }: TeamPeoplePan
                   {member.actor.name}
                   {member.isSelf && <span className="team-person-you">you</span>}
                 </span>
+                {!member.usesShipStudio && !member.isSelf && <TeamGitHubOnlyBadge />}
                 {!compact && <span className="team-person-role">{ROLE_LABEL[member.role]}</span>}
                 <span className="team-person-when">
                   {member.lastPushedAt !== null ? formatAgo(member.lastPushedAt, now) : '—'}
@@ -109,6 +111,8 @@ export function TeamPeoplePanel({ members, now, compact = false }: TeamPeoplePan
           </li>
         ))}
       </ul>
+
+      <TeamCoverageComplete members={members} />
 
       {/* The honest caveat, said once, where the misreading would happen. */}
       <p className="team-people-footnote">

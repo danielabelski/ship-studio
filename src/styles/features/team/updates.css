@@ -129,19 +129,34 @@
   margin-top: var(--spacing-xs);
 }
 
-/* Arrived since you last looked. A left edge rather than a background, so a
-   run of new rows still reads as a list instead of one solid block. */
-.team-update.is-new {
-  border-left-color: var(--accent-active);
-  border-left-width: 2px;
+/* Arrived since you last looked.
+   A dot beside the name, the way unread mail has always done it — not a
+   coloured edge on the card. A 2px accent rail down one side of every unread
+   row draws a set of stripes the eye reads before it reads any of the writing,
+   and a dashed one (an unread thin row) is worse again. The dot sits inside
+   the row it belongs to and disappears the moment it stops being true. */
+.team-update-new-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-active);
+}
+
+/* Held in the layout when seen, so marking a row read does not shuffle the
+   header sideways underneath the pointer. */
+.team-update-new-dot.is-seen {
+  background: none;
 }
 
 /* Ship Studio saw a push and no agent left a summary, so the row has nothing
-   to say beyond the fact. Drawn as the lesser thing it is — the visible gap
-   between this and an explained row is the argument for the skill. */
+   to say beyond the fact. Drawn as the lesser thing it is — but by weight
+   rather than by a dashed outline, which reads as broken rather than as quiet.
+   The card recedes to the panel surface and keeps a plain border. */
 .team-update.is-thin {
   background: none;
-  border-style: dashed;
+  border-color: var(--border-default);
+  padding-block: var(--spacing-sm);
 }
 
 .team-update-head {
@@ -151,9 +166,14 @@
   min-width: 0;
 }
 
+/* `center`, not `baseline`.
+   Baseline alignment lines up text, and the agent chip is not text — it is an
+   inline-flex box carrying an icon, whose baseline is its own last line box.
+   Against "Maya Reed" and "6m ago" that lifted "Claude Code" visibly above
+   both. Everything on this row is one line, so centring is the honest rule. */
 .team-update-who {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--spacing-xs);
   flex-wrap: wrap;
   min-width: 0;
@@ -269,28 +289,51 @@
   overflow-wrap: anywhere;
 }
 
-/* The only part of a card addressed to the reader. Given its own treatment
-   because a feed where everything looks urgent teaches people to skim it. */
+/* The only part of a card addressed to the reader, and the one thing on this
+   screen that is a request rather than a report.
+
+   Built as a quoted aside rather than a status banner: the tint is barely
+   there, the border carries the colour, and the label reads as a spoken phrase
+   in sentence case. The previous version shouted — a filled green block under
+   an uppercase, letter-spaced caption — which is the treatment an error
+   deserves, not a colleague asking you to glance at something. A feed where a
+   polite request looks like an alert is a feed people learn to skim. */
 .team-update-ask {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-3xs);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--spacing-3xs) var(--spacing-xs);
   margin: 0;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background: rgba(var(--accent-active-rgb), 0.08);
-  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: rgba(var(--accent-active-rgb), 0.03);
+  border: var(--border-width-default) solid rgba(var(--accent-active-rgb), 0.16);
+  border-radius: var(--radius-card);
   max-width: 76ch;
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-md);
-  line-height: var(--line-height-help);
+}
+
+/* Icon and label share the first row; the text starts under the label rather
+   than under the icon, so the block reads as a heading with a paragraph. */
+.team-update-ask-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--line-height-compact);
+  color: var(--accent-active);
 }
 
 .team-update-ask-label {
+  align-self: center;
   color: var(--accent-active);
-  font-size: var(--font-size-micro);
+  font-size: var(--font-size-body-sm);
   font-weight: var(--font-weight-label);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  line-height: var(--line-height-compact);
+}
+
+.team-update-ask-text {
+  grid-column: 2;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-reading);
 }
 
 .team-update-foot {
@@ -337,6 +380,14 @@
 
 .team-evidence-toggle:hover {
   color: var(--text-muted);
+}
+
+/* The counts read as one run with the label without this — "2 files+59−130".
+   A flex gap does not save you here: the label and the two counts are separate
+   items, but --spacing-3xs is 2px, which is not a word space. */
+.team-diff-add,
+.team-diff-del {
+  margin-left: var(--spacing-2xs);
 }
 
 .team-diff-add {
@@ -393,5 +444,138 @@
   overflow: hidden;
   color: var(--text-faint);
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------- rows GitHub gave us */
+
+/* Says what this row is and what it is missing, without apologising for it.
+   Muted, one size down, and above the evidence — read after the headline, so
+   the fact comes first and the caveat second. */
+.team-update-source-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2xs);
+  margin: 0;
+  max-width: 76ch;
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-help);
+}
+
+.team-update-source-note > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* On every card, not only the thin ones: GitHub is the one surface the whole
+   team can already see. A quiet text button in the footer rather than a filled
+   one — it is an escape hatch, not the card's purpose. */
+.team-github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: var(--font-size-body-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.team-github-link:hover {
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------ coverage / invite */
+
+/* Deliberately not a banner. It sits after the feed, states what is missing
+   and from whom, offers one action, and removes itself once nobody is
+   missing — see TeamCoverageNote for why that matters. */
+.team-coverage {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-recessed);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+
+.team-coverage-heads {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.team-coverage-heads > .team-avatar + .team-avatar {
+  margin-left: -6px;
+  box-shadow: 0 0 0 var(--border-width-default) var(--surface-recessed);
+}
+
+.team-coverage-text {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-help);
+}
+
+.team-coverage-text strong {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-label);
+}
+
+.team-coverage-invite {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  flex: none;
+  height: var(--control-height-compact);
+  padding: 0 var(--spacing-sm);
+  background: var(--button-surface-default);
+  border: var(--border-width-default) solid var(--button-border);
+  border-radius: var(--button-radius);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-body-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-interaction);
+}
+
+.team-coverage-invite:hover {
+  background: var(--button-surface-hover);
+  color: var(--text-primary);
+}
+
+.team-coverage-complete {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  margin: 0;
+  color: var(--accent-success);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-help);
+}
+
+/* Marks a teammate whose pushes arrive with no explanation attached. Stated as
+   a fact about where their work comes from, not as a fault. */
+.team-github-only {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  flex: none;
+  padding: var(--spacing-3xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: var(--text-faint);
+  font-size: var(--font-size-micro);
+  line-height: var(--line-height-compact);
   white-space: nowrap;
 }

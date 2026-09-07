@@ -29,6 +29,7 @@ import { DockablePanel } from '../primitives/DockablePanel';
 import { EmptyState } from '../primitives/EmptyState';
 import { IconButton } from '../primitives/IconButton';
 import { Tabs, TabsList, TabsTab } from '../primitives/Tabs';
+import { TeamCoverageNote } from './TeamCoverageNote';
 import { TeamPeoplePanel } from './TeamPeoplePanel';
 import { TeamThreadsPanel } from './TeamThreadsPanel';
 import { TeamUpdateCard } from './TeamUpdateCard';
@@ -146,6 +147,12 @@ export function TeamPanel({ hidden, onClose, now }: TeamPanelProps) {
                 </section>
               ))
             ))}
+
+          {/* Sits at the foot of the feed, after the thing it is about, rather
+              than at the top where it would be a banner in front of the work. */}
+          {tab === 'updates' && snapshot.updates.length > 0 && (
+            <TeamCoverageNote members={snapshot.members} repo={snapshot.sync.repo} />
+          )}
 
           {tab === 'people' && <TeamPeoplePanel members={snapshot.members} now={now} compact />}
 
