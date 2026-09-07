@@ -8,7 +8,6 @@ use tracing::{info, instrument, warn};
 
 use super::{
     get_current_branch_sync, git_has_any_changes, git_stage_and_commit, load_project_metadata,
-    save_project_metadata,
 };
 
 /// Get stash info for a project (if any auto-stash exists)
@@ -66,67 +65,6 @@ pub async fn stash_changes(project_path: String) -> Result<bool, CommandError> {
     // `git stash` with nothing to save exits 0 and prints "No local changes…".
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(!stdout.contains("No local changes"))
-}
-
-/// Manually apply and clear the auto-stash
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn apply_stash(project_path: String) -> Result<bool, CommandError> {
-    let validated_path = validate_project_path(&project_path)?;
-
-    // Same index.lock retry as stash_changes — popping rewrites the working
-    // tree and index (issue #820).
-    let pop_output = crate::utils::output_retrying_index_lock(|| {
-        crate::utils::git_command_in(&validated_path)?
-            .args(["stash", "pop"])
-            .output()
-            .map_err(CommandError::from)
-    })?;
-
-    if pop_output.status.success() {
-        // Clear stash info from metadata
-        let mut metadata = load_project_metadata(&validated_path);
-        metadata.stash_info = None;
-        if let Err(e) = save_project_metadata(&validated_path, &metadata) {
-            warn!("Failed to save project metadata after stash apply: {}", e);
-        }
-        // Invalidate status cache after applying stash
-        GIT_CACHE.invalidate_status(&project_path);
-        Ok(true)
-    } else {
-        let stderr = String::from_utf8_lossy(&pop_output.stderr);
-        Err((format!("Failed to apply stash: {stderr}")).into())
-    }
-}
-
-/// Drop the auto-stash without applying
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn drop_stash(project_path: String) -> Result<bool, CommandError> {
-    let validated_path = validate_project_path(&project_path)?;
-
-    // `stash drop` rewrites refs/stash, which takes the same lock family
-    // (issue #820).
-    let drop_output = crate::utils::output_retrying_index_lock(|| {
-        crate::utils::git_command_in(&validated_path)?
-            .args(["stash", "drop"])
-            .output()
-            .map_err(CommandError::from)
-    })?;
-
-    // Clear stash info from metadata regardless of drop success
-    let mut metadata = load_project_metadata(&validated_path);
-    metadata.stash_info = None;
-    if let Err(e) = save_project_metadata(&validated_path, &metadata) {
-        warn!("Failed to save project metadata after stash drop: {}", e);
-    }
-
-    if drop_output.status.success() {
-        Ok(true)
-    } else {
-        // Stash might already be gone, still clear metadata
-        Ok(false)
-    }
 }
 
 // ============ Backup Commands ============

@@ -91,7 +91,6 @@ pub fn running_since_map() -> HashMap<String, i64> {
 
 /// Workflow ids currently executing, so the UI can show them as running even in
 /// a window that didn't start them.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn running_workflow_ids() -> Result<Vec<String>, CommandError> {
     let guard = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());

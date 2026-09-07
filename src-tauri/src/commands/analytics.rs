@@ -312,10 +312,3 @@ pub fn set_analytics_enabled(enabled: bool) -> Result<(), CommandError> {
     debug!("Analytics enabled set to: {}", enabled);
     Ok(())
 }
-
-/// Get the anonymous device ID (useful for frontend to know the distinct_id)
-#[tauri::command]
-#[tracing::instrument]
-pub fn get_device_id_command() -> Result<String, CommandError> {
-    Ok(get_device_id())
-}

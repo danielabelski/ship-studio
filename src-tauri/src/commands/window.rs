@@ -5,8 +5,8 @@
 
 use crate::commands::setup::{read_app_state, write_app_state};
 use crate::errors::CommandError;
-use crate::types::{CompactModePreferences, WindowPosition};
-use tauri::{LogicalPosition, LogicalSize, Window};
+use crate::types::WindowPosition;
+use tauri::{LogicalSize, Window};
 
 /// Leading inset of the close button, matching AppKit's own placement for a
 /// standard titled window. That placement — not the one a 46pt custom titlebar
@@ -231,13 +231,6 @@ pub async fn set_always_on_top(window: Window, enabled: bool) -> Result<(), Comm
     Ok(())
 }
 
-/// Save compact mode window position
-#[tauri::command]
-#[tracing::instrument]
-pub async fn save_compact_position(x: i32, y: i32) -> Result<(), CommandError> {
-    save_compact_position_internal(x, y)
-}
-
 /// Internal helper to save position (used by both command and exit_compact_mode)
 fn save_compact_position_internal(x: i32, y: i32) -> Result<(), CommandError> {
     tracing::debug!("Saving compact position: ({}, {})", x, y);
@@ -246,68 +239,6 @@ fn save_compact_position_internal(x: i32, y: i32) -> Result<(), CommandError> {
     let compact_prefs = state.compact_mode.get_or_insert_with(Default::default);
     compact_prefs.position = Some(WindowPosition { x, y });
     write_app_state(&state)?;
-
-    Ok(())
-}
-
-/// Get current compact mode preferences
-#[tauri::command]
-#[tracing::instrument]
-pub async fn get_compact_preferences() -> Result<CompactModePreferences, CommandError> {
-    let state = read_app_state();
-    Ok(state.compact_mode.unwrap_or_default())
-}
-
-/// Set compact mode window size
-/// If height is provided, uses that; otherwise uses default
-#[tauri::command]
-#[tracing::instrument]
-pub async fn set_compact_expanded(
-    window: Window,
-    expanded: bool,
-    height: Option<f64>,
-) -> Result<(), CommandError> {
-    let final_height = height.unwrap_or(COMPACT_HEIGHT_DEFAULT);
-    tracing::debug!(
-        "Setting compact size: expanded={}, height={}",
-        expanded,
-        final_height
-    );
-
-    window
-        .set_size(LogicalSize::new(COMPACT_WIDTH, final_height))
-        .map_err(|e| format!("Failed to set window size: {e}"))?;
-
-    // Persist the preference
-    let mut state = read_app_state();
-    let compact_prefs = state.compact_mode.get_or_insert_with(Default::default);
-    compact_prefs.is_expanded = expanded;
-    write_app_state(&state)?;
-
-    Ok(())
-}
-
-/// Get current window position (for drag tracking)
-#[tauri::command]
-#[tracing::instrument]
-pub async fn get_window_position(window: Window) -> Result<WindowPosition, CommandError> {
-    let position = window
-        .outer_position()
-        .map_err(|e| format!("Failed to get window position: {e}"))?;
-
-    Ok(WindowPosition {
-        x: position.x,
-        y: position.y,
-    })
-}
-
-/// Set window position (for drag implementation)
-#[tauri::command]
-#[tracing::instrument]
-pub async fn set_window_position(window: Window, x: i32, y: i32) -> Result<(), CommandError> {
-    window
-        .set_position(LogicalPosition::new(x as f64, y as f64))
-        .map_err(|e| format!("Failed to set window position: {e}"))?;
 
     Ok(())
 }

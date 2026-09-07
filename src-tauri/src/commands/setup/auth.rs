@@ -238,23 +238,6 @@ pub fn cleanup_auth_processes_sync() -> u32 {
     count
 }
 
-/// Kill all tracked auth processes (Tauri command wrapper).
-///
-/// This is useful for cleanup when closing the app to prevent orphaned processes.
-/// Returns the number of processes that were killed.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn cleanup_auth_processes() -> Result<u32, CommandError> {
-    Ok(cleanup_auth_processes_sync())
-}
-
-/// Get the system CPU architecture (e.g., "aarch64" or "x86_64").
-#[tauri::command]
-#[tracing::instrument]
-pub fn get_system_arch() -> String {
-    std::env::consts::ARCH.to_string()
-}
-
 /// Download and install a specific app version (for downgrading/rewinding).
 ///
 /// On macOS: downloads the .tar.gz update bundle, extracts, and swaps the .app bundle.

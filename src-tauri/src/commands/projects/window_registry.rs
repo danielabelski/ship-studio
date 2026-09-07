@@ -108,20 +108,6 @@ pub async fn register_project_for_window(
     Ok(())
 }
 
-/// Unregisters the current window from the project registry.
-/// Called when a project window navigates back to the projects list.
-/// This allows the same project to be opened in a new window via "Open in New Window".
-#[tauri::command]
-#[tracing::instrument]
-pub async fn unregister_project_from_window(window_label: String) -> Result<(), CommandError> {
-    crate::state::unregister_window_by_label(&window_label);
-    tracing::info!(
-        "Unregistered project from window {} (user went back to projects)",
-        window_label
-    );
-    Ok(())
-}
-
 /// Check if a project is already open in another window.
 /// Returns the window label if open, or null if not.
 #[tauri::command]

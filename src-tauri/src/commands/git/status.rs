@@ -340,49 +340,6 @@ pub async fn get_branch_status(project_path: String) -> Result<BranchStatus, Com
     })
 }
 
-/// Reset local changes to match a remote branch (staging or main/production)
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn reset_to_branch(project_path: String, branch: String) -> Result<(), CommandError> {
-    let validated_path = validate_project_path(&project_path)?;
-
-    let remote_branch = match branch.as_str() {
-        "staging" => "origin/staging",
-        "production" | "main" => "origin/main",
-        _ => return Err(("Invalid branch. Use 'staging' or 'production'.".to_string()).into()),
-    };
-
-    // Fetch latest from remote first
-    let fetch = run_git_net(&["fetch", "origin"], &validated_path, "fetch origin").await?;
-
-    if !fetch.status.success() {
-        return Err("Failed to fetch from remote".to_string().into());
-    }
-
-    // Reset hard to the remote branch
-    let reset = crate::utils::git_command_in(&validated_path)?
-        .args(["reset", "--hard", remote_branch])
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if !reset.status.success() {
-        let stderr = String::from_utf8_lossy(&reset.stderr);
-        return Err((format!("Failed to reset: {stderr}")).into());
-    }
-
-    // Clean untracked files
-    let clean = crate::utils::git_command_in(&validated_path)?
-        .args(["clean", "-fd"])
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if !clean.status.success() {
-        warn!("git clean failed during reset");
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{git_status_failure_message, truncate_stderr};

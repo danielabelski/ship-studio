@@ -521,7 +521,6 @@ fn parse_adb_devices(stdout: &str) -> Vec<AndroidDevice> {
 
 /// List currently-connected, ready Android devices/emulators. Empty vec when none
 /// are running (or adb is absent); errors only on an unexpected adb failure.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn list_android_devices() -> Result<Vec<AndroidDevice>, CommandError> {
     let mut cmd = adb_command();

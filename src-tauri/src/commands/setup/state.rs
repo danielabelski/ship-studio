@@ -136,19 +136,6 @@ pub async fn get_default_host() -> Result<Option<String>, CommandError> {
     Ok(read_app_state().default_host)
 }
 
-/// Clear setup complete flag (for testing/reset)
-#[tauri::command]
-#[tracing::instrument]
-pub async fn reset_setup_state() -> Result<(), CommandError> {
-    // Read existing state to preserve other fields (e.g., compact_mode)
-    update_app_state(|state| {
-        state.setup_complete = false;
-        state.setup_completed_at = None;
-    })?;
-    tracing::info!("Setup state reset");
-    Ok(())
-}
-
 /// Get the default agent ID from persisted AppState.
 /// Returns None if not set (frontend should fall back to Claude Code).
 #[tauri::command]

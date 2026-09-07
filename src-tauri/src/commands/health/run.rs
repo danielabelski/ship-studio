@@ -170,33 +170,6 @@ pub async fn get_health_status(
     Ok(metadata.health)
 }
 
-/// Clear health check results for a project
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn clear_health_status(project_path: String) -> Result<(), CommandError> {
-    let validated_path = validate_project_path(&project_path)?;
-    let metadata_path = validated_path.join(".shipstudio").join("project.json");
-
-    if !metadata_path.exists() {
-        return Ok(());
-    }
-
-    let contents = std::fs::read_to_string(&metadata_path)
-        .map_err(|e| classify_fs_error("read health results", &metadata_path, &e))?;
-
-    let mut metadata: ProjectMetadata =
-        serde_json::from_str(&contents).map_err(|e| format!("Failed to parse metadata: {e}"))?;
-
-    metadata.health = None;
-
-    let contents = serde_json::to_string_pretty(&metadata)
-        .map_err(|e| format!("Failed to serialize metadata: {e}"))?;
-    std::fs::write(&metadata_path, contents)
-        .map_err(|e| classify_fs_error("write health results", &metadata_path, &e))?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

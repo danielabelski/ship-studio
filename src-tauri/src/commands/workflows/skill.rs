@@ -16,7 +16,6 @@
 //! unchanged version costs one string comparison.
 
 use crate::agent::{CLAUDE_CODE, CODEX};
-use crate::errors::CommandError;
 use serde::Serialize;
 use std::path::PathBuf;
 use tracing::{debug, warn};
@@ -230,13 +229,6 @@ fn write_skill_if_agent_present(dir: &std::path::Path, body: &str) -> std::io::R
     std::fs::write(&file, body)?;
     debug!(?file, "installed the workflows skill");
     Ok(true)
-}
-
-/// Install (or refresh) the skill and report where it landed.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn ensure_workflows_skill() -> Result<Vec<WorkflowsSkillStatus>, CommandError> {
-    Ok(install_workflows_skill())
 }
 
 #[cfg(test)]

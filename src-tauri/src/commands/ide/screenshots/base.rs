@@ -2,7 +2,6 @@
 
 use crate::errors::CommandError;
 use crate::utils::{validate_project_file_path, validate_project_path};
-use image::GenericImageView;
 
 /// Crop an image and save it to the project's screenshots folder
 /// Takes the source image path, crop bounds (x, y, width, height), and returns the saved path
@@ -77,72 +76,4 @@ pub async fn get_screenshot_base64(file_path: String) -> Result<String, CommandE
     let data = std::fs::read(&path).map_err(|e| format!("Failed to read screenshot: {e}"))?;
     let base64_data = base64::engine::general_purpose::STANDARD.encode(&data);
     Ok(format!("data:image/png;base64,{base64_data}"))
-}
-
-/// Compare two screenshot images to detect if we've hit the page bottom.
-/// When scrolling stops working (page bottom reached), the BOTTOM EDGE of both
-/// captures will be identical (same footer/content).
-/// This is more reliable than comparing the whole image.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn compare_screenshots(
-    path1: String,
-    path2: String,
-    _skip_header_pixels: u32, // kept for API compatibility
-) -> Result<bool, CommandError> {
-    // Both paths are screenshots this app wrote under the project; validate them
-    // so the command can't be pointed at arbitrary files (see
-    // [`get_screenshot_base64`]).
-    let path1 = validate_project_file_path(&path1)?;
-    let path2 = validate_project_file_path(&path2)?;
-
-    let img1 = image::open(&path1).map_err(|e| format!("Failed to open image 1: {e}"))?;
-    let img2 = image::open(&path2).map_err(|e| format!("Failed to open image 2: {e}"))?;
-
-    // Different dimensions = not similar
-    if img1.width() != img2.width() || img1.height() != img2.height() {
-        return Ok(false);
-    }
-
-    let width = img1.width();
-    let height = img1.height();
-
-    // Compare just the bottom 100 pixels of each image
-    // When we hit page bottom, both images will have the same footer
-    let bottom_region = 100.min(height / 4); // At most 25% of image height
-    let compare_start = height.saturating_sub(bottom_region);
-
-    // Sample every 20th pixel for accurate comparison
-    let sample_step = 20;
-    let mut matching = 0;
-    let mut total = 0;
-
-    for y in (compare_start..height).step_by(sample_step as usize) {
-        for x in (0..width).step_by(sample_step as usize) {
-            let p1 = img1.get_pixel(x, y);
-            let p2 = img2.get_pixel(x, y);
-            total += 1;
-            // Allow small differences due to compression artifacts
-            if (p1[0] as i32 - p2[0] as i32).abs() < 10
-                && (p1[1] as i32 - p2[1] as i32).abs() < 10
-                && (p1[2] as i32 - p2[2] as i32).abs() < 10
-            {
-                matching += 1;
-            }
-        }
-    }
-
-    // Bottom edges are the same if >95% of sampled pixels match
-    // This is strict because we're only comparing a small region
-    let is_similar = total > 0 && (matching * 100 / total) > 95;
-
-    tracing::debug!(
-        "Screenshot comparison: {}/{} pixels match ({}%) - {}",
-        matching,
-        total,
-        if total > 0 { matching * 100 / total } else { 0 },
-        if is_similar { "DUPLICATE" } else { "different" }
-    );
-
-    Ok(is_similar)
 }

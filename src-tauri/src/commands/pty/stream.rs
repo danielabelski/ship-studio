@@ -79,53 +79,6 @@ pub fn kill_window_pty_sync(window_label: &str) -> u32 {
     count
 }
 
-/// Kill all PTY processes owned by a specific window.
-///
-/// This is the preferred method for cleanup when switching projects in a window.
-/// It only kills PTYs belonging to the specified window, leaving other windows' PTYs intact.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn kill_window_pty(window_label: String) -> Result<u32, CommandError> {
-    let pids_to_kill: Vec<(u32, u32)> = {
-        let registry = PTY_REGISTRY.lock().map_err(|e| e.to_string())?;
-        registry
-            .iter()
-            .filter(|(_, info)| info.window_label == window_label)
-            .map(|(&id, info)| (id, info.pid))
-            .collect()
-    };
-
-    let count = pids_to_kill.len() as u32;
-    tracing::debug!(
-        "Killing {} PTY processes for window {}",
-        count,
-        window_label
-    );
-
-    for (id, pid) in &pids_to_kill {
-        #[cfg(unix)]
-        {
-            let _ = create_command("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
-        }
-
-        #[cfg(windows)]
-        {
-            let _ = create_command("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .output();
-        }
-
-        // Remove from registry
-        if let Ok(mut registry) = PTY_REGISTRY.lock() {
-            registry.remove(id);
-        }
-    }
-
-    Ok(count)
-}
-
 /// Kill all PTY processes associated with a specific project path (sync).
 ///
 /// Internal helper shared by the Tauri command and the sessions module.
@@ -184,27 +137,6 @@ pub fn get_project_pty_pids_internal(project_path: &str) -> Vec<u32> {
         .collect()
 }
 
-/// Kill all PTY processes associated with a specific project path.
-///
-/// Used by the background-sessions rail to suspend a pinned project's session
-/// without affecting other pinned projects sharing the same window. Only kills
-/// PTYs whose `project_path` matches; PTYs without a project_path are untouched.
-///
-/// Returns the number of PTYs killed.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn kill_project_pty(project_path: String) -> Result<u32, CommandError> {
-    Ok(kill_project_pty_internal(&project_path))
-}
-
-/// Return the PIDs of all PTYs associated with a project. Used for memory
-/// queries and process-running checks. Returns an empty vec if no PTYs match.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn get_project_pty_pids(project_path: String) -> Result<Vec<u32>, CommandError> {
-    Ok(get_project_pty_pids_internal(&project_path))
-}
-
 /// Kill all tracked PTY processes (sync version, all windows).
 ///
 /// App-exit-only: the `RunEvent::Exit` hook can't await, and the quit path
@@ -240,89 +172,6 @@ pub fn kill_all_pty_sync() -> u32 {
     }
 
     pids.len() as u32
-}
-
-/// Kill all tracked PTY processes (all windows).
-///
-/// WARNING: This kills PTYs across ALL windows. Use `kill_window_pty` instead
-/// for per-window cleanup. This should only be used during app shutdown.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn kill_all_pty() -> Result<u32, CommandError> {
-    let pids: Vec<(u32, u32)> = {
-        let registry = PTY_REGISTRY.lock().map_err(|e| e.to_string())?;
-        registry.iter().map(|(&id, info)| (id, info.pid)).collect()
-    };
-
-    let count = pids.len() as u32;
-    tracing::debug!("Killing all {} PTY processes", count);
-
-    for (_id, pid) in pids {
-        #[cfg(unix)]
-        {
-            let _ = create_command("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
-        }
-
-        #[cfg(windows)]
-        {
-            let _ = create_command("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .output();
-        }
-    }
-
-    // Clear the registry
-    if let Ok(mut registry) = PTY_REGISTRY.lock() {
-        registry.clear();
-    }
-
-    Ok(count)
-}
-
-/// Clean up orphaned agent and dev server processes.
-///
-/// This kills any agent or next-server processes that have become orphaned
-/// (parent PID is 1, meaning their parent process died).
-#[tauri::command]
-#[tracing::instrument]
-pub async fn cleanup_orphaned_processes() -> Result<(), CommandError> {
-    #[cfg(unix)]
-    {
-        // Kill orphaned processes for ALL agents (not just the active one)
-        for agent in crate::agent::ALL_AGENTS {
-            let kill_script = format!(
-                r#"
-                    for pid in $(pgrep -x {} 2>/dev/null); do
-                        ppid=$(ps -o ppid= -p $pid 2>/dev/null | tr -d ' ')
-                        if [ "$ppid" = "1" ]; then
-                            kill $pid 2>/dev/null
-                        fi
-                    done
-                "#,
-                agent.process_name
-            );
-            let _ = create_command("sh").args(["-c", &kill_script]).output();
-        }
-
-        // Also kill orphaned node processes running next-server (from dev server)
-        let _ = create_command("sh")
-            .args([
-                "-c",
-                r#"
-                for pid in $(pgrep -f 'next-server' 2>/dev/null); do
-                    ppid=$(ps -o ppid= -p $pid 2>/dev/null | tr -d ' ')
-                    if [ "$ppid" = "1" ]; then
-                        kill $pid 2>/dev/null
-                    fi
-                done
-            "#,
-            ])
-            .output();
-    }
-
-    Ok(())
 }
 
 /// Kill any process listening on a specific port

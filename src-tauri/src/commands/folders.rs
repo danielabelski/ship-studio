@@ -228,60 +228,6 @@ pub async fn delete_folder(folder_id: String) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// Add a project to a folder
-#[tauri::command]
-#[tracing::instrument(skip(folder_id, project_path), fields(folder_id = %folder_id, project = %project_path))]
-pub async fn add_project_to_folder(
-    folder_id: String,
-    project_path: String,
-) -> Result<(), CommandError> {
-    let mut config = load_folder_config()?;
-
-    // First, remove the project from any existing folder
-    for folder in &mut config.folders {
-        folder.project_paths.retain(|p| p != &project_path);
-    }
-
-    // Add to the target folder
-    let folder = config
-        .folders
-        .iter_mut()
-        .find(|f| f.id == folder_id)
-        .ok_or("Folder not found")?;
-
-    if !folder.project_paths.contains(&project_path) {
-        folder.project_paths.push(project_path);
-        folder.updated_at = now_ms();
-    }
-
-    save_folder_config(&config)?;
-
-    Ok(())
-}
-
-/// Remove a project from a folder
-#[tauri::command]
-#[tracing::instrument(skip(folder_id, project_path), fields(folder_id = %folder_id, project = %project_path))]
-pub async fn remove_project_from_folder(
-    folder_id: String,
-    project_path: String,
-) -> Result<(), CommandError> {
-    let mut config = load_folder_config()?;
-
-    let folder = config
-        .folders
-        .iter_mut()
-        .find(|f| f.id == folder_id)
-        .ok_or("Folder not found")?;
-
-    folder.project_paths.retain(|p| p != &project_path);
-    folder.updated_at = now_ms();
-
-    save_folder_config(&config)?;
-
-    Ok(())
-}
-
 /// Move a project to a folder (or remove from all folders if folder_id is None)
 #[tauri::command]
 #[tracing::instrument(skip_all, fields(project = %project_path))]
@@ -311,21 +257,6 @@ pub async fn move_project_to_folder(
     save_folder_config(&config)?;
 
     Ok(())
-}
-
-/// Get the folder ID for a project (if any)
-#[tauri::command]
-#[tracing::instrument(skip(project_path), fields(project = %project_path))]
-pub async fn get_project_folder(project_path: String) -> Result<Option<String>, CommandError> {
-    let config = load_folder_config()?;
-
-    for folder in config.folders {
-        if folder.project_paths.contains(&project_path) {
-            return Ok(Some(folder.id));
-        }
-    }
-
-    Ok(None)
 }
 
 /// Get all project paths that are in folders (used to filter unfiled projects)
