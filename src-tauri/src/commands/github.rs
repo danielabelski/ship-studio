@@ -864,6 +864,26 @@ pub(crate) fn gh_config_error(stderr: &str) -> Option<CommandError> {
     })
 }
 
+/// gh's passthrough of a GitHub GraphQL permission error — "GraphQL:
+/// Resource not accessible by personal access token (repository.pullRequests)"
+/// — the configured token is authenticated (`gh auth status` can show it as
+/// signed in) but lacks the scope/permission to read the requested field. A
+/// fine-grained PAT or a classic PAT without the `repo` scope is the usual
+/// cause. Distinct from `gh_auth_error`'s "no credential at all" / "credential
+/// rejected outright" cases — here GitHub accepted the token but refused this
+/// specific field, so the fix is different (check scopes, not sign in again).
+/// A by-design refusal with a user-side fix, not a malfunction (issue #880).
+pub(crate) fn gh_permission_error(stderr: &str) -> Option<CommandError> {
+    let s = stderr.to_lowercase();
+    (s.contains("resource not accessible by") || s.contains("personal access token")).then(|| {
+        CommandError::expected(
+            "Your GitHub token doesn't have permission to do this for this repository. Check \
+             the token's scopes (it needs `repo`/pull request access), or reconnect GitHub, then \
+             try again.",
+        )
+    })
+}
+
 /// gh (a Go binary) crashing with a Go runtime panic/fatal error — stderr is
 /// the runtime's full crash dump ("fatal error: …\n\nruntime stack:\n…" or
 /// "panic: …\n\ngoroutine N [running]:\n…"), dozens of stack-trace lines that
@@ -958,6 +978,7 @@ pub(crate) fn gh_common_error(stderr: &str) -> Option<CommandError> {
         .or_else(|| gh_malformed_request_error(stderr))
         .or_else(|| gh_server_error(stderr))
         .or_else(|| gh_config_error(stderr))
+        .or_else(|| gh_permission_error(stderr))
         // Before gh_crash_error: a wrong-binary crash needs its own remedy,
         // not "reinstalling the GitHub CLI may help" (issue #737).
         .or_else(|| gh_shadowed_binary_error(stderr))
@@ -1139,7 +1160,12 @@ fn preferred_package_manager(path: &Path) -> Option<String> {
     if path.join("yarn.lock").exists() {
         return Some("yarn".to_string());
     }
-    if path.join("bun.lockb").exists() {
+    // Both spellings. Bun wrote a binary `bun.lockb` until 1.2, which made
+    // `bun.lock` (text, reviewable in a diff) the default — so checking only
+    // the old name misses every project bun has locked since. This ran `npm
+    // install` on them, which is the one package manager the project is not
+    // set up for. `health/mod.rs` already checked both; these two disagreed.
+    if path.join("bun.lockb").exists() || path.join("bun.lock").exists() {
         return Some("bun".to_string());
     }
 
@@ -1777,6 +1803,40 @@ mod tests {
         assert!(gh_config_error("").is_none());
     }
 
+    // Issue #880: a token that's authenticated but lacks the scope to read a
+    // specific GraphQL field — distinct from gh_auth_error's "no credential"
+    // / "credential rejected" cases.
+    #[test]
+    fn gh_permission_error_classifies_graphql_scope_denial_as_expected() {
+        let stderr =
+            "GraphQL: Resource not accessible by personal access token (repository.pullRequests)";
+        let err = gh_permission_error(stderr).expect("should classify as expected");
+        assert!(matches!(err, CommandError::Expected { .. }));
+        let msg = err.to_string();
+        assert!(msg.contains("permission"), "got: {msg}");
+        assert!(
+            !msg.contains("GraphQL"),
+            "should not leak raw gh wording, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn gh_permission_error_ignores_unrelated_stderr() {
+        assert!(gh_permission_error("dial tcp: connection refused").is_none());
+        assert!(gh_permission_error("").is_none());
+    }
+
+    // gh_common_error is the shared fallthrough every PR command
+    // (list/create/merge/checkout/close) funnels through — the classifier
+    // must be reachable from there, not just directly.
+    #[test]
+    fn gh_common_error_covers_graphql_permission_denial() {
+        let stderr =
+            "GraphQL: Resource not accessible by personal access token (repository.pullRequests)";
+        let err = gh_common_error(stderr).expect("gh_common_error should classify it");
+        assert!(matches!(err, CommandError::Expected { .. }));
+    }
+
     // The #638 shape: git falling back to an interactive credential prompt in
     // a tty-less GUI process — an auth-setup state, not an app bug.
     #[test]
@@ -1819,6 +1879,14 @@ mod tests {
                 Some("yarn")
             );
             let dir = project(&[("bun.lockb", "")]);
+            assert_eq!(
+                preferred_package_manager(dir.path()).as_deref(),
+                Some("bun")
+            );
+            // Bun 1.2 replaced the binary lockfile with a text one and made it
+            // the default. Only `bun.lockb` was checked here, so anything bun
+            // has locked since got an npm install it was never set up for.
+            let dir = project(&[("bun.lock", "")]);
             assert_eq!(
                 preferred_package_manager(dir.path()).as_deref(),
                 Some("bun")

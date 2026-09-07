@@ -127,8 +127,8 @@
   border: none;
   background: none;
   font-family: inherit;
-  font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-micro);
+  font-size: var(--canvas-label-font-size);
+  letter-spacing: var(--canvas-label-tracking);
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -155,23 +155,45 @@
 }
 
 .preview-canvas-label-width {
+  font-size: var(--canvas-label-dim-font-size);
   color: var(--text-faint);
 }
 
 /* The active frame's border. Drawn in the overlay so it stays 1px at any zoom
    instead of thinning out with the scale transform. It also hosts the host-side
    editor chrome (the structural-edit toolbar), which is positioned from the
-   frame's own coordinates scaled into screen space. */
+   frame's own coordinates scaled into screen space.
+
+   An `outline`, not a `border`, so it sits OUTSIDE the frame: a border is drawn
+   inside the box, over the page's own outermost pixels, and the point of this
+   surface is to show what the design looks like. An outline is also outside
+   layout entirely, so the toolbar and comment pins inside this box now start at
+   the frame's true top-left instead of a pixel in from it, and nothing about
+   hit-testing changes (this layer is click-through either way). */
 .preview-canvas-outline {
   position: relative;
   flex: 1;
-  border: 1px solid var(--accent-active);
+  outline: 1px solid var(--accent-active);
+  outline-offset: var(--spacing-2xs);
 }
 
 /* The overlay layer is click-through so the active frame stays interactive;
    anything deliberately placed in it takes its clicks back. */
 .preview-canvas-outline > * {
   pointer-events: auto;
+}
+
+/* …except the comment layer, which is not a piece of chrome but a full-bleed
+   layer over the whole frame (`inset: 0`). It sets `pointer-events: none` at
+   equal specificity to the rule above, so which one won came down to bundle
+   order — and this file loads later. That made the invisible layer eat every
+   click meant for the page, so on a breakpoint canvas an element could never
+   be picked and a comment could never be authored, while pins from comments
+   made in single-frame mode still rendered and still opened. The exception
+   belongs here, beside the blanket rule that caused it. Its pins and cards
+   take their own clicks back in canvas-comments.css. */
+.preview-canvas-outline > .canvas-comment-layer {
+  pointer-events: none;
 }
 
 /* Inactive frames sit behind a transparent target: one click makes the frame

@@ -16,20 +16,17 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   DashboardProject,
-  getDashboardProjects,
   setHideMainBranchWarning,
-  getProjectThumbnail,
   uploadProjectThumbnail,
   renameProject,
   exportProjectAsTemplate,
 } from '../../lib/project';
-import { asCommandError, formatCommandError, isProjectFolderGoneError } from '../../lib/errors';
+import { asCommandError, formatCommandError } from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import { trackEvent, trackError } from '../../lib/analytics';
 import {
   FolderInfo,
   Folder,
-  listFolders,
   createFolder,
   renameFolder,
   deleteFolder,
@@ -51,11 +48,12 @@ import { MoveFolderModal } from './MoveFolderModal';
 import { MoveWorkspaceModal } from './MoveWorkspaceModal';
 import { SettingsModal } from './SettingsModal';
 import { ProjectActionConfirmModal } from './ProjectActionConfirmModal';
+import { ProjectListStatus } from './ProjectListStatus';
+import { useProjectListData } from './useProjectListData';
 import { ProjectBulkActionsBar } from './ProjectBulkActionsBar';
 import { ProjectBulkActionConfirm } from './ProjectBulkActionConfirm';
 import { DashboardPreferencesCard } from './DashboardPreferencesCard';
 import { DashboardCommunityBanner } from './DashboardCommunityBanner';
-import { Spinner } from '../primitives/Spinner';
 import { GitHubCalendar } from './GitHubCalendar';
 import { useModal } from '../../contexts/ModalContext';
 import { useDashboardVisibility } from '../../hooks/useDashboardVisibility';
@@ -73,12 +71,6 @@ interface Project {
   name: string;
   path: string;
   thumbnail: string | null;
-}
-
-/** Dashboard project with loaded thumbnail data */
-interface ProjectWithThumbnail extends DashboardProject {
-  /** Base64-encoded thumbnail image data */
-  thumbnailData: string | null;
 }
 
 /** Available sort options for the project list */
@@ -132,19 +124,26 @@ export function ProjectList({
   onTogglePin,
   onSwitchAccount,
 }: ProjectListProps) {
-  const [projects, setProjects] = useState<ProjectWithThumbnail[]>([]);
   /** Hidden <input type="file"> reused across cards. The current upload
    *  target lives in a ref (not state) so the change handler reads the
    *  freshest path even if the user clicks fast through several cards. */
   const thumbnailInputRef = useRef<HTMLInputElement>(null);
   const thumbnailTargetPathRef = useRef<string | null>(null);
-  const [folders, setFolders] = useState<FolderInfo[]>([]);
-  const [filedPaths, setFiledPaths] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
   const { showToast } = useOptionalToast();
   // Drives a reload whenever the active workspace changes (see the load effect).
   const { activeAccount, accounts } = useActiveAccount();
   const activeAccountId = activeAccount?.id;
+  const {
+    projects,
+    setProjects,
+    folders,
+    filedPaths,
+    loading,
+    loadError,
+    loadProjects,
+    loadFolders,
+    loadAll,
+  } = useProjectListData(activeAccountId);
   const hasMultipleWorkspaces = accounts.length > 1;
   const [renameTarget, setRenameTarget] = useState<DashboardProject | null>(null);
 
@@ -192,83 +191,6 @@ export function ProjectList({
   const [projectViewMode, setProjectViewMode] =
     useState<ProjectViewMode>(getInitialProjectViewMode);
 
-  // Monotonic token so a superseded loadAll() (e.g. the list fetched for the
-  // old workspace right before a switch) neither applies its stale results nor
-  // clears the loading state — preventing an empty-state flash mid-switch.
-  // Only loadAll() passes a seq; bare loadProjects() refreshes apply
-  // unconditionally and intentionally don't touch the token or the spinner.
-  const loadSeqRef = useRef(0);
-
-  const loadProjects = async (seq?: number) => {
-    try {
-      const projectList = await getDashboardProjects();
-
-      // Load thumbnails for each project
-      const projectsWithThumbnails = await Promise.all(
-        projectList.map(async (project) => {
-          let thumbnailData: string | null = null;
-          if (project.thumbnail) {
-            try {
-              thumbnailData = await getProjectThumbnail(project.path);
-            } catch (e) {
-              // `get_project_thumbnail` rejects with a plain CommandError
-              // object (not an Error instance) — String() renders it as
-              // "[object Object]" (issue #685). A gone project folder is a
-              // by-design Expected state (canonicalize_tagged), not a bug:
-              // warn locally instead of auto-filing a report.
-              const message = formatCommandError(asCommandError(e));
-              if (isProjectFolderGoneError(e)) {
-                logger.warn('Thumbnail unavailable — project folder no longer exists', {
-                  error: message,
-                  projectName: project.name,
-                });
-              } else {
-                logger.error('Failed to load thumbnail', {
-                  error: message,
-                  projectName: project.name,
-                });
-              }
-            }
-          }
-          return { ...project, thumbnailData };
-        })
-      );
-
-      // A seq'd load (from loadAll) is ignored if a newer one superseded it;
-      // a bare refresh (no seq) always applies.
-      if (seq === undefined || seq === loadSeqRef.current) {
-        setProjects(projectsWithThumbnails);
-      }
-    } catch (error) {
-      logger.error('Failed to load projects', {
-        error: formatCommandError(asCommandError(error)),
-      });
-    }
-  };
-
-  const loadFolders = async () => {
-    try {
-      const folderList = await listFolders();
-      setFolders(folderList);
-
-      const paths = await getFiledProjectPaths();
-      setFiledPaths(new Set(paths));
-    } catch (error) {
-      logger.error('Failed to load folders', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-
-  const loadAll = useCallback(async () => {
-    const seq = ++loadSeqRef.current;
-    setLoading(true);
-    await Promise.all([loadProjects(seq), loadFolders()]);
-    // Only the latest load clears the spinner — a superseded load keeps it up
-    // so the list stays in its loading state until the current fetch resolves.
-    if (seq === loadSeqRef.current) setLoading(false);
-  }, []);
-
   // Notify parent when loading state changes
   useEffect(() => {
     onLoadingChange?.(loading);
@@ -288,15 +210,6 @@ export function ProjectList({
       setFolderProjectPaths([]);
     }
   }, [currentFolderId]);
-
-  // Load on mount AND whenever the active workspace changes. get_dashboard_projects
-  // is scoped to the active workspace server-side, so a switch changes the result
-  // set. Keying on the resolved active-account id (rather than a fired event) is
-  // deterministic — it reloads even when the switch happened while this list was
-  // unmounted (the picker is a separate view), which an event listener would miss.
-  useEffect(() => {
-    void loadAll();
-  }, [loadAll, activeAccountId]);
 
   // Get projects to display based on current folder
   const displayedProjects = useMemo(() => {
@@ -655,14 +568,13 @@ export function ProjectList({
             }
           />
 
-          {loading ? (
-            <div className="project-list-loading">
-              <Spinner size="lg" style={{ color: 'var(--text-muted)' }} />
-              <p className="text-style-body-medium">Loading projects...</p>
-              {cleanupStatus && (
-                <p className="project-list-cleanup-status text-style-control">{cleanupStatus}</p>
-              )}
-            </div>
+          {loading || loadError ? (
+            <ProjectListStatus
+              cleanupStatus={cleanupStatus}
+              loadError={loadError}
+              loading={loading}
+              onRetry={() => void loadAll()}
+            />
           ) : (
             <>
               {projectViewMode === 'list' && (

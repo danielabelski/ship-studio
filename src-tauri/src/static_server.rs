@@ -503,6 +503,14 @@ fn is_allocation_failure(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::OutOfMemory
 }
 
+/// `os error 1` (EPERM) reading a file on macOS is the well-known TCC
+/// (Privacy & Security → Files & Folders / Full Disk Access) denial
+/// signature — the same condition `classify_fs_error` in `utils.rs`
+/// classifies elsewhere. A permission grant, not a server bug (issue #879).
+fn is_macos_tcc_denial(e: &std::io::Error) -> bool {
+    cfg!(target_os = "macos") && e.raw_os_error() == Some(1)
+}
+
 /// Read a file from disk and return it as an HTTP response with the correct MIME type.
 async fn serve_file(file_path: &Path) -> Result<Response<ServerBody>, hyper::Error> {
     // Cap reads before allocating: a metadata length beyond the ceiling is
@@ -566,6 +574,21 @@ async fn serve_file(file_path: &Path) -> Result<Response<ServerBody>, hyper::Err
                     e.raw_os_error(),
                     e
                 );
+            } else if is_macos_tcc_denial(&e) {
+                // A macOS Full Disk Access / Files & Folders denial — a
+                // permission grant the user needs to make, not a server
+                // malfunction. Warn (not error) and tell the user what to do
+                // instead of a bare 500 (issue #879).
+                tracing::warn!(
+                    "[StaticServer] Permission denied reading {} (os error 1) — likely missing Full Disk Access / Files & Folders access on macOS",
+                    file_path.display()
+                );
+                let body = "<html><body><h1>403 - Permission Denied</h1><p>Ship Studio isn't allowed to read this project's files. Grant access in System Settings → Privacy & Security → Files & Folders (or Full Disk Access), then reload the preview.</p></body></html>";
+                return Ok(Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .header("Content-Type", "text/html; charset=utf-8")
+                    .body(full_body(Bytes::from(body)))
+                    .unwrap());
             } else {
                 tracing::error!(
                     "[StaticServer] Failed to read file {} (os error {:?}): {}",
@@ -619,6 +642,30 @@ mod tests {
         assert!(!is_fd_pressure(&std::io::Error::other(
             "Operation not permitted (os error 1)"
         )));
+    }
+
+    // ===== #879: macOS TCC/EPERM classification =====
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_tcc_denial_matches_eperm() {
+        assert!(is_macos_tcc_denial(&std::io::Error::from_raw_os_error(1)));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_tcc_denial_rejects_other_os_errors() {
+        // EACCES (13) and ENOENT (2) are not the TCC signature.
+        assert!(!is_macos_tcc_denial(&std::io::Error::from_raw_os_error(13)));
+        assert!(!is_macos_tcc_denial(&std::io::Error::from_raw_os_error(2)));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn macos_tcc_denial_is_always_false_off_macos() {
+        // os error 1 means something unrelated on other platforms — never
+        // classify it as the macOS TCC signature there.
+        assert!(!is_macos_tcc_denial(&std::io::Error::from_raw_os_error(1)));
     }
 
     #[tokio::test]

@@ -38,6 +38,9 @@ const DOT_TONES: Record<SectionState['kind'], DotTone> = {
   no_link: 'none',
   offline: 'muted',
   rate_limited: 'muted',
+  // No dot: there is no deployment to have a state, and a muted dot would
+  // still read as "we found something and it is idle".
+  unavailable: 'none',
 };
 
 /** States whose dot pulses because something is genuinely in motion. */

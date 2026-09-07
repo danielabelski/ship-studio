@@ -166,6 +166,49 @@ pub async fn has_conflicts(project_path: String) -> Result<bool, CommandError> {
     Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
 }
 
+/// Message used for the commit that finishes a Ship Studio conflict merge.
+const MERGE_COMMIT_MESSAGE: &str = "Resolved merge conflicts via Ship Studio";
+
+/// Run an index-mutating git invocation, retrying when it loses the
+/// `.git/index.lock` race.
+///
+/// Ship Studio runs git concurrently with the user's own agent terminal and
+/// with the background snapshot watcher's debounced `git stash create`, so
+/// losing the index lock is routine rather than exotic. Every other
+/// index-mutating call site in the app already retries
+/// (#377/#567/#597/#639/#860); conflict resolution was the last one that
+/// didn't, and it touches the working tree file-by-file while the watcher is
+/// firing on every one of those writes (issue #882).
+///
+/// `git commit` and `git merge --abort` also take `HEAD.lock` and
+/// `refs/heads/<branch>.lock`, which collide under exactly the same
+/// concurrency (issue #567) — `is_index_lock_contention` matches all of them.
+fn run_index_git(
+    dir: &std::path::Path,
+    args: &[&str],
+    label: &'static str,
+) -> Result<std::process::Output, CommandError> {
+    crate::utils::output_retrying_index_lock(|| {
+        let mut cmd = crate::utils::git_command_in(dir)?;
+        cmd.args(args);
+        crate::external_command::spawn_with_pressure_retry(label, || cmd.output())
+    })
+}
+
+/// Stage a pathspec (see [`run_index_git`] for why it retries).
+fn stage_path(dir: &std::path::Path, pathspec: &str) -> Result<std::process::Output, CommandError> {
+    run_index_git(dir, &["add", pathspec], "git add")
+}
+
+/// Create the merge commit. `complete_merge` stages and then commits, so it
+/// has two chances to lose the lock race in one flow (issue #882).
+fn commit_merge(
+    dir: &std::path::Path,
+    message: &str,
+) -> Result<std::process::Output, CommandError> {
+    run_index_git(dir, &["commit", "-m", message], "git commit")
+}
+
 /// Get information about all conflicted files in the repository
 #[tauri::command]
 #[tracing::instrument(skip(project_path), fields(project = %project_path))]
@@ -357,10 +400,7 @@ pub async fn resolve_conflict(
 
     // If no more conflicts, stage the file
     if !has_more_conflicts {
-        let add_output = crate::utils::git_command_in(&validated_path)?
-            .args(["add", &file_path])
-            .output()
-            .map_err(|e| e.to_string())?;
+        let add_output = stage_path(&validated_path, &file_path)?;
 
         if !add_output.status.success() {
             let stderr = String::from_utf8_lossy(&add_output.stderr);
@@ -377,10 +417,9 @@ pub async fn resolve_conflict(
 pub async fn abort_merge(project_path: String) -> Result<(), CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let output = crate::utils::git_command_in(&validated_path)?
-        .args(["merge", "--abort"])
-        .output()
-        .map_err(|e| e.to_string())?;
+    // `merge --abort` rewrites the index and working tree, so it races the
+    // snapshot watcher exactly like staging does (issue #882).
+    let output = run_index_git(&validated_path, &["merge", "--abort"], "git merge --abort")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -397,10 +436,7 @@ pub async fn complete_merge(project_path: String) -> Result<(), CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
     // Stage all changes
-    let add_output = crate::utils::git_command_in(&validated_path)?
-        .args(["add", "."])
-        .output()
-        .map_err(|e| e.to_string())?;
+    let add_output = stage_path(&validated_path, ".")?;
 
     if !add_output.status.success() {
         let stderr = String::from_utf8_lossy(&add_output.stderr);
@@ -411,10 +447,7 @@ pub async fn complete_merge(project_path: String) -> Result<(), CommandError> {
     let _ = ensure_git_identity(&validated_path);
 
     // Create the merge commit
-    let commit_output = crate::utils::git_command_in(&validated_path)?
-        .args(["commit", "-m", "Resolved merge conflicts via Ship Studio"])
-        .output()
-        .map_err(|e| e.to_string())?;
+    let commit_output = commit_merge(&validated_path, MERGE_COMMIT_MESSAGE)?;
 
     if !commit_output.status.success() {
         let stderr = String::from_utf8_lossy(&commit_output.stderr);
@@ -429,6 +462,124 @@ pub async fn complete_merge(project_path: String) -> Result<(), CommandError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #882: conflict resolution's index writers must survive losing
+    /// the `.git/index.lock` race, like every other git-mutating call site.
+    mod index_lock_contention {
+        use super::*;
+        use std::process::Command;
+
+        fn init_repo(dir: &std::path::Path) {
+            Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(dir)
+                .status()
+                .unwrap();
+            for (k, v) in [("user.name", "T"), ("user.email", "t@e.com")] {
+                Command::new("git")
+                    .args(["config", k, v])
+                    .current_dir(dir)
+                    .status()
+                    .unwrap();
+            }
+            std::fs::write(dir.join("a.txt"), "v1").unwrap();
+            Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(dir)
+                .status()
+                .unwrap();
+            Command::new("git")
+                .args(["commit", "-q", "-m", "init"])
+                .current_dir(dir)
+                .status()
+                .unwrap();
+        }
+
+        /// Hold `.git/index.lock` the way a concurrent git process would,
+        /// then release it after `hold` — long enough that the first attempt
+        /// must fail, short enough that a retrying caller wins.
+        fn hold_index_lock(
+            dir: &std::path::Path,
+            hold: std::time::Duration,
+        ) -> std::thread::JoinHandle<()> {
+            let lock = dir.join(".git").join("index.lock");
+            std::fs::write(&lock, b"").unwrap();
+            std::thread::spawn(move || {
+                std::thread::sleep(hold);
+                let _ = std::fs::remove_file(&lock);
+            })
+        }
+
+        #[test]
+        fn stage_path_survives_a_transient_index_lock() {
+            let tmp = tempfile::tempdir().unwrap();
+            init_repo(tmp.path());
+            std::fs::write(tmp.path().join("a.txt"), "resolved").unwrap();
+
+            let releaser = hold_index_lock(tmp.path(), std::time::Duration::from_millis(100));
+            let out = stage_path(tmp.path(), "a.txt").unwrap();
+            releaser.join().unwrap();
+
+            assert!(
+                out.status.success(),
+                "staging must retry past a transient index.lock, got: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let staged = Command::new("git")
+                .args(["diff", "--cached", "--name-only"])
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8_lossy(&staged.stdout).trim(), "a.txt");
+        }
+
+        #[test]
+        fn commit_merge_survives_a_transient_index_lock() {
+            let tmp = tempfile::tempdir().unwrap();
+            init_repo(tmp.path());
+            std::fs::write(tmp.path().join("a.txt"), "resolved").unwrap();
+            Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(tmp.path())
+                .status()
+                .unwrap();
+
+            let releaser = hold_index_lock(tmp.path(), std::time::Duration::from_millis(100));
+            let out = commit_merge(tmp.path(), MERGE_COMMIT_MESSAGE).unwrap();
+            releaser.join().unwrap();
+
+            assert!(
+                out.status.success(),
+                "commit must retry past a transient index.lock, got: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let subject = Command::new("git")
+                .args(["log", "-1", "--pretty=%s"])
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&subject.stdout).trim(),
+                MERGE_COMMIT_MESSAGE
+            );
+        }
+
+        /// A lock that never clears still surfaces as the caller's normal
+        /// failure — the retry must not swallow persistent contention.
+        #[test]
+        fn a_persistent_index_lock_still_fails() {
+            let tmp = tempfile::tempdir().unwrap();
+            init_repo(tmp.path());
+            std::fs::write(tmp.path().join("a.txt"), "resolved").unwrap();
+            std::fs::write(tmp.path().join(".git").join("index.lock"), b"").unwrap();
+
+            let out = stage_path(tmp.path(), "a.txt").unwrap();
+            assert!(!out.status.success());
+            assert!(crate::utils::is_index_lock_contention(
+                &String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
 
     fn parse(content: &str) -> (Vec<ConflictBlock>, String, String) {
         let all_lines: Vec<&str> = content.lines().collect();

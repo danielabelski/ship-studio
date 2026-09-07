@@ -44,6 +44,96 @@ describe('HostingUrls', () => {
     expect(screen.getByText('Deployment')).toBeInTheDocument();
   });
 
+  /**
+   * The adapters attach the project's production domain to whatever deployment
+   * the lookup returned, in whatever state it is in — so a failed build came
+   * back carrying it, and this component listed it under "Domain" directly
+   * beneath the word "Error". Clicking it showed a working site, because the
+   * *previous* deploy is still serving, which reads as confirmation that the
+   * push shipped.
+   *
+   * Every harness fixture for these states has `urls: {}`, so no screenshot
+   * could show it.
+   */
+  describe('a production deployment that is not serving', () => {
+    const notServing: Deployment['phase'][] = [
+      { phase: 'failed' },
+      { phase: 'canceled' },
+      { phase: 'skipped' },
+      { phase: 'building' },
+      { phase: 'queued' },
+      { phase: 'publishing' },
+      { phase: 'gated' },
+      { phase: 'unknown', raw: 'WHATEVER' },
+    ];
+
+    it.each(notServing)('does not offer the production domain when $phase', (phase) => {
+      render(
+        <HostingUrls
+          deployment={{ ...deployment({ site: SITE, deployment: BUILD }), phase }}
+          onOpen={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByText('Domain')).not.toBeInTheDocument();
+      expect(screen.queryByText(SITE.replace('https://', ''))).not.toBeInTheDocument();
+    });
+
+    it('still offers this build’s own permalink, which is honestly this commit', () => {
+      render(
+        <HostingUrls
+          deployment={{
+            ...deployment({ site: SITE, deployment: BUILD }),
+            phase: { phase: 'failed' },
+          }}
+          onOpen={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('Deployment')).toBeInTheDocument();
+    });
+
+    it('withholds the domain from a build that is ready but not yet promoted', () => {
+      // Vercel's `readySubstate: STAGED`. The build succeeded; it is just not
+      // what visitors are getting.
+      render(
+        <HostingUrls
+          deployment={{
+            ...deployment({ site: SITE, deployment: BUILD }),
+            detail: { detail: 'not_yet_promoted' },
+          }}
+          onOpen={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByText('Domain')).not.toBeInTheDocument();
+    });
+
+    it('offers the domain once the deployment really is the live one', () => {
+      render(
+        <HostingUrls deployment={deployment({ site: SITE, deployment: BUILD })} onOpen={vi.fn()} />
+      );
+
+      expect(screen.getByText('Domain')).toBeInTheDocument();
+    });
+
+    it('leaves a non-serving build with an address rather than none at all', () => {
+      // When the permalink and the domain coincide, suppressing the domain must
+      // not also suppress the permalink through the de-duplication check.
+      render(
+        <HostingUrls
+          deployment={{
+            ...deployment({ site: SITE, deployment: SITE }),
+            phase: { phase: 'failed' },
+          }}
+          onOpen={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('Deployment')).toBeInTheDocument();
+    });
+  });
+
   it('never offers the production domain from a preview', () => {
     // The change isn't there. Showing production beside a preview is an
     // invitation to click the wrong one and conclude the deploy did nothing.

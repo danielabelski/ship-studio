@@ -33,6 +33,30 @@ const announceCanvas = (frame: HTMLIFrameElement, on = true): void => {
 };
 
 /**
+ * Tell a frame what the canvas is scaled to.
+ *
+ * The frame draws the hover/selection outline INSIDE the page, so the canvas's
+ * scale transform is applied to it along with everything else and a 1.5px
+ * outline renders as 0.4px at 25%. Only the page knows where its own elements
+ * are, so that box cannot be hoisted into the unscaled overlay the way
+ * `.preview-canvas-outline` and the element toolbar are — it is given the scale
+ * and divides by it instead.
+ *
+ * Deliberately its own message rather than a field on `ss:canvas`: that one
+ * re-runs the frame's entire take-over and resets the page-height settling
+ * state, so sending it on every zoom step would re-open the height feedback
+ * loop. Scale changes only when a zoom SETTLES, so this is a handful of
+ * postMessages per gesture, not per event.
+ */
+const announceScale = (frame: HTMLIFrameElement, scale: number): void => {
+  try {
+    frame.contentWindow?.postMessage({ type: 'ss:canvasScale', scale }, '*');
+  } catch {
+    // Mid-navigation; the next announcement covers it.
+  }
+};
+
+/**
  * Tell a frame whether it is one nobody is working in — which is to say,
  * whether it is a background tab, because that is how it is then treated:
  * `hidden` is reported, and the JavaScript animation clock is suspended.
@@ -53,6 +77,10 @@ const announcePassive = (frame: HTMLIFrameElement, passive: boolean): void => {
 interface UseCanvasFramesParams {
   /** The interactive, editable frame. Every other frame is a review surface. */
   activeFrameId: string;
+  /** The canvas's live scale. A ref rather than a value because the scale is
+   *  derived from the frames' own measured page heights — it does not exist yet
+   *  at the point this hook is called. */
+  scaleRef: RefObject<number>;
   /** The active frame's element, or null while it isn't mounted. */
   onActiveFrameElement: (element: HTMLIFrameElement | null) => void;
   /** A wheel a frame had no scroll left to spend. Screen pixels, one call per
@@ -67,12 +95,15 @@ export interface CanvasFrames {
   registerFrame: (element: HTMLIFrameElement) => (() => void) | undefined;
   /** What to call from each frame's `load`. */
   handleFrameLoad: (element: HTMLIFrameElement) => void;
+  /** Re-tell every frame the canvas scale. Called when a zoom settles. */
+  announceCanvasScale: () => void;
   /** How long each page turned out to be, capped and keyed by frame id. */
   pageHeights: Record<string, number>;
 }
 
 export function useCanvasFrames({
   activeFrameId,
+  scaleRef,
   onActiveFrameElement,
   onPanBy,
 }: UseCanvasFramesParams): CanvasFrames {
@@ -111,10 +142,26 @@ export function useCanvasFrames({
   useEffect(() => {
     activeRef.current = activeFrameId;
   }, [activeFrameId]);
-  const handleFrameLoad = useCallback((element: HTMLIFrameElement) => {
-    announceCanvas(element);
-    announcePassive(element, element.dataset.frameId !== activeRef.current);
-  }, []);
+  const handleFrameLoad = useCallback(
+    (element: HTMLIFrameElement) => {
+      announceCanvas(element);
+      announceScale(element, scaleRef.current ?? 1);
+      announcePassive(element, element.dataset.frameId !== activeRef.current);
+    },
+    [scaleRef]
+  );
+
+  const announceCanvasScale = useCallback(() => {
+    for (const element of frameElsRef.current.values()) {
+      if (element) announceScale(element, scaleRef.current ?? 1);
+    }
+  }, [scaleRef]);
+
+  // A frame that has just registered has never been told the scale, and the
+  // canvas may well be zoomed already.
+  useEffect(() => {
+    announceCanvasScale();
+  }, [frameEpoch, announceCanvasScale]);
 
   // Which frame is live and which are holding still. Re-announced whenever the
   // active frame changes or a frame (re)mounts, because a reloaded document
@@ -162,5 +209,5 @@ export function useCanvasFrames({
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  return { frameElsRef, registerFrame, handleFrameLoad, pageHeights };
+  return { frameElsRef, registerFrame, handleFrameLoad, announceCanvasScale, pageHeights };
 }

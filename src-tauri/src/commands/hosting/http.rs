@@ -66,17 +66,64 @@ impl HostingHttpError {
     }
 }
 
-/// Render a reqwest error with its full source chain — `Display` alone only
-/// prints "error sending request for url (...)" while the actionable cause
-/// (DNS, connection refused, TLS, timeout) lives in `source()`.
+/// Render a reqwest error as its source chain, **without** the request URL.
+///
+/// reqwest's own `Display` is `error sending request for url (<the whole
+/// URL>)`, and every hosting URL carries the user's account: Cloudflare's is
+/// `/accounts/<account id>/pages/projects/<project>`, Vercel's is
+/// `?projectId=…&teamId=…&sha=…`. That string is not kept for a log — it is
+/// the `transport_error` the reducer folds into `offline`, which the Push
+/// popover prints verbatim on its third line. A DNS blip therefore put the
+/// user's Cloudflare account id on screen, which is the leak issue #787 filed
+/// against the old plugin.
+///
+/// It also said nothing. The actionable cause — DNS, connection refused, TLS,
+/// timeout — lives in `source()`, so dropping the wrapper loses no
+/// information and removes 100+ characters of URL from a 320px row.
+///
+/// When there is no source chain (a `Display`-only error), the URL is stripped
+/// from the parentheses instead of trusting that this shape can't carry one.
 pub fn describe_reqwest_error(e: &reqwest::Error) -> String {
-    let mut msg = e.to_string();
+    let mut parts: Vec<String> = Vec::new();
     let mut source = std::error::Error::source(e);
     while let Some(s) = source {
-        msg.push_str(&format!(": {s}"));
+        parts.push(s.to_string());
         source = s.source();
     }
-    msg
+
+    if parts.is_empty() {
+        return redact_urls(&e.to_string());
+    }
+    redact_urls(&parts.join(": "))
+}
+
+/// Remove anything that looks like a URL from a message we are about to show.
+///
+/// A belt-and-braces pass over text that came from a library: the source chain
+/// is not documented to be URL-free, and this text is user-facing.
+fn redact_urls(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+
+    while let Some(start) = rest.find("http") {
+        if !rest[start..].starts_with("http://") && !rest[start..].starts_with("https://") {
+            let (head, tail) = rest.split_at(start + 4);
+            out.push_str(head);
+            rest = tail;
+            continue;
+        }
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let end = after
+            .find(|c: char| c.is_whitespace() || c == ')' || c == '"')
+            .unwrap_or(after.len());
+        out.push_str("<url>");
+        rest = &after[end..];
+    }
+
+    out.push_str(rest);
+    // The wrapper leaves an empty "for url (<url>)" behind; tidy the artifact.
+    out.replace(" (<url>)", "").trim().to_string()
 }
 
 /// Parse a `Retry-After` header. Only the delta-seconds form is handled; the
@@ -162,6 +209,63 @@ pub async fn get_json<T: serde::de::DeserializeOwned>(
 mod tests {
     use super::*;
     use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+
+    /// The message this produces is not a log line — it becomes
+    /// `ProviderStatus::transport_error`, which the reducer folds into
+    /// `offline` and the Push popover prints verbatim. reqwest's `Display` is
+    /// `error sending request for url (<the whole URL>)`, and every hosting
+    /// URL identifies the user's account, so a DNS blip used to put a
+    /// Cloudflare account id (or a Vercel `projectId`/`teamId`) on screen.
+    ///
+    /// `.invalid` is reserved by RFC 2606 and never resolves, so this fails
+    /// the same way with or without a network.
+    #[tokio::test]
+    async fn a_transport_error_never_carries_the_request_url() {
+        let url = "https://api.cloudflare.invalid/client/v4/accounts/SECRETACCOUNT123\
+                   /pages/projects/my-private-project/deployments?per_page=25";
+        let Err(err) = CLIENT.get(url).bearer_auth("t").send().await else {
+            // A resolver that answers for `.invalid` would make this vacuous.
+            return;
+        };
+
+        let described = describe_reqwest_error(&err);
+
+        assert!(
+            !described.contains("SECRETACCOUNT123"),
+            "the account id reached user-facing copy: {described}"
+        );
+        assert!(
+            !described.contains("my-private-project"),
+            "the project name reached user-facing copy: {described}"
+        );
+        assert!(
+            !described.contains("api.cloudflare.invalid"),
+            "the request URL reached user-facing copy: {described}"
+        );
+        // Still says what went wrong — redaction must not empty the message.
+        assert!(
+            described.to_lowercase().contains("dns")
+                || described.to_lowercase().contains("connect"),
+            "the actionable cause was lost: {described}"
+        );
+    }
+
+    #[test]
+    fn redaction_keeps_the_sentence_and_drops_only_the_address() {
+        assert_eq!(
+            redact_urls("error sending request for url (https://api.vercel.com/v6?teamId=t_1)"),
+            "error sending request for url"
+        );
+        assert_eq!(
+            redact_urls("connection refused"),
+            "connection refused",
+            "a message with no URL must be left exactly as it is"
+        );
+        assert_eq!(
+            redact_urls("failed to reach https://api.netlify.com/sites/abc after 3 tries"),
+            "failed to reach <url> after 3 tries"
+        );
+    }
 
     #[test]
     fn retry_after_reads_delta_seconds() {

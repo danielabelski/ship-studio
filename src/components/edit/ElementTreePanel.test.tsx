@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ElementTreePanel } from './ElementTreePanel';
 
 describe('ElementTreePanel', () => {
@@ -96,5 +96,78 @@ describe('ElementTreePanel', () => {
     ).toBeInTheDocument();
     expect(panel.querySelector('[data-tree-id="2"] .ss-tree-tag')).not.toBeInTheDocument();
     expect(panel.querySelector('[data-tree-id="3"] .ss-tree-tag')).toHaveTextContent('main');
+  });
+
+  describe('right-click menu — Copy selector (#856)', () => {
+    const structure = {
+      selectAndRun: vi.fn((_nodeId: number, run: () => void) => run()),
+      insert: vi.fn(),
+      duplicate: vi.fn(),
+      remove: vi.fn(),
+    };
+
+    function renderTreeWithMenu() {
+      render(
+        <ElementTreePanel
+          tree={{
+            id: 1,
+            tag: 'body',
+            cls: '',
+            text: '',
+            children: [
+              {
+                id: 2,
+                tag: 'div',
+                cls: 'process-engagements__visual-collection',
+                text: '',
+                children: [],
+              },
+            ],
+          }}
+          truncated={false}
+          selectedId={null}
+          onSelect={vi.fn()}
+          onHover={vi.fn()}
+          projectPath="/tmp/project"
+          selectedSignature={null}
+          structure={structure}
+        />
+      );
+      const panel = screen.getByTestId('element-tree-panel');
+      const row = panel.querySelector('[data-tree-id="2"]');
+      if (!row) throw new Error('row not found');
+      fireEvent.contextMenu(row, { clientX: 40, clientY: 60 });
+    }
+
+    it('offers a "Copy selector" action that puts the row\'s tag+class on the clipboard', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+      renderTreeWithMenu();
+
+      // The menu renders through a portal to document.body — `screen` (not a
+      // local `container`) is what actually sees it. Confirm it's really
+      // there before trusting the click below reached anything.
+      const copyItem = screen.getByText('Copy selector');
+      expect(copyItem).toBeInTheDocument();
+
+      fireEvent.click(copyItem);
+
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith('div.process-engagements__visual-collection')
+      );
+    });
+
+    it('still offers Insert/Duplicate/Delete alongside Copy selector', () => {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: vi.fn().mockResolvedValue(undefined) },
+        configurable: true,
+      });
+      renderTreeWithMenu();
+
+      expect(screen.getByText('Insert element…')).toBeInTheDocument();
+      expect(screen.getByText('Duplicate')).toBeInTheDocument();
+      expect(screen.getByText('Delete')).toBeInTheDocument();
+    });
   });
 });

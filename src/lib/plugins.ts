@@ -359,6 +359,37 @@ export async function execPluginShell(
 }
 
 /**
+ * Check whether a file exists within the project, without shelling out.
+ *
+ * Cross-platform replacement for a plugin's `shell.exec('test', ['-f', path])`
+ * (or `ls`) — `test` isn't on PATH by default on Windows (issues #840, #693,
+ * #816). `path` is relative to the project root, matching `shell.exec`'s
+ * working directory.
+ */
+export async function execPluginFsExists(
+  pluginId: string,
+  projectPath: string,
+  path: string
+): Promise<boolean> {
+  return invoke<boolean>('plugin_fs_exists', { pluginId, projectPath, path });
+}
+
+/**
+ * Read a UTF-8 text file within the project, without shelling out.
+ *
+ * Cross-platform replacement for a plugin's `shell.exec('cat', [path])` —
+ * `cat` isn't on PATH by default on Windows (issues #777, #751). Resolves to
+ * `null` when the file doesn't exist rather than rejecting.
+ */
+export async function execPluginFsReadText(
+  pluginId: string,
+  projectPath: string,
+  path: string
+): Promise<string | null> {
+  return invoke<string | null>('plugin_fs_read_text', { pluginId, projectPath, path });
+}
+
+/**
  * Read plugin storage data for a project.
  */
 export async function readPluginStorage(

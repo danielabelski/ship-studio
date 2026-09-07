@@ -207,6 +207,22 @@ link or hand the editor an ambiguous target. Clicking one activates it *and*
 selects what you pointed at (`ss:selectAt`), rather than spending the click on
 activation. Clicking a frame's label brings it up to a workable size.
 
+Clicking the **background** does the opposite: it drops the element selection
+(`ss:deselect`), which until now had no way back to "nothing selected" short of
+turning edit mode off — and that also takes away the panel you were working in.
+A press only counts as a click if neither the pointer nor the camera moved more
+than 4px between down and up, because the same button on the same background
+starts a space-drag or a middle-drag.
+
+Two outlines are drawn on a canvas and they solve the same problem in opposite
+places. The **frame's** outline lives in the unscaled overlay, so it is 1px at
+any zoom for free; it is an `outline` with a positive offset rather than a
+border, so it sits outside the page instead of over its first pixel. The
+**element's** hover/selection outline cannot be hoisted there — only the page
+knows where its own elements are — so the frame is told the canvas scale
+(`ss:canvasScale`) and divides its border width by it, which lands on the same
+1.5 screen pixels at 25% and at 300%.
+
 The editor follows the active frame through `usePreviewEditorFrame`, which hands
 the editor hooks a ref whose object identity changes with the frame — that is
 what re-runs their setup. Focus mode passes the single preview iframe's own
@@ -216,12 +232,20 @@ stable ref, so nothing about it changes.
 
 Host → frame: `ss:canvas {on, vh}` — you are part of a canvas, this is the
 viewport height to resolve your units against, and hold still — `ss:passive
-{on}` — nobody is working in you, so you are a background tab — plus the
-editor's existing `ss:*` protocol and `ss:selectAt {x, y}`.
+{on}` — nobody is working in you, so you are a background tab — `ss:canvasScale
+{scale}` and `ss:deselect` (both below), plus the editor's existing `ss:*`
+protocol and `ss:selectAt {x, y}`.
 
 Frame → host: `ss:pageHeight {height}`, `ss:panBy {dx, dy}`, `ss:wheelZoom
-{deltaY, x, y}`, `ss:zoomBy {factor, x, y}` (WebKit pinch), and the editor's
-existing replies.
+{deltaY, x, y}`, `ss:zoomBy {factor, x, y}` (WebKit pinch), `ss:deselect`, and
+the editor's existing replies.
+
+`ss:canvasScale` is deliberately not a field on `ss:canvas`. That message
+re-runs the whole take-over — unit rewriting, root pinning — *and resets the
+page-height settling state*, so sending it on every zoom step would throw away
+the visited list and re-open the height feedback loop described above. The
+scale message only touches the outline widths, and the scale only changes when
+a zoom settles.
 
 A reported page height has to be **measured twice in a row** before it counts,
 it may **never be committed twice**, and it is measured from where the content

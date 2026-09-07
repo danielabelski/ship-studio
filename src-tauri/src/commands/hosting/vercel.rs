@@ -592,6 +592,37 @@ mod tests {
         }]}"#
     }
 
+    /// A cancellation arrives with no cause, and none is invented for it.
+    ///
+    /// A canceled build usually *was* replaced by a newer push, and saying so
+    /// would be the most useful sentence the row could carry. Vercel does not
+    /// report it — there is no field for it on the deployment — so the only
+    /// way to produce that sentence is to infer it from timing. The model
+    /// carried a `SupersededByNewer` qualifier that no adapter ever set, and a
+    /// harness fixture hand-fed it, which put "A newer push replaced it." into
+    /// a reviewed screenshot of a state no user can reach.
+    #[test]
+    fn a_canceled_deployment_is_given_no_reason_because_vercel_sends_none() {
+        let raw: RawDeployment = serde_json::from_str(
+            r#"{
+                "uid":"dpl_canceled",
+                "url":"acme-saas-abc123-native.vercel.app",
+                "readyState":"CANCELED","target":"production",
+                "createdAt":1757100000000,
+                "meta":{"githubCommitSha":"a0728a0","githubCommitRef":"main"}
+            }"#,
+        )
+        .unwrap();
+
+        let d = to_deployment(raw);
+
+        assert_eq!(d.phase, DeploymentPhase::Canceled);
+        assert_eq!(
+            d.detail, None,
+            "a qualifier here could only be guessed from timing"
+        );
+    }
+
     #[test]
     fn list_response_parses_into_the_shared_shape() {
         let list: RawList = serde_json::from_str(list_fixture()).unwrap();

@@ -55,7 +55,7 @@ pub struct ProjectInfo {
 }
 
 /// Enhanced project info for dashboard display
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct DashboardProject {
     pub name: String,
     pub path: String,
@@ -96,9 +96,19 @@ pub struct PageInfo {
 // read it, and its shape could not answer the question the hosting UI actually
 // asks — it carried no commit SHA, no provider, and no deployment id, so it
 // could not tell you whether *your* push went live. It was removed in schema
-// v4 in favour of `hosting` (see `commands::hosting::model`). Old files keep
-// the stale key on disk until their next write, which is harmless: unknown
-// fields are ignored on read.
+// v4 in favour of `hosting` (see `commands::hosting::model`).
+//
+// What happens to an existing v3 file, verified end to end by
+// `migrating_a_real_v3_file_keeps_everything_and_invents_nothing` in
+// `commands::projects::metadata`: it parses, `migrate()` stamps it v4, and
+// every other field survives. The `publish` key is **not** dropped — it is
+// caught by the `extra` catch-all below and written back verbatim, so it stays
+// on disk indefinitely rather than "until the next write". That is inert
+// today, because nothing in Rust or TypeScript reads it, but it is the reason
+// `publish` must never be reintroduced as a field name: a future struct member
+// with that name would silently inherit a dead deployment URL and state from
+// before the upgrade, which is exactly the "never assume data" failure v4 was
+// meant to end.
 
 /// Information about stashed changes from a branch switch
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -867,6 +877,10 @@ pub struct AppState {
     /// Defaults to false so existing users retain the classic two-row layout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compact_workspace_toolbar_enabled: Option<bool>,
+    /// Whether the selected element's DOM breadcrumb is shown in the preview.
+    /// Defaults to true so existing users retain the current preview layout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_breadcrumb_enabled: Option<bool>,
     /// Consent for automatic project-thumbnail capture. `None` = the user has
     /// never been asked (the in-app explainer is shown before the first
     /// auto-capture), `Some(true)` = allowed, `Some(false)` = opted out or a

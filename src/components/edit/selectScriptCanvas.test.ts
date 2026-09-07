@@ -86,3 +86,75 @@ it('remeasures late content after settling and shrinks again without idle pollin
   ).toHaveLength(count);
   post.mockRestore();
 });
+
+/** Every box the select layer draws: the hover box plus one per selected
+ *  element. They are the only `[data-ss-overlay]` divs on the page. */
+const overlayBoxes = () =>
+  Array.from(document.querySelectorAll<HTMLElement>('div[data-ss-overlay]'));
+
+it('keeps the selection outline 1.5 screen pixels at every canvas zoom', () => {
+  // The fixture itself has to be real: `?raw` has silently yielded an empty
+  // string before, and every assertion below would then pass on nothing.
+  expect(scriptJs).toContain('ss:canvasScale');
+
+  document.body.innerHTML = '<section class="hero"><p class="copy">Hi</p></section>';
+  window.dispatchEvent(new MessageEvent('message', { data: { type: 'ss:activate' } }));
+  document.querySelector('.copy')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+  const boxes = overlayBoxes();
+  // A guard, not decoration: with no box to measure, every width assertion
+  // below would iterate an empty set and pass.
+  expect(boxes.length).toBeGreaterThan(0);
+
+  // What must hold is the RENDERED width — the page sits inside the canvas's
+  // scale transform, so the border the user sees is `borderWidth x scale`.
+  const renderedWidths = (scale: number) => {
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'ss:canvasScale', scale } }));
+    return overlayBoxes().map((box) => Number.parseFloat(box.style.borderWidth) * scale);
+  };
+
+  expect(renderedWidths(0.25)).toEqual(boxes.map(() => 1.5));
+  expect(renderedWidths(3)).toEqual(boxes.map(() => 1.5));
+
+  // A box created AFTER the scale arrived is born at the right width too.
+  document.querySelector('.hero')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(overlayBoxes().map((box) => Number.parseFloat(box.style.borderWidth) * 3)).toEqual(
+    overlayBoxes().map(() => 1.5)
+  );
+
+  // Off the canvas there is no transform to cancel, so it is a plain 1.5px.
+  window.dispatchEvent(new MessageEvent('message', { data: { type: 'ss:canvas', on: false } }));
+  expect(overlayBoxes().map((box) => box.style.borderWidth)).toEqual(
+    overlayBoxes().map(() => '1.5px')
+  );
+});
+
+it('drops the selection and its boxes when the host says the canvas was clicked', () => {
+  document.body.innerHTML = '<section class="hero"><p class="copy">Hi</p></section>';
+  window.dispatchEvent(new MessageEvent('message', { data: { type: 'ss:activate' } }));
+  const copy = document.querySelector('.copy')!;
+  copy.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(overlayBoxes().filter((box) => box.style.display === 'block').length).toBeGreaterThan(0);
+  // The selection is live: a mutation aimed at it lands. Without this the
+  // "no longer lands" assertion below would pass on a selection that never
+  // worked in the first place.
+  window.dispatchEvent(
+    new MessageEvent('message', { data: { type: 'ss:mutate', className: 'copy selected' } })
+  );
+  expect(copy.getAttribute('class')).toBe('copy selected');
+
+  const post = vi.spyOn(window.parent, 'postMessage');
+  window.dispatchEvent(new MessageEvent('message', { data: { type: 'ss:deselect' } }));
+
+  // The boxes are the thing on screen, and the selection behind them is what
+  // an edit would land on: both have to go.
+  expect(overlayBoxes().filter((box) => box.style.display === 'block')).toEqual([]);
+  window.dispatchEvent(
+    new MessageEvent('message', { data: { type: 'ss:mutate', className: 'copy after' } })
+  );
+  expect(copy.getAttribute('class')).toBe('copy selected');
+  // And the host is told, so its panels, toolbar and tree let go at the same
+  // moment rather than describing an element nothing points at.
+  expect(post).toHaveBeenCalledWith({ type: 'ss:deselect' }, '*');
+  post.mockRestore();
+});

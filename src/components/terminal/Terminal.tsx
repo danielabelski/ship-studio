@@ -54,6 +54,10 @@ import { logger } from '../../lib/logger';
 import { asCommandError, formatCommandError } from '../../lib/errors';
 import { isResourcePressureError } from '../../lib/errorReporting';
 import { isPointInRect, dropPointToLogical } from '../../lib/dropTarget';
+import {
+  diagnoseZeroSizedContainer,
+  isLegitimatelyHiddenPane,
+} from '../../lib/containerVisibility';
 import { getTerminalGpuEnabled } from '../../lib/settings';
 import { attachedLibraryDirs } from '../../lib/attached-libraries';
 import { sanitizeTerminalTitle } from '../../lib/terminalTitle';
@@ -278,14 +282,24 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
             if (!cancelled) setIsReady(true);
           });
       } else if (elapsed > 10_000) {
-        // Safety: if container never gets dimensions after 10s, log and try anyway
-        logger.error('[Terminal] Container never got dimensions after 10s, forcing ready', {
-          agent: agent.id,
-          width: rect.width,
-          height: rect.height,
-          display: container.style.display,
-          parentDisplay: container.parentElement?.style.display,
-        });
+        // Safety: if container never gets dimensions after 10s, log and try
+        // anyway. A pane kept mounted in the background legitimately has no
+        // layout box yet (issue #863) — only a container that's actually in
+        // the visible layout tree and still zero-sized is a genuine stall
+        // worth auto-filing.
+        const diagnostics = diagnoseZeroSizedContainer(container);
+        const context = { agent: agent.id, width: rect.width, height: rect.height, ...diagnostics };
+        if (isLegitimatelyHiddenPane(diagnostics)) {
+          logger.warn(
+            '[Terminal] Container never got dimensions after 10s (pane is hidden), forcing ready',
+            context
+          );
+        } else {
+          logger.error(
+            '[Terminal] Container never got dimensions after 10s, forcing ready',
+            context
+          );
+        }
         void loadNerdFonts()
           .catch(() => {})
           .then(() => {

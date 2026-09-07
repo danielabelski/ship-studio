@@ -21,7 +21,13 @@ import { HostingRow } from './HostingRow';
 import { copyFor, BANNED_JARGON, titleFor } from '../../lib/hostingCopy';
 import type { Deployment, SectionState, SectionStateKind } from '../../lib/hosting';
 
-const ALL_KINDS: SectionStateKind[] = [
+/**
+ * Every state the row can render. Hand-written, so it is pinned to the union
+ * below — a `SectionStateKind` added without a line here would otherwise skip
+ * the geometry, budget and jargon checks silently, which is precisely how a
+ * state ships unlooked-at.
+ */
+const ALL_KINDS = [
   'checking',
   'not_pushed',
   'queued',
@@ -40,7 +46,15 @@ const ALL_KINDS: SectionStateKind[] = [
   'no_link',
   'offline',
   'rate_limited',
-];
+  'unavailable',
+] as const satisfies readonly SectionStateKind[];
+
+/**
+ * Fails to compile when a `SectionStateKind` is missing from `ALL_KINDS`,
+ * naming the missing member in the error.
+ */
+function assertEveryKindIsCovered<_Missing extends never>() {}
+assertEveryKindIsCovered<Exclude<SectionStateKind, (typeof ALL_KINDS)[number]>>();
 
 function deployment(): Deployment {
   return {
@@ -179,17 +193,17 @@ describe('hosting copy', () => {
     expect(skipped.hint).toContain('[skip ci] in commit message');
     expect(skipped.status).not.toContain('[skip ci]');
 
-    const canceled = copyFor(
+    const gated = copyFor(
       {
-        kind: 'canceled',
-        provider: 'vercel',
+        kind: 'gated',
+        provider: 'netlify',
         deployment: deployment(),
-        detail: { detail: 'superseded_by_newer' },
+        detail: { detail: 'awaiting_review', reason: "the author isn't a known contributor" },
       },
       'Fix the nav'
     );
-    expect(canceled.hint).toMatch(/newer push replaced it/);
-    expect(canceled.status).not.toMatch(/newer push/);
+    expect(gated.hint).toMatch(/known contributor/);
+    expect(gated.status).not.toMatch(/known contributor/);
   });
 
   it('never leaks provider jargon in any state', () => {

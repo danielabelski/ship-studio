@@ -87,6 +87,47 @@ function titleFor(deployment: Deployment): string {
   return deployment.commit_message?.trim() || deployment.commit_sha.slice(0, 7) || 'Deployment';
 }
 
+/**
+ * When this deployment was created, or nothing.
+ *
+ * `created_at` is `0` whenever the adapter could not read a timestamp —
+ * `iso_to_ms(...).unwrap_or(0)` on Cloudflare and Netlify, where it is an ISO
+ * string that has to parse, and `unwrap_or(0)` on Vercel. Passing that to
+ * `formatRelativeTime` turns "we don't know when" into a confident
+ * "20693 days ago". The Push popover's `when()` already guards this with a
+ * falsy check; this list did not.
+ */
+function createdAgo(deployment: Deployment): string | null {
+  return deployment.created_at > 0 ? formatRelativeTime(deployment.created_at) : null;
+}
+
+/**
+ * The address worth offering for a deployment, and what it honestly is.
+ *
+ * `urls.primary` is documented as "site if known, else this build" — but
+ * `list_recent` never fetches the project's domain for any provider, so in
+ * this panel it is *always* the per-build permalink. Labelling that "Open
+ * site" told the user they were about to visit their site; for a failed build
+ * it does not serve one, and for a preview it is somebody else's address.
+ *
+ * The domain is only named as the site when this deployment is the one
+ * actually serving it — the same rule `HostingUrls` applies in the popover.
+ */
+function addressFor(deployment: Deployment): { url: string; label: string } | null {
+  const serving =
+    deployment.environment === 'production' &&
+    deployment.phase.phase === 'ready' &&
+    deployment.detail?.detail !== 'not_yet_promoted';
+
+  if (serving && deployment.urls.site) {
+    return { url: deployment.urls.site, label: 'Open site' };
+  }
+  if (deployment.urls.deployment) {
+    return { url: deployment.urls.deployment, label: 'Open deployment' };
+  }
+  return null;
+}
+
 interface Props {
   projectPath: string;
 }
@@ -284,7 +325,7 @@ export function DeploymentsModal({ projectPath }: Props) {
                 </span>
                 <span className="deployments-item-meta text-style-hint">
                   {statusWord(deployment)}
-                  {` · ${formatRelativeTime(deployment.created_at)}`}
+                  {createdAgo(deployment) && ` · ${createdAgo(deployment)}`}
                   {deployment.environment === 'preview' && ' · Preview'}
                 </span>
               </span>
@@ -304,9 +345,9 @@ export function DeploymentsModal({ projectPath }: Props) {
                   )}
                 </div>
                 <div className="deployments-detail-actions">
-                  {selected.urls.primary && (
-                    <Button size="compact" onClick={() => open(selected.urls.primary)}>
-                      Open site
+                  {addressFor(selected) && (
+                    <Button size="compact" onClick={() => open(addressFor(selected)?.url)}>
+                      {addressFor(selected)?.label}
                     </Button>
                   )}
                   {selected.dashboard_url && (

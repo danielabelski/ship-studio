@@ -136,7 +136,19 @@ export function useCssEditor({ iframeRef, projectPath, enabled, onToast }: Param
       // SECURITY: only trust messages from the actual preview iframe.
       if (e.source !== iframeRef.current?.contentWindow) return;
       const d = e.data as { type?: string; signature?: ElementSignature; count?: number } | null;
-      if (!d || d.type !== 'ss:select' || !d.signature) return;
+      if (!d) return;
+      if (d.type === 'ss:deselect') {
+        // Dropped (a click on the canvas background): the panel is describing an
+        // element that is no longer pointed at.
+        selectedSigRef.current = null;
+        targetClassRef.current = null;
+        pseudoRef.current = null;
+        setTargetClassState(null);
+        setPseudoState(null);
+        setSelection(null);
+        return;
+      }
+      if (d.type !== 'ss:select' || !d.signature) return;
 
       const sig = d.signature;
       const instanceCount = d.count ?? 1;

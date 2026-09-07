@@ -77,6 +77,15 @@ import { kbd } from '../../lib/shortcuts';
  *  within this distance. */
 const MOUNT_WINDOW_THRESHOLD_PX = 120;
 
+/** How far a press may travel and still count as a click on the background.
+ *  A drag on the background moves the CAMERA (space-drag, middle-drag), so both
+ *  are measured: the camera because "the canvas moved" is the actual claim, and
+ *  the pointer because a drag that ran into the pan clamp moves the pointer
+ *  without moving the camera at all. Four pixels is the usual slop for
+ *  distinguishing a click from a drag — under a fingertip's wobble, well under
+ *  a deliberate push. */
+const BACKGROUND_CLICK_SLOP_PX = 4;
+
 /** `'fit'` recomputes on every resize; a number is an explicit zoom level. */
 export type CanvasZoom = 'fit' | number;
 
@@ -108,6 +117,11 @@ interface PreviewCanvasProps {
   /** The frame height the canvas settled on (unscaled canvas pixels), so host
    *  chrome can be clamped to the same box. */
   onStageHeightChange?: (height: number) => void;
+  /** The user clicked the canvas background — nothing on it. The canvas has no
+   *  opinion about what that means; the preview uses it to drop the element
+   *  selection, which otherwise has no way back to "nothing selected" short of
+   *  leaving edit mode. */
+  onBackgroundClick?: () => void;
   /** Host chrome drawn over the active frame — the structural-edit toolbar.
    *  Rendered in the overlay at the frame's screen position, and given the
    *  scale so it can map the frame's own coordinates into screen space. */
@@ -125,6 +139,7 @@ export function PreviewCanvas({
   onActivateFrame,
   onActiveFrameElement,
   onStageHeightChange,
+  onBackgroundClick,
   activeFrameOverlay,
 }: PreviewCanvasProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -163,11 +178,18 @@ export function PreviewCanvas({
     cameraRef.current.panBy(dx, dy);
   }, []);
 
-  const { frameElsRef, registerFrame, handleFrameLoad, pageHeights } = useCanvasFrames({
-    activeFrameId,
-    onActiveFrameElement,
-    onPanBy: panBy,
-  });
+  // The scale the frames are told about. It cannot be passed as a value: it is
+  // derived from the page heights this very hook reports, so it does not exist
+  // until further down this render. Mirrored below, once it does.
+  const scaleRef = useRef(1);
+
+  const { frameElsRef, registerFrame, handleFrameLoad, announceCanvasScale, pageHeights } =
+    useCanvasFrames({
+      activeFrameId,
+      scaleRef,
+      onActiveFrameElement,
+      onPanBy: panBy,
+    });
 
   // What each page turned out to be, once it had been laid out at that width.
   // The device height is only the starting guess and the floor: the canvas
@@ -191,6 +213,13 @@ export function PreviewCanvas({
 
   const fitted = fitScale(layout.contentWidth, viewport.width);
   const scale = isFit ? fitted : zoom;
+  // A LAYOUT effect, deliberately: `useCanvasFrames` announces the scale from a
+  // passive effect, and every layout effect in a commit runs before any passive
+  // one — so a frame that has just registered is told this render's scale
+  // rather than the last one's.
+  useLayoutEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
   // Room around the frames so the canvas can be pushed past its own content —
   // screen-space, so it doesn't change what has to fit at Fit, and constant
   // across a zoom (which keeps pointer anchoring honest).
@@ -392,6 +421,46 @@ export function PreviewCanvas({
     onPan: markUserMoved,
   });
 
+  // Frames draw their own hover/selection outline inside the page, where the
+  // scale transform gets at it. Told when a zoom settles, which is the only
+  // time `scale` changes.
+  useEffect(() => {
+    announceCanvasScale();
+  }, [scale, announceCanvasScale]);
+
+  // A press on the background, held until the release decides what it was. A
+  // drag is not a click: the same button and the same background start a
+  // space-drag or a middle-drag, and either would otherwise deselect every time
+  // the user pushed the canvas around.
+  const backgroundPressRef = useRef<{ x: number; y: number; camera: CameraPosition } | null>(null);
+  const handleCanvasMouseDown = useCallback(
+    (event: React.MouseEvent) => {
+      handlePanStart(event);
+      const onChrome = !!(event.target as Element | null)?.closest?.('.preview-canvas-chrome');
+      backgroundPressRef.current =
+        event.button === 0 && !spaceHeld && !onChrome
+          ? { x: event.clientX, y: event.clientY, camera: camera.read() }
+          : null;
+    },
+    [handlePanStart, spaceHeld, camera]
+  );
+  const handleCanvasMouseUp = useCallback(
+    (event: React.MouseEvent) => {
+      const press = backgroundPressRef.current;
+      backgroundPressRef.current = null;
+      if (!press || event.button !== 0) return;
+      const now = camera.read();
+      const moved =
+        Math.abs(event.clientX - press.x) > BACKGROUND_CLICK_SLOP_PX ||
+        Math.abs(event.clientY - press.y) > BACKGROUND_CLICK_SLOP_PX ||
+        Math.abs(now.x - press.camera.x) > BACKGROUND_CLICK_SLOP_PX ||
+        Math.abs(now.y - press.camera.y) > BACKGROUND_CLICK_SLOP_PX;
+      if (moved) return;
+      onBackgroundClick?.();
+    },
+    [camera, onBackgroundClick]
+  );
+
   // Leaving Fit for an explicit zoom level with no gesture behind it (the
   // readout, say) centres on the frame being worked in.
   const previousFitRef = useRef(zoom === 'fit');
@@ -416,7 +485,12 @@ export function PreviewCanvas({
         panning ? ' is-panning' : ''
       }${interacting ? ' is-interacting' : ''}${revealed ? '' : ' is-measuring'}`}
     >
-      <div className="preview-canvas" ref={setViewportEl} onMouseDown={handlePanStart}>
+      <div
+        className="preview-canvas"
+        ref={setViewportEl}
+        onMouseDown={handleCanvasMouseDown}
+        onMouseUp={handleCanvasMouseUp}
+      >
         {/* The moved layer. Everything on the canvas is inside it, so a pan is
             one composited transform and nothing else on the page moves. */}
         <div className="preview-canvas-world" ref={setWorldEl}>

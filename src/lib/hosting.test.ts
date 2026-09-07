@@ -80,6 +80,51 @@ describe('deriveSectionState', () => {
     expect(deriveSectionState(null, { now: NOW }).kind).toBe('checking');
   });
 
+  /**
+   * The "loads forever" shape: a state whose exit depends on a request that is
+   * never going to succeed.
+   *
+   * `get_hosting_status` does not only fail transiently — it rejects outright
+   * for a folder that isn't a git repo, a repo with no commits yet, and a
+   * detached HEAD (where restoring a snapshot leaves you). The status then
+   * stays `null` forever, and `checking` renders a pulsing spinner saying an
+   * answer is on its way.
+   */
+  describe('when the status could not be fetched at all', () => {
+    it('stops claiming to be loading', () => {
+      const state = deriveSectionState(null, {
+        now: NOW,
+        error: 'This project has no commits yet.',
+      });
+
+      expect(state.kind).not.toBe('checking');
+      expect(state.kind).toBe('unavailable');
+    });
+
+    it("repeats the command's own reason rather than inventing one", () => {
+      const state = deriveSectionState(null, {
+        now: NOW,
+        error: "This project isn't on a branch, so there's nothing to check.",
+      });
+
+      expect(state.unavailableReason).toBe(
+        "This project isn't on a branch, so there's nothing to check."
+      );
+    });
+
+    it('still shows a spinner while the very first request is genuinely in flight', () => {
+      // The distinction the fix turns on: no answer *yet* is not the same as
+      // no answer *possible*.
+      expect(deriveSectionState(null, { now: NOW }).kind).toBe('checking');
+    });
+
+    it('prefers a real answer over a stale failure', () => {
+      // A rejection followed by a success must not leave the row apologising.
+      const s = status([provider({ lookup: found({ phase: 'ready' }) })]);
+      expect(deriveSectionState(s, { now: NOW, error: 'transient boom' }).kind).toBe('ready');
+    });
+  });
+
   it('invites setup when the project deploys nowhere', () => {
     expect(deriveSectionState(status([]), { now: NOW }).kind).toBe('no_link');
   });

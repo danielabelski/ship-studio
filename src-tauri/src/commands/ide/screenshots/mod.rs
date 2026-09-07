@@ -27,6 +27,14 @@ pub use webview_snapshot::*;
 /// this to fail fast with a clean "dev server not ready" message instead of
 /// letting Playwright's `page.goto` blow up with an ERR_CONNECTION_REFUSED
 /// stack trace (issue #349). Port defaults to 3000 when the URL carries none.
+///
+/// The two families are raced concurrently rather than tried in sequence: a
+/// port nothing is listening on yet can make each `connect_timeout` actually
+/// burn its full 500ms instead of returning an instant refusal — Windows
+/// especially doesn't refuse a closed loopback port immediately, unlike
+/// Unix — so a serial ipv4-then-ipv6 probe could cost up to 1s per check
+/// against a slow-starting dev server (issue #711, a Windows-specific
+/// recurrence of #614).
 pub(crate) fn dev_server_listening(url: &str) -> bool {
     use std::net::TcpStream;
     use std::time::Duration;
@@ -45,8 +53,25 @@ pub(crate) fn dev_server_listening(url: &str) -> bool {
     let ipv4_addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let ipv6_addr = std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port));
 
-    TcpStream::connect_timeout(&ipv4_addr, Duration::from_millis(500)).is_ok()
-        || TcpStream::connect_timeout(&ipv6_addr, Duration::from_millis(500)).is_ok()
+    std::thread::scope(|scope| {
+        let v6 = scope.spawn(move || {
+            TcpStream::connect_timeout(&ipv6_addr, Duration::from_millis(500)).is_ok()
+        });
+        let v4_ok = TcpStream::connect_timeout(&ipv4_addr, Duration::from_millis(500)).is_ok();
+        v4_ok || v6.join().unwrap_or(false)
+    })
+}
+
+/// [`dev_server_listening`], retried once after a short backoff before giving
+/// up. A dev server that's mid-boot (compiling, resolving deps) can still
+/// fail the first probe and be answering a second later — treating one miss
+/// as final is the other half of issue #711/#614's thumbnail-capture misses.
+pub(crate) async fn dev_server_listening_with_retry(url: &str) -> bool {
+    if dev_server_listening(url) {
+        return true;
+    }
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    dev_server_listening(url)
 }
 
 use crate::utils::{create_command, find_executable, get_extended_path};
@@ -105,6 +130,49 @@ mod tests {
             std::path::Path::new(cmd.get_program()).is_absolute(),
             "expected an absolute resolved path, got {:?}",
             cmd.get_program()
+        );
+    }
+
+    #[test]
+    fn dev_server_listening_reflects_whether_anything_is_bound() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(super::dev_server_listening(&format!(
+            "http://localhost:{port}"
+        )));
+        drop(listener);
+        assert!(!super::dev_server_listening(&format!(
+            "http://localhost:{port}"
+        )));
+    }
+
+    /// Issue #711/#614: a dev server that's still starting up can miss the
+    /// health check's first probe and be listening a moment later. The retry
+    /// must catch that case rather than treating one miss as final.
+    #[tokio::test]
+    async fn dev_server_listening_with_retry_catches_a_server_that_starts_during_the_backoff() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let url = format!("http://localhost:{port}");
+        assert!(
+            !super::dev_server_listening(&url),
+            "nothing should be listening yet"
+        );
+
+        // Simulate a dev server finishing its boot partway through the
+        // retry's ~1s backoff window.
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let listener = std::net::TcpListener::bind(format!("127.0.0.1:{port}")).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            drop(listener);
+        });
+
+        assert!(
+            super::dev_server_listening_with_retry(&url).await,
+            "the retry's second probe should catch the now-listening server"
         );
     }
 }

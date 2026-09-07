@@ -1,43 +1,78 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import svgr from "vite-plugin-svgr";
-import path from "path";
-import { readFileSync } from "fs";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import svgr from 'vite-plugin-svgr';
+import path from 'path';
+import { readFileSync } from 'fs';
+// Implementation and tests live in scripts/ so the transform can be checked
+// by `pnpm test:scripts` without running a build.
+// @ts-expect-error - plain ESM helper, no type declarations
+import { stripStylesheetCrossorigin } from './scripts/strip-stylesheet-crossorigin.mjs';
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
-const pkg = JSON.parse(
-  readFileSync(path.resolve(__dirname, "package.json"), "utf-8")
-) as { version: string };
+const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')) as {
+  version: string;
+};
+
+/**
+ * Vite marks the emitted stylesheet `<link rel="stylesheet" crossorigin>`. That
+ * attribute puts the fetch in CORS mode, which means the response has to carry
+ * `Access-Control-Allow-Origin` or WebKit drops the stylesheet — and in a Tauri
+ * build this asset is served by a custom scheme handler, not a normal HTTP
+ * origin. When that check fails there is no error anyone sees: React mounts,
+ * clears `#root`, and paints an app with none of its rules, which is black text
+ * on a dark body. It is indistinguishable from the app never starting, and it
+ * is the shape of the report behind #173.
+ *
+ * The attribute buys nothing here. These assets are same-origin, so removing it
+ * only relaxes a requirement — there is no case that works with it and breaks
+ * without it. The module script keeps its attribute because the HTML spec
+ * fetches module scripts in CORS mode regardless of what the tag says, so
+ * stripping it there would be cosmetic and would imply a fix that isn't one.
+ *
+ * This is a mitigation, not a diagnosis: nobody has yet reproduced the failing
+ * fetch. The two boot watchdogs in index.html are what make it speak up if it
+ * still happens.
+ */
+function stripStylesheetCrossoriginPlugin() {
+  return {
+    name: 'strip-stylesheet-crossorigin',
+    enforce: 'post' as const,
+    transformIndexHtml(html: string) {
+      return stripStylesheetCrossorigin(html);
+    },
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [
     svgr({
-      include: "**/*.svg?react",
+      include: '**/*.svg?react',
       esbuildOptions: {
-        jsx: "automatic",
+        jsx: 'automatic',
       },
       svgrOptions: {
-        plugins: ["@svgr/plugin-svgo", "@svgr/plugin-jsx"],
-        jsxRuntime: "automatic",
+        plugins: ['@svgr/plugin-svgo', '@svgr/plugin-jsx'],
+        jsxRuntime: 'automatic',
         dimensions: false,
-        expandProps: "end",
+        expandProps: 'end',
         ref: true,
         titleProp: true,
         replaceAttrValues: {
-          "#979797": "currentColor",
+          '#979797': 'currentColor',
         },
         svgProps: {
-          focusable: "false",
+          focusable: 'false',
         },
         svgoConfig: {
-          plugins: ["prefixIds"],
+          plugins: ['prefixIds'],
         },
       },
     }),
     react(),
+    stripStylesheetCrossoriginPlugin(),
   ],
 
   define: {
@@ -46,7 +81,7 @@ export default defineConfig(async () => ({
 
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      '@': path.resolve(__dirname, './src'),
     },
   },
 
@@ -60,7 +95,7 @@ export default defineConfig(async () => ({
     // Safari-16+-only APIs at module scope. Raising this floor is a product
     // decision tied to the minimum supported macOS version, not a routine
     // dependency chore.
-    target: ["chrome107", "edge107", "firefox104", "safari15"],
+    target: ['chrome107', 'edge107', 'firefox104', 'safari15'],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
@@ -75,17 +110,17 @@ export default defineConfig(async () => ({
     // `localhost` to 127.0.0.1 before trying ::1, while Node/Vite's default
     // listener may only bind ::1 on macOS. That leaves Tauri showing the
     // static boot fallback even though the Vite server appears healthy.
-    host: host || "127.0.0.1",
+    host: host || '127.0.0.1',
     hmr: host
       ? {
-          protocol: "ws",
+          protocol: 'ws',
           host,
           port: 1420,
         }
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      ignored: ['**/src-tauri/**'],
     },
   },
 }));

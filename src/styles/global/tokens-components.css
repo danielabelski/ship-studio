@@ -305,4 +305,19 @@
   --z-toast: 10000;
   --z-toast-top: 10001;
   --z-changelog-sentinel: 100000;
+
+  /* Breakpoint canvas frame labels.
+     Their own tokens rather than `--font-size-micro`, which they used to share
+     with the visual editor's property rows: a property row sits at a fixed size
+     inside a panel, while these name a frame on a surface that zooms from 10%
+     to 400%. The label is held at a constant screen size at every zoom (the
+     overlay lands back at scale 1 when a gesture settles), so at 7px it was
+     unreadable at any zoom, and every zoom-in ended with it snapping visibly
+     smaller against a frame that had just grown. 32px is reserved for the strip;
+     there was never a reason to spend 7 of it. */
+  --canvas-label-font-size: var(--font-size-12);
+  --canvas-label-dim-font-size: var(--font-size-11);
+  /* `--tracking-micro` is +0.56px, which spreads a small label and makes it read
+     as fainter still. Frame names want to read as one word. */
+  --canvas-label-tracking: 0;
 }

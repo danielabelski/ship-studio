@@ -15,6 +15,7 @@ export { usePluginContext, getPluginContext, type PluginContextValue } from './c
 // Hooks
 export { useProject } from './hooks/useProject';
 export { useShell } from './hooks/useShell';
+export { useFs } from './hooks/useFs';
 export { useToast } from './hooks/useToast';
 export { usePluginStorage } from './hooks/usePluginStorage';
 export { useAppActions } from './hooks/useAppActions';

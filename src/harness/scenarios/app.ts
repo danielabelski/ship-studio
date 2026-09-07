@@ -24,10 +24,17 @@ export const appScenarios: Scenario[] = [
   },
   {
     id: 'dashboard-empty',
+    // Without this the scenario photographed the three projects from the base
+    // fixture: the dashboard reads `get_dashboard_projects`, and only the two
+    // commands beside it were being emptied. `requires` now names the CTA, so
+    // a fixture that fails to empty the list fails the run instead of quietly
+    // certifying a populated grid as the empty state.
+    requires: '.empty-state-action',
     title: 'Dashboard — no projects yet',
     looksRightWhen:
       'A deliberate empty state with a clear primary action, not a blank panel or a stuck spinner.',
     commands: {
+      get_dashboard_projects: [],
       list_projects: [],
       get_projects: [],
       get_pinned_projects: [],
@@ -35,11 +42,19 @@ export const appScenarios: Scenario[] = [
   },
   {
     id: 'dashboard-many',
-    requires: '.project-card',
+    // `.project-card` alone was satisfied by the base fixture's three cards, so
+    // this claimed to hold at 24 while photographing 3. Requiring the tenth
+    // card means the crowd has to actually be there.
+    requires: '.project-card:nth-of-type(10)',
     title: 'Dashboard — a crowded account',
     looksRightWhen:
       'Layout holds at 24 projects: no overflow past the container, no clipped names, scrolling works.',
     commands: {
+      get_dashboard_projects: Array.from({ length: 24 }, (_, i) => ({
+        name: `project-${String(i + 1).padStart(2, '0')}`,
+        path: `/Users/harness/ShipStudio/project-${i + 1}`,
+        thumbnail: null,
+      })),
       list_projects: Array.from({ length: 24 }, (_, i) => ({
         name: `project-${String(i + 1).padStart(2, '0')}`,
         path: `/Users/harness/ShipStudio/project-${i + 1}`,
@@ -59,6 +74,16 @@ export const appScenarios: Scenario[] = [
     looksRightWhen:
       'Very long and non-Latin names truncate cleanly instead of breaking the card grid.',
     commands: {
+      get_dashboard_projects: [
+        {
+          name: 'a-deliberately-extremely-long-project-name-that-should-truncate-rather-than-overflow',
+          path: '/Users/harness/ShipStudio/long',
+          thumbnail: null,
+        },
+        { name: '日本語のプロジェクト名', path: '/Users/harness/ShipStudio/jp', thumbnail: null },
+        { name: 'emoji-🚀-project', path: '/Users/harness/ShipStudio/emoji', thumbnail: null },
+        ...projects,
+      ],
       list_projects: [
         {
           name: 'a-deliberately-extremely-long-project-name-that-should-truncate-rather-than-overflow',

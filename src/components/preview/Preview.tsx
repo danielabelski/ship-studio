@@ -51,6 +51,7 @@ import { useVisualEditor } from '../../hooks/useVisualEditor';
 import { useTextEditing } from '../../hooks/useTextEditing';
 import { useElementStructure, type StructureSelection } from '../../hooks/useElementStructure';
 import { ElementToolbar } from '../edit/ElementToolbar';
+import { PreviewBreadcrumb } from './PreviewBreadcrumb';
 import { useCssCascadeEditor } from '../../hooks/useCssCascadeEditor';
 import { useElementSettings } from '../../hooks/useElementSettings';
 import { useCssVariables } from '../../hooks/useCssVariables';
@@ -67,6 +68,7 @@ import { VisualEditorPanel } from '../edit/VisualEditorPanel';
 import { ElementTreePanel } from '../edit/ElementTreePanel';
 import { VariablesPanel } from '../edit/VariablesPanel';
 import { useElementTree } from '../../hooks/useElementTree';
+import { useElementBreadcrumbVisibility } from '../../hooks/useElementBreadcrumbVisibility';
 import { PreviewLocaleSwitcher, type PreviewLocaleConfig } from './PreviewLocaleSwitcher';
 import {
   CompactIcon,
@@ -781,6 +783,18 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     }
   }, [canvasMode, canvasFrameEl, activeEditMode]);
 
+  // Clicking the canvas background drops the element selection. Until now the
+  // only way to get the outline off the design was to leave edit mode, which
+  // also takes away the panel you were working in.
+  const deselectOnCanvas = useCallback(() => {
+    if (!activeEditMode) return;
+    try {
+      canvasFrameEl?.contentWindow?.postMessage({ type: 'ss:deselect' }, '*');
+    } catch {
+      // The frame may have gone away between the click and this call.
+    }
+  }, [activeEditMode, canvasFrameEl]);
+
   // Imperative opener for the toolbar's insert palette (Cmd+K "Insert element…").
   const openInsertMenuRef = useRef<(() => void) | null>(null);
   const toggleActiveEditor =
@@ -974,6 +988,20 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // view of the rendered page.
   const showTree = elementTreeVisible;
   const variablesPanelDocked = variablesPanelVisible && variablesPanelPinned;
+  const [elementBreadcrumbEnabled, setElementBreadcrumbEnabled] = useElementBreadcrumbVisibility();
+  useCommands(
+    () => [
+      {
+        id: 'preview.toggleElementBreadcrumb',
+        title: elementBreadcrumbEnabled ? 'Hide element breadcrumb' : 'Show element breadcrumb',
+        category: 'action' as const,
+        when: 'project' as const,
+        keywords: ['breadcrumb', 'element', 'path', 'navigation', 'appearance'],
+        run: () => setElementBreadcrumbEnabled(!elementBreadcrumbEnabled),
+      },
+    ],
+    [elementBreadcrumbEnabled, setElementBreadcrumbEnabled]
+  );
   // The Elements panel's Code (markup-edit) view needs a wider column than the
   // navigator; the tree panel reports its view so we can widen the grid track.
   const [treeCodeView, setTreeCodeView] = useState(false);
@@ -1350,6 +1378,40 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     serverProcessGone,
     devServerUnexpectedExit,
   ]);
+
+  const breadcrumbSignature =
+    editorMode === 'css' ? cssEditor.selection?.signature : editor.selection?.signature;
+  const breadcrumbPath = breadcrumbSignature
+    ? breadcrumbSignature.elementPath?.length
+      ? breadcrumbSignature.elementPath
+      : [
+          {
+            tagName: breadcrumbSignature.tagName,
+            className: breadcrumbSignature.className,
+            domPath: breadcrumbSignature.domPath ?? '',
+          },
+        ]
+    : [];
+  const breadcrumbVisible =
+    !canvasMode && elementBreadcrumbEnabled && activeEditMode && breadcrumbPath.length > 0;
+  const selectBreadcrumbItem = useCallback(
+    (item: (typeof breadcrumbPath)[number]) => {
+      if (!item.domPath) return;
+      iframeRef.current?.contentWindow?.postMessage(
+        {
+          type: 'ss:reselect',
+          signature: {
+            className: item.className,
+            tagName: item.tagName,
+            domPath: item.domPath,
+            ancestorClasses: [],
+          },
+        },
+        '*'
+      );
+    },
+    [iframeRef]
+  );
 
   if (needsInstall) {
     return (
@@ -1780,7 +1842,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         </div>
       </div>
       <div
-        className="preview-viewport"
+        className={`preview-viewport${breadcrumbVisible ? ' preview-viewport--with-breadcrumb' : ''}`}
         ref={resize.setViewportRefs}
         data-education-id="preview-viewport"
       >
@@ -1809,6 +1871,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               onActivateFrame={activateCanvasFrame}
               onActiveFrameElement={setCanvasFrameEl}
               onStageHeightChange={setCanvasFrameStageHeight}
+              onBackgroundClick={deselectOnCanvas}
               activeFrameOverlay={(scale) => (
                 <>
                   {comments.pins(scale, {
@@ -1979,6 +2042,9 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               <div className="preview-resize-handle-bar preview-resize-handle-bar--vertical" />
             </div>
           </div>
+        )}
+        {breadcrumbVisible && (
+          <PreviewBreadcrumb path={breadcrumbPath} onSelect={selectBreadcrumbItem} />
         )}
       </div>
       {showLogs && (

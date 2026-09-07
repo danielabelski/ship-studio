@@ -53,6 +53,19 @@ export interface PluginStorageProxy {
   write: (data: Record<string, unknown>) => Promise<void>;
 }
 
+/**
+ * Cross-platform filesystem proxy for plugins, scoped to the project
+ * directory. Exists so plugins never need to shell out to POSIX-only `test`
+ * or `cat` to check for or read a file (issues #840, #816, #777, #751, #693)
+ * — those fail outright on Windows, where `test`/`cat` aren't on PATH.
+ */
+export interface PluginFsProxy {
+  /** Whether `path` (relative to the project root) exists. */
+  exists: (path: string) => Promise<boolean>;
+  /** UTF-8 contents of `path` (relative to the project root), or `null` if it doesn't exist. */
+  readText: (path: string) => Promise<string | null>;
+}
+
 /** Invoke proxy for plugins to call Tauri commands */
 export interface PluginInvokeProxy {
   call: <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -83,6 +96,7 @@ export interface PluginContextValue {
   actions: PluginAppActions;
   shell: PluginShellProxy;
   storage: PluginStorageProxy;
+  fs: PluginFsProxy;
   invoke: PluginInvokeProxy;
   theme: PluginThemeData;
 }

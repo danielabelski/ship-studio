@@ -228,6 +228,49 @@ describe('buildContext failure reporting', () => {
     await expect(ctx.storage.read()).resolves.toEqual({ key: 'value' });
     expect(showToast).not.toHaveBeenCalled();
   });
+
+  // fs.exists / fs.readText (issues #840, #816, #777, #751, #693): the
+  // cross-platform primitive plugins should use instead of shelling out to
+  // POSIX-only `test -f` / `cat`. Wired through the same report() path as
+  // shell.exec and storage.*, so a rejection still toasts and re-throws.
+  it('toasts and re-throws when fs.exists rejects', async () => {
+    const { actions, showToast } = makeActions();
+    const ctx = buildContext(
+      'dependency-checker',
+      'Dependency Checker',
+      project,
+      actions,
+      theme,
+      []
+    );
+
+    await expect(ctx.fs.exists('pnpm-lock.yaml')).rejects.toThrow('boom from backend');
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0][0]).toContain('Plugin "Dependency Checker"');
+  });
+
+  it('toasts and re-throws when fs.readText rejects', async () => {
+    const { actions, showToast } = makeActions();
+    const ctx = buildContext('netlify', 'Netlify', project, actions, theme, []);
+
+    await expect(ctx.fs.readText('package.json')).rejects.toThrow('boom from backend');
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0][0]).toContain('Plugin "Netlify"');
+  });
+
+  it('resolves fs.exists / fs.readText without toasting on success', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'plugin_fs_exists') return true;
+      if (cmd === 'plugin_fs_read_text') return '{"name":"demo"}';
+      return undefined;
+    });
+    const { actions, showToast } = makeActions();
+    const ctx = buildContext('netlify', 'Netlify', project, actions, theme, []);
+
+    await expect(ctx.fs.exists('next.config.js')).resolves.toBe(true);
+    await expect(ctx.fs.readText('package.json')).resolves.toBe('{"name":"demo"}');
+    expect(showToast).not.toHaveBeenCalled();
+  });
 });
 
 describe('legacy plugin context global (#389/#465/#695)', () => {

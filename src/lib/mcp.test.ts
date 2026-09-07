@@ -178,4 +178,17 @@ describe('isMcpExpectedFailure', () => {
     expect(isMcpExpectedFailure('Failed to list MCP servers: unexpected panic')).toBe(false);
     expect(isMcpExpectedFailure(null)).toBe(false);
   });
+
+  // Issue #884: `classify_mcp_failure`'s "already exists" branch (a benign
+  // race with a concurrent registration, issue #292) returns the bare
+  // message with none of the guidance phrases above, but it still marks the
+  // CommandError Expected — that flag alone must be enough to recognize it.
+  it('recognizes a backend-Expected failure with no guidance phrase (issue #884)', () => {
+    const message =
+      'Failed to add MCP server: MCP server astro-docs already exists in user config\n';
+    expect(isMcpExpectedFailure({ type: 'Other', message, expected: true })).toBe(true);
+    // A plain string (no `expected` tag survives) still can't be recognized
+    // this way — only the phrase list helps there.
+    expect(isMcpExpectedFailure(message)).toBe(false);
+  });
 });
