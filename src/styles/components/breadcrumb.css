@@ -169,6 +169,10 @@
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
   color: inherit;
+  /* The label's 1px gap leaves the icon touching the `<div>` / `<h1>` text.
+     Spaced here rather than on the label's gap so `<tag>` and `.class` keep
+     reading as one unit. */
+  margin-right: var(--spacing-xs);
 }
 
 .preview-breadcrumb__icon > svg {
