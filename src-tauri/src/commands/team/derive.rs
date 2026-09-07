@@ -49,6 +49,20 @@ const GH_TIMEOUT_SECS: u64 = 60;
 /// roughly "after lunch is a different sitting".
 const STINT_GAP_MS: i64 = 4 * 60 * 60 * 1000;
 
+/// The longest a single stint may span, and the most commits it may hold.
+///
+/// The gap rule alone is not enough, and a real repo proves it in seconds:
+/// someone committing every half hour for a fortnight never opens a gap, so the
+/// whole fortnight chains into one row. Against this repo that produced a
+/// single card reading "Release v1.2.0 — 77 commits, 135 files, 8,695 lines",
+/// which is not a thing anybody did; it is two weeks of work wearing the last
+/// commit's subject.
+///
+/// Both caps are needed. The span catches the slow chain; the count catches a
+/// rebase or a squash-merge that lands two hundred commits in one second.
+const STINT_MAX_SPAN_MS: i64 = 8 * 60 * 60 * 1000;
+const STINT_MAX_COMMITS: usize = 12;
+
 /// How far back the feed looks. Longer than anyone scrolls, short enough that
 /// a decade-old repo does not walk its whole history on every poll.
 const HISTORY_DAYS: u32 = 30;
@@ -126,12 +140,13 @@ impl PrSummary {
     pub fn status(&self) -> TeamUpdateStatus {
         match self.state.as_str() {
             "MERGED" => TeamUpdateStatus::Merged,
+            // A PR that was closed without merging is *finished* — reviewed or
+            // not. Checking the review flags first said "In review" about work
+            // abandoned months ago, which is the kind of confidently wrong
+            // status that makes a whole feed untrustworthy.
+            "CLOSED" => TeamUpdateStatus::Working,
             _ if self.has_reviews || self.review_requested => TeamUpdateStatus::InReview,
-            "OPEN" => TeamUpdateStatus::NeedsReview,
-            // CLOSED without merging. The branch's work did not land, and
-            // there is no honest "abandoned" state in the model — report it as
-            // what it visibly is: commits on a branch.
-            _ => TeamUpdateStatus::Working,
+            _ => TeamUpdateStatus::NeedsReview,
         }
     }
 }
@@ -344,6 +359,8 @@ pub fn group_into_stints(commits: Vec<RawCommit>) -> Vec<Stint> {
         let joined = stints.iter_mut().rev().find(|stint| {
             stint.author_email == commit.author_email
                 && stint.branch == commit.branch
+                && stint.commits.len() < STINT_MAX_COMMITS
+                && stint.at - commit.at <= STINT_MAX_SPAN_MS
                 // Commits arrive newest-first, so the open stint's oldest
                 // commit is the one to measure the gap against.
                 && stint
@@ -373,18 +390,40 @@ pub fn group_into_stints(commits: Vec<RawCommit>) -> Vec<Stint> {
     stints
 }
 
-/// Files a stint touched, with line counts, from `git show --numstat`.
+/// Files a stint touched, with line counts.
 ///
-/// Merge commits are skipped: `--numstat` on a merge reports the combined diff
-/// against every parent, which double-counts everything the merge brought in
-/// and makes a routine merge look like the largest change in the repo.
+/// ## Merges are diffed against their first parent, and only when alone
+///
+/// A merge has no single diff. `git show --numstat` on one reports the combined
+/// diff against *every* parent, which double-counts everything the merge brought
+/// in and makes a routine merge the largest change in the repo. So a merge is
+/// skipped whenever the stint holds ordinary commits too: those already account
+/// for the same lines, and adding the merge on top counts them twice.
+///
+/// A stint that is *only* a merge is the case where skipping is wrong. "Merged
+/// pull request #881" reporting zero files is not restraint, it is a row with
+/// its content missing — and it is what this did against a real repo. There the
+/// first-parent diff is exactly the right number: what the merge brought in.
 pub async fn files_for(project: &std::path::Path, stint: &Stint) -> Vec<super::TeamFileTouch> {
     let mut totals: HashMap<String, (u32, u32)> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
 
-    for commit in stint.commits.iter().filter(|c| !c.is_merge) {
-        let Some(out) = git_stdout(project, &["show", "--numstat", "--format=", &commit.sha]).await
-        else {
+    let merges_only = stint.commits.iter().all(|commit| commit.is_merge);
+    let wanted = stint
+        .commits
+        .iter()
+        .filter(|commit| merges_only || !commit.is_merge);
+
+    for commit in wanted {
+        // `<sha>^!` with `--first-parent` is the merge's own contribution to
+        // the branch it landed on, rather than its diff against everything.
+        let first_parent = format!("{}^1", commit.sha);
+        let args: Vec<&str> = if commit.is_merge {
+            vec!["diff", "--numstat", &first_parent, &commit.sha]
+        } else {
+            vec!["show", "--numstat", "--format=", &commit.sha]
+        };
+        let Some(out) = git_stdout(project, &args).await else {
             continue;
         };
         for line in out.lines() {
@@ -580,6 +619,88 @@ pub fn login_from_email(email: &str) -> Option<String> {
     (!handle.is_empty()).then(|| handle.to_lowercase())
 }
 
+/// How many pages of `repos/{repo}/commits` to read for the identity map.
+/// 100 per page; three covers a busy month without paging forever.
+const IDENTITY_PAGES: u32 = 3;
+
+/// Ask GitHub which login authored each recent commit.
+///
+/// This exists because one person routinely commits under several git emails —
+/// `jane@acme.com` at work, `1234+jane@users.noreply.github.com` from the web
+/// editor — and [`login_from_email`] can only resolve the second. Against a real
+/// repo that put the same person in the People list twice, once with an avatar
+/// and once without.
+///
+/// The fix has to be authoritative or not done at all. GitHub already maintains
+/// the email→account mapping, including verified secondary addresses, and its
+/// commits API returns the answer per commit. That is a *fact*; inferring it
+/// from matching display names is the guess this rule exists to prevent.
+///
+/// Returns email → login. Empty when `gh` is missing, unauthenticated, or the
+/// repo is private to someone else — in which case identities stay split, which
+/// is wrong-looking but never wrong.
+pub async fn identity_map(project: &std::path::Path, repo: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+
+    for page in 1..=IDENTITY_PAGES {
+        let mut cmd = get_gh_command_for_project(project);
+        cmd.args([
+            "api",
+            &format!("repos/{repo}/commits?per_page=100&page={page}"),
+        ])
+        .current_dir(project);
+
+        let Ok(output) = run_with_timeout(
+            tokio::process::Command::from(cmd),
+            "gh api commits (team identities)".to_string(),
+            GH_TIMEOUT_SECS,
+        )
+        .await
+        else {
+            break;
+        };
+        if !output.status.success() {
+            break;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(&stdout)
+        else {
+            break;
+        };
+        if rows.is_empty() {
+            break;
+        }
+
+        for row in rows {
+            // `author` is the GitHub *account*; `commit.author` is what git
+            // recorded. A commit whose email GitHub cannot place has
+            // `author: null`, and that is left unmapped rather than filled in.
+            let (Some(login), Some(email)) = (
+                row.pointer("/author/login").and_then(|v| v.as_str()),
+                row.pointer("/commit/author/email").and_then(|v| v.as_str()),
+            ) else {
+                continue;
+            };
+            map.insert(email.to_lowercase(), login.to_lowercase());
+        }
+    }
+
+    map
+}
+
+/// The signed-in user's own git email, so at minimum *you* are one person.
+///
+/// The cheap half of [`identity_map`], and the one that always works: it needs
+/// no network, no `gh`, and no repo permissions. Worth having on its own,
+/// because you appearing in your own team list twice is the most visible form
+/// of the bug and the one most likely to be read as the feature being broken.
+pub async fn own_git_email(project: &std::path::Path) -> Option<String> {
+    let out = git_stdout(project, &["config", "user.email"]).await?;
+    let email = out.trim().to_lowercase();
+    (!email.is_empty()).then_some(email)
+}
+
 /// The web URL for a commit or a PR on the project's remote.
 pub fn github_url_for(repo: Option<&str>, pr: Option<&PrSummary>, sha: &str) -> Option<String> {
     if let Some(pr) = pr {
@@ -590,16 +711,40 @@ pub fn github_url_for(repo: Option<&str>, pr: Option<&PrSummary>, sha: &str) -> 
     repo.map(|repo| format!("https://github.com/{repo}/commit/{sha}"))
 }
 
+/// Everything GitHub was able to tell us about who is who.
+///
+/// Bundled rather than passed as four arguments because these three are always
+/// resolved together and are meaningless apart.
+#[derive(Debug, Default)]
+pub struct People {
+    /// login → (avatar, role), from the collaborators API.
+    pub collaborators: HashMap<String, (Option<String>, Option<super::TeamRole>)>,
+    /// git email → login, from the commits API. See [`identity_map`].
+    pub identities: HashMap<String, String>,
+    /// The signed-in login, lowercased.
+    pub me: Option<String>,
+}
+
+impl People {
+    /// The login behind a git email, if one can be established as fact.
+    ///
+    /// Two sources, both authoritative, neither a guess: GitHub's own
+    /// email→account mapping, and the login encoded in a noreply address.
+    pub fn login_for(&self, email: &str) -> Option<String> {
+        let email = email.to_lowercase();
+        self.identities
+            .get(&email)
+            .cloned()
+            .or_else(|| login_from_email(&email))
+    }
+}
+
 /// Actor for a git author, enriched with whatever GitHub could confirm.
-pub fn actor_for(
-    name: &str,
-    email: &str,
-    people: &HashMap<String, (Option<String>, Option<super::TeamRole>)>,
-) -> TeamActor {
-    let login = login_from_email(email);
+pub fn actor_for(name: &str, email: &str, people: &People) -> TeamActor {
+    let login = people.login_for(email);
     let avatar = login
         .as_ref()
-        .and_then(|login| people.get(login))
+        .and_then(|login| people.collaborators.get(login))
         .and_then(|(avatar, _)| avatar.clone());
     TeamActor {
         login,
@@ -808,18 +953,54 @@ mod repo_tests {
             .expect("the merge commit is in the walk");
         assert!(merge.is_merge);
 
-        // The merge brought b.txt in, but its diff against the first parent is
-        // the whole of the topic branch — counting it would double every line
-        // already attributed to the topic commit.
-        let stint = Stint {
+        let topic = commits
+            .iter()
+            .find(|c| c.subject == "Topic work")
+            .expect("the topic commit is in the walk");
+
+        let as_stint = |commits: Vec<RawCommit>| Stint {
             branch: "main".to_string(),
             author_name: merge.author_name.clone(),
             author_email: merge.author_email.clone(),
             at: merge.at,
             update_id: None,
-            commits: vec![merge.clone()],
+            commits,
         };
-        assert!(files_for(&repo.dir, &stint).await.is_empty());
+
+        // A merge on its own is the row's whole content, so it is diffed
+        // against its first parent: b.txt, one line.
+        let alone = files_for(&repo.dir, &as_stint(vec![merge.clone()])).await;
+        assert_eq!(alone.len(), 1);
+        assert_eq!(alone[0].path, "b.txt");
+        assert_eq!(alone[0].added, 1);
+
+        // Beside the commits it brought in, the merge is skipped — otherwise
+        // b.txt is counted once for the topic commit and again for the merge.
+        let together = files_for(&repo.dir, &as_stint(vec![merge.clone(), topic.clone()])).await;
+        assert_eq!(together.len(), 1);
+        assert_eq!(together[0].path, "b.txt");
+        assert_eq!(together[0].added, 1, "counted once, not twice");
+    }
+
+    #[tokio::test]
+    async fn a_long_run_of_commits_is_broken_into_readable_rows() {
+        let repo = Repo::new("cap");
+        // Fifteen commits inside one four-hour gap. Without the caps this is a
+        // single card claiming fifteen commits under the last one's subject.
+        for i in 0..15 {
+            repo.commit("a.txt", &format!("line {i}\n"), &format!("Step {i}"));
+        }
+        let stints = group_into_stints(walk_commits(&repo.dir, Some("main")).await);
+        assert!(stints.len() >= 2, "the run is split, not one giant row");
+        assert!(
+            stints.iter().all(|s| s.commits.len() <= 12),
+            "no stint exceeds the cap"
+        );
+        assert_eq!(
+            stints.iter().map(|s| s.commits.len()).sum::<usize>(),
+            15,
+            "and nothing is lost in the splitting"
+        );
     }
 
     #[tokio::test]
@@ -975,6 +1156,21 @@ mod tests {
             has_reviews: false,
         };
         assert_eq!(pr.status(), TeamUpdateStatus::InReview);
+    }
+
+    #[test]
+    fn a_pr_closed_without_merging_is_finished_not_in_review() {
+        // A real repo turned up a PR closed years ago that still had reviews on
+        // it. Checking the review flags first reported it as "In review", which
+        // is the kind of confidently wrong status that discredits a whole feed.
+        let pr = PrSummary {
+            number: 467,
+            state: "CLOSED".to_string(),
+            url: String::new(),
+            review_requested: true,
+            has_reviews: true,
+        };
+        assert_eq!(pr.status(), TeamUpdateStatus::Working);
     }
 
     #[test]

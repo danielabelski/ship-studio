@@ -34,10 +34,10 @@ use crate::commands::github::parse_github_repo;
 use crate::errors::CommandError;
 use crate::utils::validate_project_path;
 
-use super::derive::{self, PrSummary, Stint};
+use super::derive::{self, People, PrSummary, Stint};
 use super::records::{self, RecordKind, TeamRecord};
 use super::{
-    TeamActor, TeamMember, TeamRole, TeamSnapshot, TeamSyncStatus, TeamUpdate, TeamUpdateAuthor,
+    TeamActor, TeamMember, TeamSnapshot, TeamSyncStatus, TeamUpdate, TeamUpdateAuthor,
     TeamUpdateStatus,
 };
 
@@ -76,11 +76,7 @@ pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, Com
     let stints = derive::group_into_stints(commits);
 
     let prs = derive::pull_requests(&project).await;
-    let people = match repo.as_deref() {
-        Some(repo) => derive::collaborators(&project, repo).await,
-        None => HashMap::new(),
-    };
-    let me = current_login(&project).await;
+    let people = resolve_people(&project, repo.as_deref()).await;
 
     let by_id = records::updates_by_id(&stored);
     let mut updates: Vec<TeamUpdate> = Vec::new();
@@ -148,7 +144,6 @@ pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, Com
         &prs,
         &people,
         &adopters,
-        me.as_deref(),
         &project_name,
         base.as_deref(),
     );
@@ -185,14 +180,44 @@ async fn repo_slug(project: &std::path::Path) -> Option<String> {
     parse_github_repo(String::from_utf8_lossy(&output.stdout).trim())
 }
 
-/// The signed-in GitHub login, lowercased. `None` when `gh` is absent or not
-/// authenticated — in which case nobody is marked as "you", which is a missing
-/// highlight rather than a wrong one.
-async fn current_login(project: &std::path::Path) -> Option<String> {
-    crate::commands::github::get_github_username(Some(project.to_string_lossy().into_owned()))
-        .await
-        .ok()
-        .map(|login| login.to_lowercase())
+/// Everything GitHub can tell us about who is who on this repo.
+///
+/// All three lookups degrade to nothing rather than failing: no `gh`, no auth,
+/// a repo you can only read. What you lose then is avatars, roles, and the
+/// merging of one person's several git emails — never a row, and never a wrong
+/// attribution.
+async fn resolve_people(project: &std::path::Path, repo: Option<&str>) -> People {
+    let me =
+        crate::commands::github::get_github_username(Some(project.to_string_lossy().into_owned()))
+            .await
+            .ok()
+            .map(|login| login.to_lowercase());
+
+    let Some(repo) = repo else {
+        return People {
+            me,
+            ..Default::default()
+        };
+    };
+
+    let (collaborators, mut identities) = tokio::join!(
+        derive::collaborators(project, repo),
+        derive::identity_map(project, repo)
+    );
+
+    // Your own email → your own login, which needs no network and no
+    // permissions. Worth doing even when the API answered: it is the identity
+    // most likely to be missing from a public repo's recent commits, and you
+    // appearing in your own team list twice reads as the feature being broken.
+    if let (Some(me), Some(email)) = (me.as_deref(), derive::own_git_email(project).await) {
+        identities.entry(email).or_insert_with(|| me.to_string());
+    }
+
+    People {
+        collaborators,
+        identities,
+        me,
+    }
 }
 
 /// One row, from a stint of commits and the record explaining it, if any.
@@ -204,7 +229,7 @@ async fn build_update(
     pr: Option<&PrSummary>,
     repo: Option<&str>,
     base: Option<&str>,
-    people: &HashMap<String, (Option<String>, Option<TeamRole>)>,
+    people: &People,
     project_name: &str,
     project_path: &str,
 ) -> TeamUpdate {
@@ -258,7 +283,7 @@ async fn build_update(
 /// A record whose commits this clone does not have.
 fn orphan_update(
     record: &TeamRecord,
-    people: &HashMap<String, (Option<String>, Option<TeamRole>)>,
+    people: &People,
     repo: Option<&str>,
     project_name: &str,
     project_path: &str,
@@ -299,14 +324,11 @@ fn orphan_update(
 }
 
 /// Fill in the avatar GitHub knows about, keeping the record's own identity.
-fn merge_actor(
-    actor: TeamActor,
-    people: &HashMap<String, (Option<String>, Option<TeamRole>)>,
-) -> TeamActor {
+fn merge_actor(actor: TeamActor, people: &People) -> TeamActor {
     let avatar = actor
         .login
         .as_ref()
-        .and_then(|login| people.get(&login.to_lowercase()))
+        .and_then(|login| people.collaborators.get(&login.to_lowercase()))
         .and_then(|(avatar, _)| avatar.clone());
     TeamActor {
         avatar_url: avatar,
@@ -368,9 +390,8 @@ fn build_members(
     stints: &[Stint],
     doing: &HashMap<String, String>,
     prs: &HashMap<String, PrSummary>,
-    people: &HashMap<String, (Option<String>, Option<TeamRole>)>,
+    people: &People,
     adopters: &HashSet<String>,
-    me: Option<&str>,
     project_name: &str,
     base: Option<&str>,
 ) -> Vec<TeamMember> {
@@ -387,10 +408,10 @@ fn build_members(
             TeamMember {
                 role: login
                     .as_ref()
-                    .and_then(|login| people.get(login))
+                    .and_then(|login| people.collaborators.get(login))
                     .and_then(|(_, role)| *role),
                 uses_ship_studio: login.as_ref().is_some_and(|login| adopters.contains(login)),
-                is_self: match (login.as_deref(), me) {
+                is_self: match (login.as_deref(), people.me.as_deref()) {
                     (Some(login), Some(me)) => login == me,
                     _ => false,
                 },
@@ -525,9 +546,8 @@ mod tests {
             stints,
             doing,
             &HashMap::new(),
-            &HashMap::new(),
+            &People::default(),
             &HashSet::new(),
-            None,
             "site",
             Some("main"),
         )
@@ -577,13 +597,16 @@ mod tests {
         noreply.author_email = "9+theo@users.noreply.github.com".to_string();
         let stints = vec![stint("feat/x", vec![noreply])];
         let adopters: HashSet<String> = ["theo".to_string()].into_iter().collect();
+        let people = People {
+            me: Some("theo".to_string()),
+            ..Default::default()
+        };
         let members = build_members(
             &stints,
             &HashMap::new(),
             &HashMap::new(),
-            &HashMap::new(),
+            &people,
             &adopters,
-            Some("theo"),
             "site",
             Some("main"),
         );
