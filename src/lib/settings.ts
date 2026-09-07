@@ -188,6 +188,33 @@ export async function setCompactWorkspaceToolbarEnabled(enabled: boolean): Promi
   }
 }
 
+// ============ Commit attribution ============
+
+/**
+ * Whether commits Ship Studio makes carry the `Made-With` attribution trailer.
+ *
+ * A trailer, never the subject line, so `git log --oneline` reads exactly as it
+ * did before. Defaults to on — and to on when the read fails, matching the
+ * backend, so a momentary failure never silently changes what goes into
+ * somebody's history.
+ */
+export async function getCommitAttributionEnabled(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('get_commit_attribution_enabled');
+  } catch {
+    return true;
+  }
+}
+
+/** Turn the `Made-With` commit trailer on or off. */
+export async function setCommitAttributionEnabled(enabled: boolean): Promise<void> {
+  try {
+    await invoke('set_commit_attribution_enabled', { enabled });
+  } catch {
+    // Silently fail, matching the other non-critical UI preferences.
+  }
+}
+
 // ============ Element breadcrumb ============
 
 /** Whether the selected element's DOM breadcrumb is shown in the preview. */

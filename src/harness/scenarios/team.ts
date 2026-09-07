@@ -18,27 +18,17 @@
  */
 
 import type { Scenario } from '../types';
-import { workspaceCommands, WORKSPACE_PROJECT } from './workspace';
-import { buildTeamFixture } from '../fixtures/team';
+import { teamSnapshotCommand, workspaceCommands, WORKSPACE_PROJECT } from './workspace';
 
 /**
- * The one command every Team surface calls.
+ * What the Team screens read.
  *
- * Answered per invocation rather than as a frozen literal, so the fixture
- * adopts whichever project the scenario opened. The screens are about *your*
- * project with people in it, and a fixture naming a repo nobody has heard of
- * would photograph the wrong idea.
+ * The home-level screen opens outside a workspace, so it gets no workspace
+ * fixtures at all and needs the snapshot command in its own right — plus the
+ * project list, since it reads across the ones you opened most recently.
  */
 const teamCommands = {
-  get_team_snapshot: (args: Record<string, unknown>) => {
-    const projectPath = typeof args.projectPath === 'string' ? args.projectPath : WORKSPACE_PROJECT;
-    return buildTeamFixture({
-      projectPath,
-      projectName: projectPath.split('/').pop() || 'your project',
-    });
-  },
-  // The home-level screen reads across recently opened projects, so it needs
-  // the list before it can read anything at all.
+  get_team_snapshot: teamSnapshotCommand,
   get_dashboard_projects: [
     { name: 'acme-marketing', path: WORKSPACE_PROJECT, thumbnail: null, last_opened: null },
   ],
@@ -114,5 +104,16 @@ export const teamScenarios: Scenario[] = [
     command: 'team.howItWorks',
     requires: '.team-how-limits',
     commands: { ...teamCommands },
+  },
+
+  {
+    id: 'team-attribution-setting',
+    title: 'Team \u2014 the one switch for what lands in your history',
+    looksRightWhen:
+      'The row names the trailer and says where it does not appear: not in the subject line, not in `git log --oneline`. Default on, reading as a choice rather than as a warning.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '[aria-label="App settings"]',
+    requires: '[aria-label="Credit Ship Studio in commits"]',
+    commands: { ...workspaceCommands, ...teamCommands },
   },
 ];

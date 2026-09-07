@@ -275,7 +275,10 @@ export async function adoptAll(projects: { path: string; name: string }[]): Prom
   const merged = emptySnapshot();
   const failures: string[] = [];
   results.forEach((result, index) => {
-    if (result.status === 'rejected') {
+    // A resolved-but-shapeless answer counts as a failure, not as data. The
+    // spreads below would throw on it and take the whole screen with them,
+    // which is a blank page where seven working projects should be.
+    if (result.status === 'rejected' || !result.value?.updates) {
       failures.push(wanted[index].name);
       return;
     }

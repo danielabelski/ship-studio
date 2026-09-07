@@ -344,7 +344,25 @@ fn tail_of_output(output: &str, max_bytes: usize) -> &str {
 
 /// Stages all changes and commits with the given message.
 /// Returns true if a commit was made, false if nothing to commit.
+///
+/// Ship Studio is the author of record. Use [`git_stage_and_commit_authored`]
+/// when an agent wrote the message, so the trailer can say which one.
 pub fn git_stage_and_commit(path: &std::path::Path, message: &str) -> Result<bool, CommandError> {
+    git_stage_and_commit_authored(path, message, None)
+}
+
+/// [`git_stage_and_commit`], naming the agent that wrote the message.
+///
+/// `agent` is the agent's display name, and it must be `None` unless one
+/// genuinely authored this commit's message. A snapshot, a conflict resolution
+/// and an initial commit all pass `None` — attributing those to whichever agent
+/// happens to be configured would credit a tool that did nothing, in history
+/// nobody can rewrite.
+pub fn git_stage_and_commit_authored(
+    path: &std::path::Path,
+    message: &str,
+    agent: Option<&str>,
+) -> Result<bool, CommandError> {
     // Defense-in-depth backstop for #345: even if a too-broad path slipped past
     // registration, never run `git add -A` across the home tree.
     if crate::utils::is_forbidden_project_root(path) {
@@ -403,10 +421,17 @@ pub fn git_stage_and_commit(path: &std::path::Path, message: &str) -> Result<boo
         return Ok(false);
     }
 
+    // Everything Ship Studio commits passes through here, which makes this the
+    // one place the app's git trail is decided. Trailers go on last, after the
+    // "nothing to commit" check, so a no-op costs no work — and they are
+    // appended by `git interpret-trailers` rather than by string concatenation,
+    // because a trailer block git cannot parse is worse than no trailer at all.
+    let message = crate::commands::team::with_trailers(path, message, agent, None);
+
     // Commit — same index.lock retry as the staging step (#377).
     let commit_output = crate::utils::output_retrying_index_lock(|| {
         let mut cmd = crate::utils::git_command_in(path)?;
-        cmd.args(["commit", "-m", message]);
+        cmd.args(["commit", "-m", &message]);
         crate::external_command::spawn_with_pressure_retry("git commit", || cmd.output())
     })?;
 

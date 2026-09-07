@@ -52,8 +52,10 @@
 mod derive;
 mod records;
 mod snapshot;
+mod trailers;
 
 pub use snapshot::*;
+pub use trailers::*;
 
 use serde::{Deserialize, Serialize};
 

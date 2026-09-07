@@ -10,7 +10,7 @@
 //! from asking the provider about the commit (`commands::hosting`).
 
 use crate::commands::ai::resolve_commit_message;
-use crate::commands::git::git_stage_and_commit;
+use crate::commands::git::git_stage_and_commit_authored;
 // Network git ops (pull/push) go through the workspace-scoped helper so a
 // publish authenticates as the project's workspace GitHub login, matching the
 // gh-based repo-create path.
@@ -163,7 +163,8 @@ pub async fn publish_branch(
     commit_message: Option<String>,
 ) -> Result<PublishResult, CommandError> {
     let validated_path = validate_project_path(&project_path).map_err(CommandError::from)?;
-    let message = resolve_commit_message(&validated_path, commit_message).await;
+    let resolved = resolve_commit_message(&validated_path, commit_message).await;
+    let message = resolved.message;
 
     // Get current branch name
     let branch_output = crate::utils::git_command_in(&validated_path)?
@@ -197,7 +198,8 @@ pub async fn publish_branch(
     // discarded `git add -A`'s result entirely, so a staging failure surfaced
     // later as an inexplicable "Uncommitted changes" on switch (issue #273);
     // the helper also handles sparse-checkout (#275) and empty commits (#274).
-    git_stage_and_commit(&validated_path, &message).map_err(CommandError::from)?;
+    git_stage_and_commit_authored(&validated_path, &message, resolved.written_by_agent)
+        .map_err(CommandError::from)?;
 
     // Push to origin
     let push_output =

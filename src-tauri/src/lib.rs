@@ -658,6 +658,8 @@ pub fn run() {
             commands::settings::set_compact_workspace_toolbar_enabled,
             commands::settings::get_element_breadcrumb_enabled,
             commands::settings::set_element_breadcrumb_enabled,
+            commands::settings::get_commit_attribution_enabled,
+            commands::settings::set_commit_attribution_enabled,
             commands::settings::get_thumbnails_enabled,
             commands::settings::set_thumbnails_enabled,
             commands::settings::get_app_icon,

@@ -222,6 +222,26 @@ pub fn get_element_breadcrumb_enabled() -> Result<bool, CommandError> {
     Ok(state.element_breadcrumb_enabled.unwrap_or(true))
 }
 
+/// Whether commits Ship Studio makes carry the `Made-With` attribution trailer.
+#[tauri::command]
+#[tracing::instrument]
+pub fn get_commit_attribution_enabled() -> Result<bool, CommandError> {
+    Ok(crate::commands::team::attribution_enabled())
+}
+
+/// Turn the `Made-With` commit trailer on or off.
+///
+/// One switch for the whole thing, per the design: attribution is either in the
+/// history or it is not. It never affects `Ship-Studio-Update`, which is the
+/// feature's join key rather than advertising.
+#[tauri::command]
+#[tracing::instrument]
+pub fn set_commit_attribution_enabled(enabled: bool) -> Result<(), CommandError> {
+    let mut state = read_app_state();
+    state.commit_attribution_enabled = Some(enabled);
+    write_app_state(&state).map_err(CommandError::from)
+}
+
 /// Persist whether the selected element's DOM breadcrumb is shown in the preview.
 #[tauri::command]
 #[tracing::instrument]
