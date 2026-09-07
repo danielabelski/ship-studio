@@ -10,10 +10,18 @@
  * which is the only thing a git remote can tell us and — usefully — the thing
  * people are really asking when they ask who is around.
  *
+ * Built on `ToggleButton` with `className="workspace-panel-toggle"`, exactly
+ * like Agent, Elements, Variables and Comments beside it. It was briefly a
+ * hand-rolled `<button>` with its own borders and hover rules, which is the
+ * per-domain button class CLAUDE.md rules out — and it showed, because it sat
+ * in a row of five controls and was the only one whose pressed and hover
+ * states did not match.
+ *
  * @module components/team/TeamPresence
  */
 
 import { CollaboratorsIcon } from '@/components/icons';
+import { ToggleButton } from '../primitives/ToggleButton';
 import { TeamAvatar } from './TeamAvatar';
 import { formatAgo } from '../../lib/workflows';
 import { activeTeammates, actorKey, type TeamMember } from '../../lib/team';
@@ -53,36 +61,42 @@ export function TeamPresence({
     .join('\n');
 
   return (
-    <button
-      type="button"
-      className={`team-presence${panelOpen ? ' is-open' : ''}`}
-      onClick={onTogglePanel}
-      aria-pressed={panelOpen}
-      title={summary}
-      aria-label={
-        unseenCount > 0
-          ? `Team — ${teammates.length} others, ${unseenCount} new`
-          : `Team — ${teammates.length} others`
-      }
-    >
-      <CollaboratorsIcon size={13} />
-      <span className="team-presence-faces">
-        {shown.map((member) => (
-          <TeamAvatar key={actorKey(member.actor)} actor={member.actor} size="sm" />
-        ))}
-        {overflow > 0 && (
-          <span className="team-avatar team-avatar--sm team-avatar--overflow">
-            <span className="team-avatar-initials" aria-hidden>
-              +{overflow}
+    <span className="team-presence-wrap">
+      <ToggleButton
+        variant={panelOpen ? 'secondary' : 'default'}
+        className="workspace-panel-toggle team-presence"
+        pressed={panelOpen}
+        onClick={onTogglePanel}
+        title={summary}
+        leftIcon={<CollaboratorsIcon size={16} />}
+        aria-label={
+          unseenCount > 0
+            ? `Team — ${teammates.length} others, ${unseenCount} new`
+            : `Team — ${teammates.length} others`
+        }
+      >
+        <span className="team-presence-faces">
+          {shown.map((member) => (
+            <TeamAvatar key={actorKey(member.actor)} actor={member.actor} size="sm" />
+          ))}
+          {overflow > 0 && (
+            <span className="team-avatar team-avatar--sm team-avatar--overflow">
+              <span className="team-avatar-initials" aria-hidden>
+                +{overflow}
+              </span>
             </span>
-          </span>
-        )}
-      </span>
+          )}
+        </span>
+      </ToggleButton>
+
+      {/* Outside the button so it can sit on the corner without the button's
+          own padding pushing it inward — the same arrangement the Comments
+          toggle uses for its pending badge. */}
       {unseenCount > 0 && (
         <span className="team-presence-badge" aria-hidden>
           {unseenCount > 9 ? '9+' : unseenCount}
         </span>
       )}
-    </button>
+    </span>
   );
 }

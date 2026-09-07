@@ -542,9 +542,12 @@
   flex: none;
 }
 
+.team-coverage-heads > .team-avatar {
+  box-shadow: 0 0 0 var(--border-width-default) var(--surface-recessed);
+}
+
 .team-coverage-heads > .team-avatar + .team-avatar {
   margin-left: -6px;
-  box-shadow: 0 0 0 var(--border-width-default) var(--surface-recessed);
 }
 
 .team-coverage-text {

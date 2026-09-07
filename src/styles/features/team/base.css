@@ -153,11 +153,17 @@
   flex: none;
 }
 
-/* Overlap, with each avatar cut out of the one behind it so the stack reads as
-   depth rather than as a smear at small sizes. */
+/* Overlap, with every avatar cut out of the one behind it so the stack reads
+   as depth rather than as a smear at small sizes. The ring goes on all of
+   them, not only the overlapped ones — ringing `+ .team-avatar` alone leaves
+   the first face bare, and one unringed avatar in a row of ringed ones reads
+   as a different kind of thing rather than as the front of a stack. */
+.team-avatar-stack > .team-avatar {
+  box-shadow: 0 0 0 var(--border-width-default) var(--surface-panel);
+}
+
 .team-avatar-stack > .team-avatar + .team-avatar {
   margin-left: -6px;
-  box-shadow: 0 0 0 var(--border-width-default) var(--surface-panel);
 }
 
 /* ------------------------------------------------------------- sync row */

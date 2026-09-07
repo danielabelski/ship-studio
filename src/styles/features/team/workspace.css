@@ -7,29 +7,13 @@
 
 /* -------------------------------------------------- presence, in the header */
 
-.team-presence {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
+/* The button itself is `ToggleButton` with `workspace-panel-toggle`, so every
+   border, shadow, hover and pressed state comes from the button family — the
+   same as Agent, Elements, Variables and Comments beside it. What is left here
+   is only the geometry the face stack needs. */
+.team-presence-wrap {
   position: relative;
-  height: var(--button-height);
-  padding: 0 var(--spacing-sm);
-  background: var(--button-surface-default);
-  border: var(--border-width-default) solid var(--button-border);
-  border-radius: var(--button-radius);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background var(--transition-interaction);
-}
-
-.team-presence:hover {
-  background: var(--button-surface-hover);
-  color: var(--text-secondary);
-}
-
-.team-presence.is-open {
-  background: var(--button-surface-selected);
-  color: var(--text-primary);
+  display: inline-flex;
 }
 
 .team-presence-faces {
@@ -37,13 +21,21 @@
   align-items: center;
 }
 
-.team-presence-faces > .team-avatar + .team-avatar {
-  margin-left: -6px;
+/* Every face gets the ring, not just the overlapped ones. Ringing only
+   `+ .team-avatar` left the first face bare and the rest outlined, which reads
+   as one avatar being a different kind of thing to its neighbours. */
+.team-presence-faces > .team-avatar {
   box-shadow: 0 0 0 var(--border-width-default) var(--surface-panel);
 }
 
+.team-presence-faces > .team-avatar + .team-avatar {
+  margin-left: -6px;
+}
+
 /* On the corner rather than in the row: the face stack is already wide, and a
-   count inline would push it past the space the header has. */
+   count inline would push it past the space the header has. Sits outside the
+   button so the button's padding does not push it inward — the arrangement
+   the Comments toggle uses for its pending badge. */
 .team-presence-badge {
   position: absolute;
   top: -4px;
@@ -60,6 +52,7 @@
   font-size: var(--font-size-micro);
   font-weight: var(--font-weight-label);
   line-height: 1;
+  pointer-events: none;
 }
 
 /* ------------------------------------------- the panel inside the workspace */
@@ -116,9 +109,13 @@
   gap: var(--spacing-xs);
 }
 
+/* A rule under the tabs, because the body scrolls beneath them: without an
+   edge the top card slides up into the tab row and the two read as one
+   collided block. `flex: none` keeps the strip out of the scroll. */
 .team-float-tabs {
   flex: none;
-  padding: var(--spacing-xs) var(--spacing-md) 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: var(--border-width-default) solid var(--border-subtle);
 }
 
 .team-float-body {

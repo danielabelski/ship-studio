@@ -1568,7 +1568,7 @@
       "owner": "Button",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 8
+      "consumerCount": 7
     },
     {
       "name": "--button-surface-hover",
@@ -1577,7 +1577,7 @@
       "owner": "Button",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 14
+      "consumerCount": 13
     },
     {
       "name": "--button-surface-selected",
@@ -1586,7 +1586,7 @@
       "owner": "Button",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 3
+      "consumerCount": 2
     },
     {
       "name": "--button-surface-pressed",
@@ -1613,7 +1613,7 @@
       "owner": "Button",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 6
+      "consumerCount": 5
     },
     {
       "name": "--button-border-outline",
@@ -1667,7 +1667,7 @@
       "owner": "Button",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 29
+      "consumerCount": 28
     },
     {
       "name": "--button-height-compact",
@@ -1703,7 +1703,7 @@
       "owner": "Button",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 24
+      "consumerCount": 23
     },
     {
       "name": "--button-shadow",
@@ -4124,7 +4124,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": true,
-      "consumerCount": 431
+      "consumerCount": 430
     },
     {
       "name": "--text-secondary",
@@ -4133,7 +4133,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": true,
-      "consumerCount": 364
+      "consumerCount": 363
     },
     {
       "name": "--text-muted",
@@ -4142,7 +4142,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": true,
-      "consumerCount": 635
+      "consumerCount": 634
     },
     {
       "name": "--text-faint",
@@ -4196,7 +4196,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 82
+      "consumerCount": 83
     },
     {
       "name": "--border-strong",
@@ -4682,7 +4682,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 45
+      "consumerCount": 44
     },
     {
       "name": "--transition-interaction-slow",
@@ -4817,7 +4817,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 340
+      "consumerCount": 338
     },
     {
       "name": "--spacing-sm",
