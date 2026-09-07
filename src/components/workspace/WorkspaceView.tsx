@@ -65,6 +65,7 @@ import { defaultWorkspaceTab, workspacePreviewCapabilities } from './workspaceVi
 import { useWorkspaceShortcutControls } from '../../hooks/useWorkspaceShortcutControls';
 import { useWorkspacePanelCommands } from '../../hooks/useWorkspacePanelCommands';
 import { useWorkspaceComments } from '../../hooks/useWorkspaceComments';
+import { useWorkspaceVariablesPanel } from '../../hooks/useWorkspaceVariablesPanel';
 import '../../styles/features/notifications.css';
 
 // ---------------------------------------------------------------------------
@@ -761,25 +762,19 @@ export const WorkspaceView = memo(function WorkspaceView({
   const elementTreeAvailable =
     workspaceTab === 'preview' && !isPreviewHidden && elementTreePreviewAvailable;
   const elementTreePanelVisible = elementTreeAvailable && elementTreeVisible;
-  const [variablesPanelVisible, setVariablesPanelVisible] = useState(false);
   const [variablesPanelPinned, , toggleVariablesPanelPinned] = useLocalStorageFlag(
     'variablesPanelPinned',
     false
   );
-  const variablesPanelOpen =
-    isWebProject && workspaceTab === 'preview' && !isPreviewHidden && variablesPanelVisible;
-  useEffect(() => {
-    setVariablesPanelVisible(false);
-  }, [currentProject.path]);
-  const toggleVariablesPanel = useCallback(() => {
-    const shouldOpen = !variablesPanelOpen;
-    setVariablesPanelVisible(shouldOpen);
-    if (shouldOpen) {
-      setIsPreviewHidden(false);
-      setWorkspaceTab('preview');
-      void handleStartDevServer();
-    }
-  }, [handleStartDevServer, setIsPreviewHidden, setWorkspaceTab, variablesPanelOpen]);
+  const variables = useWorkspaceVariablesPanel({
+    isWebProject,
+    workspaceTab,
+    isPreviewHidden,
+    projectPath: currentProject.path,
+    setIsPreviewHidden,
+    setWorkspaceTab,
+    startDevServer: handleStartDevServer,
+  });
   const comments = useWorkspaceComments({
     isWebProject,
     setIsPreviewHidden,
@@ -814,8 +809,8 @@ export const WorkspaceView = memo(function WorkspaceView({
     variablesPanelPinned,
     toggleVariablesPanelPinned,
     isWebProject,
-    variablesPanelOpen,
-    toggleVariablesPanel,
+    variablesPanelOpen: variables.open,
+    toggleVariablesPanel: variables.toggle,
     showPreviewLogs,
     togglePreviewLogs,
   });
@@ -1059,9 +1054,9 @@ export const WorkspaceView = memo(function WorkspaceView({
     onToggleElementTree: toggleElementTree,
     agentPanelVisible: !isAgentPanelHidden,
     onToggleAgentPanel: toggleAgentPanel,
-    variablesPanelVisible: variablesPanelOpen,
+    variablesPanelVisible: variables.open,
     variablesPanelAvailable: isWebProject,
-    onToggleVariablesPanel: toggleVariablesPanel,
+    onToggleVariablesPanel: variables.toggle,
     ...comments.header,
     modes: modesNode,
     headerExtras: (
@@ -1366,10 +1361,10 @@ export const WorkspaceView = memo(function WorkspaceView({
                       toggleElementTreePinned={toggleElementTreePinned}
                       closeElementTree={closeElementTree}
                       setElementTreePreviewAvailable={setElementTreePreviewAvailable}
-                      variablesPanelVisible={variablesPanelVisible}
+                      variablesPanelVisible={variables.open}
                       variablesPanelPinned={variablesPanelPinned}
                       toggleVariablesPanelPinned={toggleVariablesPanelPinned}
-                      closeVariablesPanel={() => setVariablesPanelVisible(false)}
+                      closeVariablesPanel={() => variables.setVisible(false)}
                       pluginProject={pluginProject}
                       pluginActions={pluginActions}
                       pluginTheme={pluginTheme}
