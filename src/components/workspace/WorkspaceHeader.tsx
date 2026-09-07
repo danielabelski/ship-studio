@@ -38,6 +38,7 @@ import {
   ImageIcon,
   PanelLeftIcon,
   VariablesIcon,
+  CommentIcon,
   ActivityIcon,
 } from '@/components/icons';
 import { Button } from '../primitives/Button';
@@ -52,10 +53,10 @@ import type { ChangedFile } from '../../lib/git';
 
 /** Re-exported from lib/plugins so non-UI code can share the list (issue #386). */
 export { HOSTING_PLUGIN_IDS } from '../../lib/plugins';
-import { HOSTING_PLUGIN_IDS } from '../../lib/plugins';
+import { HOSTING_PLUGIN_IDS, NATIVE_HOSTING_IDS } from '../../lib/plugins';
 
 /** The subset of hosting plugins whose controls render inside the Push workflow. */
-export const PUSH_HOSTING_PLUGIN_IDS = ['vercel', 'cloudflare'];
+export { NATIVE_HOSTING_IDS } from '../../lib/plugins';
 
 export interface WorkspaceHeaderProps {
   // Project
@@ -79,6 +80,11 @@ export interface WorkspaceHeaderProps {
   elementTreeVisible: boolean;
   elementTreeAvailable: boolean;
   onToggleElementTree: () => void;
+  commentsVisible: boolean;
+  commentsAvailable: boolean;
+  /** Pending notes in the backlog; badges the toggle when non-zero. */
+  commentsPendingCount: number;
+  onToggleComments: () => void;
   agentPanelVisible: boolean;
   onToggleAgentPanel: () => void;
   variablesPanelVisible: boolean;
@@ -286,6 +292,10 @@ export function WorkspaceHeader({
   elementTreeVisible,
   elementTreeAvailable,
   onToggleElementTree,
+  commentsVisible,
+  commentsAvailable,
+  commentsPendingCount,
+  onToggleComments,
   agentPanelVisible,
   onToggleAgentPanel,
   variablesPanelVisible,
@@ -367,18 +377,11 @@ export function WorkspaceHeader({
       hosting: all.filter((p) => HOSTING_PLUGIN_IDS.includes(p.info.manifest.id)),
     };
   }, [getSlotPlugins]);
-  const pushHostingPlugins = useMemo(
-    () =>
-      toolbarPlugins.hosting.filter((plugin) =>
-        PUSH_HOSTING_PLUGIN_IDS.includes(plugin.info.manifest.id)
-      ),
-    [toolbarPlugins.hosting]
-  );
+  // Hosting is native now (components/hosting), so a hosting plugin no longer
+  // renders anywhere. `usePlugins` skips loading them outright — filtering only
+  // here would still run their activation and background timers.
   const headerHostingPlugins = useMemo(
-    () =>
-      toolbarPlugins.hosting.filter(
-        (plugin) => !PUSH_HOSTING_PLUGIN_IDS.includes(plugin.info.manifest.id)
-      ),
+    () => toolbarPlugins.hosting.filter((p) => !NATIVE_HOSTING_IDS.includes(p.info.manifest.id)),
     [toolbarPlugins.hosting]
   );
 
@@ -460,17 +463,6 @@ export function WorkspaceHeader({
           changedFiles={changedFiles}
           onDiscardChanges={onDiscardChanges}
           excludeClickOutsideSelector=".source-control-push"
-          hostingControls={
-            pushHostingPlugins.length > 0 ? (
-              <PluginSlot
-                name="toolbar"
-                plugins={pushHostingPlugins}
-                project={pluginProject}
-                actions={pluginActions}
-                theme={pluginTheme}
-              />
-            ) : undefined
-          }
         />
       </div>
     </div>
@@ -510,6 +502,25 @@ export function WorkspaceHeader({
         aria-label="Variables"
         data-workspace-panel="variables"
       />
+      <span className="workspace-comments-toggle-wrap">
+        <ToggleButton
+          variant={commentsVisible ? 'secondary' : 'default'}
+          className="workspace-panel-toggle"
+          pressed={commentsVisible}
+          onClick={onToggleComments}
+          disabled={!commentsAvailable}
+          title={commentsAvailable ? 'Comments' : 'Comments are available for web projects'}
+          leftIcon={<CommentIcon size={16} />}
+          aria-label={
+            commentsPendingCount > 0 ? `Comments — ${commentsPendingCount} pending` : 'Comments'
+          }
+        />
+        {commentsPendingCount > 0 && (
+          <span className="workspace-comments-badge" aria-hidden>
+            {commentsPendingCount > 9 ? '9+' : commentsPendingCount}
+          </span>
+        )}
+      </span>
       <Button
         onClick={onOpenAssetsPanel}
         title="Assets"

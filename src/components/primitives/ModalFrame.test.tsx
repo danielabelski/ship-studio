@@ -60,6 +60,54 @@ describe('ModalFrame', () => {
     expect(opener).toHaveFocus();
   });
 
+  it('leaves focus on the field React autoFocused instead of taking it to the close button', () => {
+    // The close "×" is the header's first focusable element, so before this was
+    // fixed every dialog opened with it focused and its tooltip over the
+    // dialog — and Enter or Space, pressed at a field the user believed was
+    // focused, dismissed the dialog instead of typing into it.
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <ModalFrame isOpen={false} onClose={onClose} title="Connect a host" showCloseButton>
+        <input autoFocus aria-label="API token" />
+      </ModalFrame>
+    );
+
+    rerender(
+      <ModalFrame isOpen onClose={onClose} title="Connect a host" showCloseButton>
+        <input autoFocus aria-label="API token" />
+      </ModalFrame>
+    );
+
+    expect(screen.getByLabelText('API token')).toHaveFocus();
+    expect(screen.getByRole('button', { name: /close/i })).not.toHaveFocus();
+  });
+
+  it("honours [data-autofocus] for a target that cannot use React's prop", () => {
+    // React renders no `autofocus` attribute for `autoFocus`, so the attribute
+    // selector this used to rely on matched nothing. `data-autofocus` does get
+    // rendered, and is the opt-in for anything that needs one.
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <ModalFrame isOpen={false} onClose={onClose} title="Pick a project" showCloseButton>
+        <button type="button">Back</button>
+        <button type="button" data-autofocus>
+          Use this project
+        </button>
+      </ModalFrame>
+    );
+
+    rerender(
+      <ModalFrame isOpen onClose={onClose} title="Pick a project" showCloseButton>
+        <button type="button">Back</button>
+        <button type="button" data-autofocus>
+          Use this project
+        </button>
+      </ModalFrame>
+    );
+
+    expect(screen.getByRole('button', { name: 'Use this project' })).toHaveFocus();
+  });
+
   it('wraps keyboard focus at both ends of the dialog', () => {
     render(
       <ModalFrame isOpen onClose={vi.fn()} ariaLabel="Focus trap" showCloseButton={false}>

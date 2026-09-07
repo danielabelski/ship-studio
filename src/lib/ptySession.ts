@@ -29,7 +29,6 @@ export interface OpenPtySessionArgs {
   cols: number;
   rows: number;
   projectPath?: string | null;
-  tabSessionId?: string | null;
 }
 
 export interface OpenPtySessionResult {
@@ -48,16 +47,6 @@ export interface AttachPtySessionResult {
    *  produced). Live data events with `offset < endOffset` are already
    *  contained in `buffer` and must be dropped — see `createAttachGate`. */
   endOffset: number;
-}
-
-export interface PtySessionListItem {
-  sessionId: string;
-  pid: number;
-  alive: boolean;
-  exitCode: number | null;
-  projectPath: string | null;
-  tabSessionId: string | null;
-  createdAtMs: number;
 }
 
 interface DataEventPayload {
@@ -85,7 +74,6 @@ export async function openPtySession(args: OpenPtySessionArgs): Promise<OpenPtyS
     cols: args.cols,
     rows: args.rows,
     projectPath: args.projectPath ?? null,
-    tabSessionId: args.tabSessionId ?? null,
   });
 }
 
@@ -169,13 +157,6 @@ export async function attachPtySession(sessionId: string): Promise<AttachPtySess
 /** Notify the backend that the frontend has detached from this session. */
 export async function detachPtySession(sessionId: string): Promise<void> {
   await invoke('pty_session_detach', { sessionId });
-}
-
-/** Enumerate known sessions, optionally filtered by project path. */
-export async function listPtySessions(projectPath?: string | null): Promise<PtySessionListItem[]> {
-  return invoke<PtySessionListItem[]>('pty_session_list', {
-    projectPath: projectPath ?? null,
-  });
 }
 
 /**

@@ -653,6 +653,37 @@ describe('describeProcessError — npm ERESOLVE (issues #781/#788)', () => {
   });
 });
 
+describe('describeProcessError — npm network blips (issue #883)', () => {
+  const raw = [
+    'npm error code ECONNRESET',
+    'npm error syscall read',
+    'npm error errno -4077',
+    'npm error network read ECONNRESET',
+    'npm error network This is a problem related to network connectivity.',
+    'npm error network In most cases you are behind a proxy or have bad network settings.',
+  ].join('\n');
+
+  it('classifies an ECONNRESET during install as expected, not the unusual exit code', () => {
+    const info = describeProcessError(`${raw}\nProcess exited with code -4077`);
+    expect(info.expected).toBe(true);
+    expect(info.message).toContain('network');
+  });
+
+  it('recognizes the sibling npm network error codes', () => {
+    expect(describeProcessError('npm error network ENOTFOUND registry.npmjs.org').expected).toBe(
+      true
+    );
+    expect(describeProcessError('npm ERR! network ETIMEDOUT').expected).toBe(true);
+    expect(describeProcessError('connect ECONNREFUSED 127.0.0.1:443').expected).toBe(true);
+    expect(describeProcessError('getaddrinfo EAI_AGAIN registry.npmjs.org').expected).toBe(true);
+  });
+
+  it('does not false-positive on unrelated text', () => {
+    expect(describeProcessError('npm error code ERESOLVE').expected).toBe(true); // sanity: still its own branch
+    expect(describeProcessError(new Error('segfault in importer')).expected).toBe(false);
+  });
+});
+
 describe('describeProcessError — GitHub HTTP 499 (issue #806)', () => {
   it('classifies a 499 the same way as a 5xx', () => {
     const info = describeProcessError('HTTP 499: 499  (https://api.github.com/graphql)');

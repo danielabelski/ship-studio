@@ -261,19 +261,6 @@ export function deleteCssRule(
   return invoke<void>('delete_css_rule', { projectPath, file, selector, mediaText, oldInner });
 }
 
-/** A compact media chip for a row: `≥768` / `≤768` for width queries, else the raw
- *  condition; null when the rule isn't media-scoped. */
-export function mediaChipLabel(row: Pick<CascadeRow, 'mediaText' | 'mediaMinPx'>): string | null {
-  if (!row.mediaText && row.mediaMinPx == null) return null;
-  const text = row.mediaText ?? '';
-  const max = /max-width\s*:\s*([\d.]+)px/i.exec(text);
-  if (max) return `≤${Math.round(parseFloat(max[1]))}`;
-  const min = /min-width\s*:\s*([\d.]+)px/i.exec(text);
-  if (min) return `≥${Math.round(parseFloat(min[1]))}`;
-  if (row.mediaMinPx != null) return `≥${row.mediaMinPx}`;
-  return text || null;
-}
-
 /**
  * True when a css write-back rejection means the source went stale under the
  * editor — recoverable by re-locating the rule and retrying. Covers BOTH backend

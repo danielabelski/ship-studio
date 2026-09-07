@@ -18,10 +18,12 @@ import { createWebLinksAddon } from '../../lib/terminalLinks';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { attachWebglRenderer } from '../../lib/terminalWebgl';
+import { assertPromptReady, bracketedPrompt } from '../../lib/terminalPrompt';
 import {
   openPtySession,
   attachPtySession,
   writePtySessionLogged,
+  writePtySession,
   resizePtySessionLogged,
   killPtySession,
   detachPtySession,
@@ -52,6 +54,10 @@ import { logger } from '../../lib/logger';
 import { asCommandError, formatCommandError } from '../../lib/errors';
 import { isResourcePressureError } from '../../lib/errorReporting';
 import { isPointInRect, dropPointToLogical } from '../../lib/dropTarget';
+import {
+  diagnoseZeroSizedContainer,
+  isLegitimatelyHiddenPane,
+} from '../../lib/containerVisibility';
 import { getTerminalGpuEnabled } from '../../lib/settings';
 import { attachedLibraryDirs } from '../../lib/attached-libraries';
 import { sanitizeTerminalTitle } from '../../lib/terminalTitle';
@@ -115,6 +121,8 @@ export interface TerminalHandle {
   write: (data: string) => void;
   /** Paste text into the terminal */
   paste: (data: string) => void;
+  /** Paste one reviewed batch without Enter; resolves only after the PTY accepts it. */
+  pastePrompt?: (data: string) => Promise<void>;
   /** Kill the PTY process */
   kill: () => void;
   /** Whether the agent process has exited and the tab is showing the
@@ -274,14 +282,24 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
             if (!cancelled) setIsReady(true);
           });
       } else if (elapsed > 10_000) {
-        // Safety: if container never gets dimensions after 10s, log and try anyway
-        logger.error('[Terminal] Container never got dimensions after 10s, forcing ready', {
-          agent: agent.id,
-          width: rect.width,
-          height: rect.height,
-          display: container.style.display,
-          parentDisplay: container.parentElement?.style.display,
-        });
+        // Safety: if container never gets dimensions after 10s, log and try
+        // anyway. A pane kept mounted in the background legitimately has no
+        // layout box yet (issue #863) — only a container that's actually in
+        // the visible layout tree and still zero-sized is a genuine stall
+        // worth auto-filing.
+        const diagnostics = diagnoseZeroSizedContainer(container);
+        const context = { agent: agent.id, width: rect.width, height: rect.height, ...diagnostics };
+        if (isLegitimatelyHiddenPane(diagnostics)) {
+          logger.warn(
+            '[Terminal] Container never got dimensions after 10s (pane is hidden), forcing ready',
+            context
+          );
+        } else {
+          logger.error(
+            '[Terminal] Container never got dimensions after 10s, forcing ready',
+            context
+          );
+        }
         void loadNerdFonts()
           .catch(() => {})
           .then(() => {
@@ -781,7 +799,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
           cols: Math.max(term.cols, 2),
           rows: Math.max(term.rows, 2),
           projectPath,
-          tabSessionId: sessionName ?? null,
         });
 
         if (!mounted) {
@@ -1281,6 +1298,24 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
           // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
           (terminalRef.current as any).paste(data);
         }
+      },
+      pastePrompt: async (data: string) => {
+        const sid = ptyRef.current?.sessionId;
+        if (!sid || exitedRef.current || !terminalRef.current)
+          throw new Error('This terminal is not ready. Your comments are still pending.');
+        if (!terminalRef.current.modes.bracketedPasteMode)
+          throw new Error('Open an agent prompt in this terminal before sending comments.');
+        const term = terminalRef.current;
+        const screen = Array.from(
+          { length: term.rows },
+          (_, row) =>
+            term.buffer.active
+              .getLine(term.buffer.active.viewportY + row)
+              ?.translateToString(true) ?? ''
+        ).join('\n');
+        assertPromptReady(screen, lastStatusRef.current === 'thinking');
+        await writePtySession(sid, bracketedPrompt(data));
+        terminalRef.current.focus();
       },
       kill: () => {
         // Imperative kill — used by `closeAllTerminalsForProject` and the

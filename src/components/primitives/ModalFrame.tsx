@@ -244,9 +244,28 @@ function focusInitialElement(
   initialFocusRef: RefObject<HTMLElement | null>
 ) {
   const requested = initialFocusRef.current;
-  const autoFocus = content.querySelector<HTMLElement>('[autofocus]');
+  if (focusElement(requested)) return;
+
+  // React's `autoFocus` prop renders no `autofocus` attribute and sets no
+  // property — it focuses the node itself during commit. So the old
+  // `querySelector('[autofocus]')` here matched nothing, ever, and every dialog
+  // without an `initialFocusRef` fell through to its first focusable element:
+  // the header's "×". That put the close button's tooltip over the dialog on
+  // open, and made Enter or Space — pressed at a field the user believed was
+  // focused — dismiss it.
+  //
+  // Child commits run before an ancestor's layout effect, so by the time this
+  // runs React has already focused whatever asked for it. Honouring that is
+  // enough; nothing has to opt in.
+  const active = typeof document === 'undefined' ? null : document.activeElement;
+  if (active instanceof HTMLElement && active !== content && content.contains(active)) return;
+
+  // `[data-autofocus]` is the attribute-based escape hatch for a dialog whose
+  // intended target cannot use React's prop. Unlike `[autofocus]`, React does
+  // render it.
+  const marked = content.querySelector<HTMLElement>('[data-autofocus]');
   const firstFocusable = getFocusableElements(content)[0] ?? null;
-  if (focusElement(requested) || focusElement(autoFocus) || focusElement(firstFocusable)) return;
+  if (focusElement(marked) || focusElement(firstFocusable)) return;
   content.focus({ preventScroll: true });
 }
 

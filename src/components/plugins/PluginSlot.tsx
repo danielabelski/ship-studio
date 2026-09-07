@@ -20,6 +20,8 @@ import {
 } from '../../contexts/PluginContext';
 import {
   execPluginShell,
+  execPluginFsExists,
+  execPluginFsReadText,
   readPluginStorage,
   writePluginStorage,
   HOSTING_PLUGIN_IDS,
@@ -284,6 +286,10 @@ export function buildContext(
       read: () => readPluginStorage(pluginId, projectPath).catch(report),
       write: (data: Record<string, unknown>) =>
         writePluginStorage(pluginId, projectPath, data).catch(report),
+    },
+    fs: {
+      exists: (path: string) => execPluginFsExists(pluginId, projectPath, path).catch(report),
+      readText: (path: string) => execPluginFsReadText(pluginId, projectPath, path).catch(report),
     },
     invoke: {
       call: <T = unknown,>(command: string, args?: Record<string, unknown>): Promise<T> => {

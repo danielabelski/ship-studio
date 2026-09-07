@@ -25,8 +25,8 @@ pub use worktree::*;
 use crate::errors::CommandError;
 use crate::external_command::run_with_timeout;
 use crate::types::PrerequisiteCheck;
-use crate::utils::{find_executable, get_extended_path, validate_project_path};
-use tracing::{debug, error, info, instrument};
+use crate::utils::{find_executable, get_extended_path};
+use tracing::{debug, info, instrument};
 
 /// Default timeout for git network operations (fetch / pull / push). 60s is
 /// generous but protects the UI/worker against an indefinitely-hanging remote.
@@ -598,43 +598,6 @@ pub async fn ensure_shipstudio_dir() -> Result<String, CommandError> {
     Ok(crate::utils::normalize_separators(
         &projects_dir.to_string_lossy(),
     ))
-}
-
-#[tauri::command]
-#[instrument(name = "init_git_repo", skip(project_path), fields(project = %project_path))]
-pub async fn init_git_repo(project_path: String) -> Result<(), CommandError> {
-    let validated_path = validate_project_path(&project_path)?;
-
-    info!("Initializing git repository");
-
-    // Initialize git repo
-    let output = crate::utils::git_command_in(&validated_path)?
-        .args(["init"])
-        .output()
-        .map_err(|e| {
-            error!(error = %e, "Failed to execute git init");
-            e.to_string()
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        error!(error = %stderr, "git init failed");
-        return Err(stderr.into());
-    }
-
-    // Self-heal a missing user.name/user.email from the gh CLI identity before
-    // the initial commit, mirroring commit_changes/publishing/conflicts —
-    // without it, first-time setup on a machine that never ran `git config`
-    // dies on git's "Please tell me who you are" (issue #679, same class
-    // as #276). Best-effort: ensure_git_identity has its own fallback advice.
-    let _ = crate::commands::github::ensure_git_identity(&validated_path);
-
-    // Stage and commit all files
-    git_stage_and_commit(&validated_path, "Initial commit from Ship Studio")
-        .map_err(CommandError::from)?;
-
-    info!("Git repository initialized successfully");
-    Ok(())
 }
 
 #[cfg(test)]

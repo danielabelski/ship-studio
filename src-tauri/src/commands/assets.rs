@@ -101,8 +101,13 @@ fn validate_asset_path(root_dir: &Path, asset_path: &str) -> Result<PathBuf, Com
 }
 
 /// Helper to convert a file path to Asset struct
-fn path_to_asset(path: &PathBuf, root_dir: &PathBuf) -> Result<Asset, String> {
-    let metadata = fs::metadata(path).map_err(|e| format!("Failed to read metadata: {e}"))?;
+fn path_to_asset(path: &PathBuf, root_dir: &PathBuf) -> Result<Asset, CommandError> {
+    // Returns `CommandError` directly (not `String`) so a macOS EPERM/TCC
+    // denial classifies as `Expected` all the way to the frontend —
+    // round-tripping through `String` first would lose that classification
+    // when it's rebuilt via the blanket `From<String>` impl (issue #886).
+    let metadata = fs::metadata(path)
+        .map_err(|e| crate::utils::classify_fs_error("read asset metadata", path, &e))?;
 
     // Forward slashes on every OS: the Assets panel groups files into folders and
     // renders breadcrumbs by splitting `path` on `/`. On Windows `to_string_lossy()`
@@ -313,7 +318,7 @@ pub async fn upload_asset(
     // Write file
     fs::write(&file_path, file_data).map_err(|e| format!("Failed to write file: {e}"))?;
 
-    path_to_asset(&file_path, &root_dir).map_err(CommandError::from)
+    path_to_asset(&file_path, &root_dir)
 }
 
 /// Delete an asset
@@ -396,7 +401,7 @@ pub async fn rename_asset(
     // Rename
     fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename: {e}"))?;
 
-    path_to_asset(&new_path, &root_dir).map_err(CommandError::from)
+    path_to_asset(&new_path, &root_dir)
 }
 
 /// Create a folder in the assets folder
@@ -540,6 +545,47 @@ pub async fn export_asset(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #886: a permission-denied metadata read must classify as
+    /// `CommandError::Expected` with actionable guidance (via
+    /// `classify_fs_error`), not a bare `CommandError::Other` built from
+    /// `format!("Failed to read metadata: {e}")`. Assumes the test process
+    /// isn't running as root (root ignores the directory-permission bits
+    /// this test relies on).
+    #[test]
+    #[cfg(unix)]
+    fn path_to_asset_classifies_permission_denied_reads() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        // `fs::metadata` (a `stat`) needs no permission on the target file
+        // itself — only search (execute) permission on each directory in the
+        // path. So the restriction has to be on the *containing* directory,
+        // not the file, to make the underlying `stat` fail with EACCES.
+        let locked_dir = root.join("locked");
+        std::fs::create_dir_all(&locked_dir).unwrap();
+        let file = locked_dir.join("logo.png");
+        std::fs::write(&file, b"data").unwrap();
+        std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let err = path_to_asset(&file, &root);
+
+        // Restore permissions so the tempdir can be cleaned up.
+        std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let err = match err {
+            Ok(_) => panic!("a permission-denied metadata read must fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, CommandError::Expected { .. }),
+            "expected CommandError::Expected, got {err:?}"
+        );
+        let message = err.to_string();
+        assert!(message.contains("permission denied"), "got: {message}");
+        assert!(!message.contains("os error"), "got: {message}");
+    }
 
     #[test]
     fn sanitize_accepts_simple_and_nested_roots() {

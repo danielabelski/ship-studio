@@ -16,7 +16,6 @@
 //! unchanged version costs one string comparison.
 
 use crate::agent::{CLAUDE_CODE, CODEX};
-use crate::errors::CommandError;
 use serde::Serialize;
 use std::path::PathBuf;
 use tracing::{debug, warn};
@@ -36,7 +35,7 @@ const SKILL_DIR_NAME: &str = "shipstudio-workflows";
 ///    is the one word a user who hasn't discovered the feature will never say.
 /// 2. **Author.** Once loaded, the format spec is complete enough that the
 ///    agent can write a valid file without asking Ship Studio anything.
-fn skill_markdown() -> String {
+pub(crate) fn skill_markdown() -> String {
     format!(
         r#"---
 name: shipstudio-workflows
@@ -230,13 +229,6 @@ fn write_skill_if_agent_present(dir: &std::path::Path, body: &str) -> std::io::R
     std::fs::write(&file, body)?;
     debug!(?file, "installed the workflows skill");
     Ok(true)
-}
-
-/// Install (or refresh) the skill and report where it landed.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn ensure_workflows_skill() -> Result<Vec<WorkflowsSkillStatus>, CommandError> {
-    Ok(install_workflows_skill())
 }
 
 #[cfg(test)]

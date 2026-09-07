@@ -44,6 +44,8 @@ const KEYCHAIN_PREFIX: &str = "ship-studio-account-";
 const CRED_ENV_VARS: &[(&str, &str)] = &[
     ("anthropic_base_url", "ANTHROPIC_BASE_URL"),
     ("vercel_token", "VERCEL_TOKEN"),
+    ("cloudflare_api_token", "CLOUDFLARE_API_TOKEN"),
+    ("netlify_auth_token", "NETLIFY_AUTH_TOKEN"),
 ];
 
 /// All credential keys storable in the keychain (including git identity,
@@ -51,6 +53,8 @@ const CRED_ENV_VARS: &[(&str, &str)] = &[
 const ALL_CRED_KEYS: &[&str] = &[
     "anthropic_base_url",
     "vercel_token",
+    "cloudflare_api_token",
+    "netlify_auth_token",
     "git_name",
     "git_email",
 ];
@@ -1010,6 +1014,8 @@ pub async fn get_account_credential_status(
         vercel_username,
         has_anthropic_base_url: read_from_keychain(&id, "anthropic_base_url").is_some(),
         has_vercel_token: read_from_keychain(&id, "vercel_token").is_some(),
+        has_cloudflare_api_token: read_from_keychain(&id, "cloudflare_api_token").is_some(),
+        has_netlify_auth_token: read_from_keychain(&id, "netlify_auth_token").is_some(),
         has_git_name: read_from_keychain(&id, "git_name").is_some(),
         has_git_email: read_from_keychain(&id, "git_email").is_some(),
     })
@@ -1263,7 +1269,7 @@ pub fn claude_connect_start(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| format!("openpty: {e}"))?;
+        .map_err(crate::commands::pty_session::openpty_error)?;
     let writer = pair
         .master
         .take_writer()
@@ -1640,7 +1646,7 @@ pub fn workspace_connect_start(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| format!("openpty: {e}"))?;
+        .map_err(crate::commands::pty_session::openpty_error)?;
     let writer = pair
         .master
         .take_writer()

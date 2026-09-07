@@ -47,6 +47,16 @@ const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_
 const WS_UPSTREAM_CONNECT_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(if cfg!(windows) { 12 } else { 5 });
 
+/// Grace period before the WebSocket upgrade's one-shot retry (issue #466)
+/// reconnects. Firing the reconnect immediately after the first attempt's
+/// failure meant it could land on the exact same half-open socket the first
+/// attempt just failed on — the OS hadn't finished tearing it down yet — and
+/// fail with the identical error a second time (issue #802: both attempts
+/// reported "invalid HTTP version parsed", and separately both reported
+/// "connection closed before message completed"). A brief pause gives the
+/// socket time to actually close before the retry opens a new one.
+const WS_RETRY_RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// Timeout for the upstream response headers. Must be generous: dev servers
 /// compile routes on demand and hold the request open until the compile
 /// finishes — tens of seconds on a real dependency tree (the frontend's
@@ -87,6 +97,7 @@ const NAV_SCRIPT: &str = r#"<script>(function(){window.parent.postMessage({type:
 /// The script body lives in `select_script.html` so the same source is shared
 /// with the jsdom behavior test (`src/components/edit/selectScript.test.ts`).
 const SELECT_SCRIPT: &str = include_str!("select_script.html");
+const COMMENTS_SCRIPT: &str = include_str!("comments_script.html");
 
 /// Hides the preview iframe's *default* browser scrollbars — the chunky white
 /// macOS/WebKit bars that frame the rendered site — without hijacking sites that
@@ -192,7 +203,7 @@ impl HeadInjector {
             inject_at_head_start(
                 &buf,
                 &format!(
-                    "{SCROLLBAR_STYLE}{RELOAD_SUPPRESS}{SCROLL_RESTORE}{NAV_SCRIPT}{SELECT_SCRIPT}"
+                    "{SCROLLBAR_STYLE}{RELOAD_SUPPRESS}{SCROLL_RESTORE}{NAV_SCRIPT}{SELECT_SCRIPT}{COMMENTS_SCRIPT}"
                 ),
             )
         } else {
@@ -908,6 +919,23 @@ async fn proxy_http_request(
     }
 }
 
+/// True for the outcome of the WebSocket upgrade's one-shot retry (issue
+/// #466), once the *first*, independent attempt has already failed the same
+/// way. Before issue #802 this only recognized a refused/timed-out reconnect
+/// (`upstream_unavailable`); every other retry failure — a handshake error, a
+/// wrapped `send_request` parse error ("invalid HTTP version parsed"), or a
+/// wrapped `IncompleteMessage` ("connection closed before message
+/// completed") — is wrapped as `io::ErrorKind::Other` by
+/// `std::io::Error::other` and fell through to `tracing::error!`, auto-filing
+/// a bug report. Two consecutive, independent connections failing right after
+/// each other is overwhelmingly a dev server that is down or restarting, not
+/// a proxy defect, so every retry failure is now treated the same way: warn,
+/// 502, no report. The browser's own HMR client retries after the 502
+/// regardless.
+fn websocket_retry_exhausted_is_expected(_kind: std::io::ErrorKind) -> bool {
+    true
+}
+
 /// Connect failures that mean "the dev server isn't listening right now":
 /// refused (nothing bound to the port) or silent (SYN unanswered mid-restart,
 /// surfaced as a per-attempt timeout). Both are normal states while a dev
@@ -1185,44 +1213,55 @@ async fn handle_websocket_upgrade(
             // the loop above applies. Non-I/O arms (handshake, request build)
             // are wrapped as ErrorKind::Other, which never classifies as
             // expected.
-            let retried: Result<Response<hyper::body::Incoming>, std::io::Error> = async {
-                let remaining =
-                    connect_deadline.saturating_duration_since(tokio::time::Instant::now());
-                let remaining = remaining.max(std::time::Duration::from_millis(500));
-                let stream = tokio::time::timeout(
-                    remaining.min(std::time::Duration::from_secs(2)),
-                    connect_loopback(target_port),
-                )
-                .await
-                .map_err(std::io::Error::from)
-                .and_then(|r| r)?;
-                let (mut retry_sender, retry_conn) = hyper::client::conn::http1::Builder::new()
-                    .preserve_header_case(true)
-                    .title_case_headers(true)
-                    .handshake(TokioIo::new(stream))
+            let retried: Result<Response<hyper::body::Incoming>, std::io::Error> =
+                async {
+                    // Let the failed socket actually close before reconnecting
+                    // (issue #802) — capped so a near-exhausted budget still
+                    // leaves time for the reconnect itself.
+                    tokio::time::sleep(WS_RETRY_RECONNECT_DELAY.min(
+                        connect_deadline.saturating_duration_since(tokio::time::Instant::now()),
+                    ))
+                    .await;
+                    let remaining =
+                        connect_deadline.saturating_duration_since(tokio::time::Instant::now());
+                    let remaining = remaining.max(std::time::Duration::from_millis(500));
+                    let stream = tokio::time::timeout(
+                        remaining.min(std::time::Duration::from_secs(2)),
+                        connect_loopback(target_port),
+                    )
                     .await
-                    .map_err(std::io::Error::other)?;
-                tokio::spawn(async move {
-                    if let Err(e) = retry_conn.with_upgrades().await {
-                        tracing::debug!("[Proxy] WebSocket retry client conn error: {}", e);
-                    }
-                });
-                let req = build_forward(empty_body()).map_err(std::io::Error::other)?;
-                retry_sender
-                    .send_request(req)
-                    .await
-                    .map_err(std::io::Error::other)
-            }
-            .await;
+                    .map_err(std::io::Error::from)
+                    .and_then(|r| r)?;
+                    let (mut retry_sender, retry_conn) = hyper::client::conn::http1::Builder::new()
+                        .preserve_header_case(true)
+                        .title_case_headers(true)
+                        .handshake(TokioIo::new(stream))
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    tokio::spawn(async move {
+                        if let Err(e) = retry_conn.with_upgrades().await {
+                            tracing::debug!("[Proxy] WebSocket retry client conn error: {}", e);
+                        }
+                    });
+                    let req = build_forward(empty_body()).map_err(std::io::Error::other)?;
+                    retry_sender
+                        .send_request(req)
+                        .await
+                        .map_err(std::io::Error::other)
+                }
+                .await;
             match retried {
                 Ok(r) => r,
-                Err(e) if upstream_unavailable(e.kind()) => {
-                    // The retry's reconnect was refused or silent: the dev
-                    // server is still down/restarting — the same expected
-                    // state the initial connect loop logs at warn (issue
-                    // #532), so the retry path must not auto-file a bug
-                    // report either (issue #552). The browser-side HMR client
-                    // retries on its own after the 502.
+                Err(e) if websocket_retry_exhausted_is_expected(e.kind()) => {
+                    // The retry itself failed — reconnect refused/silent, a
+                    // handshake error, or the retried send_request erroring
+                    // for any reason (issue #802). The dev server is judged
+                    // still down/restarting, the same expected state the
+                    // initial connect loop logs at warn (issue #532), so this
+                    // must not auto-file a bug report either (issue #552).
+                    // The browser-side HMR client retries on its own after
+                    // the 502. Include the upstream port: without it the
+                    // report is uncorrelatable (issue #293).
                     tracing::warn!(
                         "[Proxy] WebSocket target 127.0.0.1:{} still unavailable on retry: {} (first attempt: {})",
                         target_port,
@@ -1235,8 +1274,6 @@ async fn handle_websocket_upgrade(
                         .unwrap());
                 }
                 Err(e) => {
-                    // Include the upstream port: without it the report is
-                    // uncorrelatable (issue #293).
                     tracing::error!(
                         "[Proxy] WebSocket forward to 127.0.0.1:{} failed after retry: {} (first attempt: {})",
                         target_port,
@@ -1386,6 +1423,7 @@ mod tests {
         connect_upstream_with_retry, is_auth_redirect_loop, is_document_navigation,
         redact_handshake_values, rewrite_localhost_origin, sanitize_csp_for_preview,
         upstream_connection_lost_kind, upstream_connection_lost_source, upstream_unavailable,
+        websocket_retry_exhausted_is_expected,
     };
     use hyper::header::HeaderValue;
     use hyper::StatusCode;
@@ -1522,20 +1560,18 @@ mod tests {
         assert!(attempts >= 1, "got {attempts} attempt(s)");
     }
 
-    /// The one-shot WS retry path (issue #466) must feed the SAME
-    /// classification as the initial connect loop (issue #552): its error is
-    /// kept as an io::Error, with a refused reconnect keeping its kind, a
-    /// tokio timeout mapping to TimedOut, and non-I/O arms wrapped as Other
-    /// so they can never be misclassified as "expected".
+    /// The one-shot WS retry path (issue #466) keeps its error as an
+    /// io::Error, with a refused reconnect keeping its kind and a tokio
+    /// timeout mapping to TimedOut — the same shapes the initial connect loop
+    /// produces (issue #552).
     #[tokio::test]
     async fn ws_retry_errors_keep_their_classification() {
-        // A reconnect refusal keeps ConnectionRefused → expected (warn).
+        // A reconnect refusal keeps ConnectionRefused.
         let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
         assert!(upstream_unavailable(refused.kind()));
 
         // The retry's reconnect timeout (tokio Elapsed → io::Error, the same
-        // `map_err(std::io::Error::from)` the initial loop uses) → TimedOut →
-        // expected (warn).
+        // `map_err(std::io::Error::from)` the initial loop uses) → TimedOut.
         let elapsed: Result<(), _> = tokio::time::timeout(
             std::time::Duration::from_millis(1),
             std::future::pending::<()>(),
@@ -1545,13 +1581,33 @@ mod tests {
         assert_eq!(
             elapsed.unwrap_err().kind(),
             std::io::ErrorKind::TimedOut,
-            "tokio Elapsed must convert to TimedOut for the expected-state classification"
+            "tokio Elapsed must convert to TimedOut"
         );
+    }
 
-        // Handshake / request-build failures are wrapped via io::Error::other
-        // → NOT classified as expected: they stay at error level.
-        let other = std::io::Error::other("handshake failed");
-        assert!(!upstream_unavailable(other.kind()));
+    /// Issue #802: once the WS upgrade's one-shot retry itself fails, EVERY
+    /// outcome must be treated as an expected dev-server-unavailable state —
+    /// not just a refused/timed-out reconnect. Before this fix, a handshake
+    /// failure, a wrapped `send_request` parse error ("invalid HTTP version
+    /// parsed"), and a wrapped IncompleteMessage ("connection closed before
+    /// message completed") were all wrapped as `io::ErrorKind::Other` by
+    /// `std::io::Error::other`, which `websocket_retry_exhausted_is_expected`
+    /// must also cover, or the retry-exhausted path falls back to
+    /// `tracing::error!` and auto-files a bug report for what is, by design,
+    /// a one-shot retry that already gave the dev server a second chance.
+    #[test]
+    fn ws_retry_exhaustion_is_expected_for_every_error_kind() {
+        for kind in [
+            std::io::ErrorKind::ConnectionRefused,
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::Other,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            assert!(
+                websocket_retry_exhausted_is_expected(kind),
+                "retry-exhausted error kind {kind:?} must be treated as expected, not auto-filed"
+            );
+        }
     }
 
     #[test]

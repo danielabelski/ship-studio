@@ -37,6 +37,8 @@ import {
 import { parseRuleBody, serializeRuleBody, overriddenProps, type RuleBody } from '../lib/cssBody';
 import { keyframesName, parseRulePrelude } from '../lib/cssStructures';
 import { logger } from '../lib/logger';
+import { useFrameRebind } from './useFrameRebind';
+import { useSelectionCleared } from './useSelectionCleared';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
 
@@ -157,6 +159,21 @@ export function useCssCascadeEditor({
     (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
     [iframeRef]
   );
+
+  // Nothing is selected any more — either the cascade we are showing was read
+  // out of a frame the editor has since left, or the user clicked the canvas
+  // background and dropped the selection.
+  const forgetSelection = useCallback(() => {
+    setSelection(null);
+    setRows([]);
+    setBodies({});
+    bodiesRef.current = {};
+    baselineInner.current = {};
+    setOverridden({});
+    lastSignatureRef.current = null;
+  }, []);
+  useFrameRebind(iframeRef, forgetSelection);
+  useSelectionCleared(iframeRef, forgetSelection);
 
   const clearTimers = useCallback(() => {
     Object.values(previewTimers.current).forEach(clearTimeout);

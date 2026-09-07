@@ -34,6 +34,21 @@ fn is_unmergeable_ref(stderr: &str) -> bool {
     stderr.to_lowercase().contains("not something we can merge")
 }
 
+/// Git refusing to *start* a new merge because the index already has
+/// unmerged (conflicted) entries left over from an earlier, unfinished merge:
+/// "Merging is not possible because you have unmerged files." /
+/// "Exiting because of an unresolved conflict." This is the same stale
+/// mid-merge index as `switch_branch`'s "resolve your current index first"
+/// guard (issue #417) — most commonly a previous `pull_and_merge` call that
+/// returned `MERGE_CONFLICT` and the user never finished resolving or
+/// aborting. An anticipated repository state, not an app malfunction
+/// (issue #899).
+fn is_unresolved_merge_in_progress(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("merging is not possible because you have unmerged files")
+        || lower.contains("exiting because of an unresolved conflict")
+}
+
 /// Git's normal refusal to merge when a tracked (or untracked) file has local
 /// edits the incoming merge would touch — an anticipated user state the
 /// frontend already turns into a friendly "push or discard first" toast, not a
@@ -212,6 +227,14 @@ pub async fn pull_and_merge(
             warn!(error = %stderr, "Merge ref did not resolve to a commit");
             return Err(CommandError::expected(format!("Failed to merge: {stderr}")));
         }
+        if is_unresolved_merge_in_progress(&stderr) {
+            // A stale mid-merge index from an earlier MERGE_CONFLICT the user
+            // never finished resolving or aborting — an anticipated
+            // repository state, not a malfunction (issue #899, same class as
+            // switch_branch's #417 guard).
+            warn!(error = %stderr, "Merge blocked by an unresolved merge already in progress");
+            return Err(CommandError::expected(format!("Failed to merge: {stderr}")));
+        }
         if let Some(err) = super::classify_git_net_error(&stderr) {
             return Err(err);
         }
@@ -351,7 +374,7 @@ pub async fn commit_changes(project_path: String, message: String) -> Result<boo
 mod tests {
     use super::{
         clean_locked_paths, ensure_repo_rooted_at, is_merge_conflict_output, is_missing_upstream,
-        is_overwrite_refusal, is_unmergeable_ref,
+        is_overwrite_refusal, is_unmergeable_ref, is_unresolved_merge_in_progress,
     };
     use std::process::Command;
 
@@ -378,6 +401,29 @@ mod tests {
             "There is no tracking information for the current branch."
         ));
         assert!(!is_unmergeable_ref(""));
+    }
+
+    // Issue #899: git refusing to *start* a new merge because the index
+    // already has unmerged entries from an earlier, unfinished merge.
+    #[test]
+    fn is_unresolved_merge_in_progress_matches_gits_refusal() {
+        let stderr = "error: Merging is not possible because you have unmerged files.\nhint: Fix them up in the work tree, and then use 'git add/rm <file>'\nhint: as appropriate to mark resolution and make a commit.\nfatal: Exiting because of an unresolved conflict.\n";
+        assert!(is_unresolved_merge_in_progress(stderr));
+        // Sibling classifiers must not claim it.
+        assert!(!is_missing_upstream(stderr));
+        assert!(!is_overwrite_refusal(stderr));
+        assert!(!is_unmergeable_ref(stderr));
+    }
+
+    #[test]
+    fn is_unresolved_merge_in_progress_ignores_other_merge_failures() {
+        assert!(!is_unresolved_merge_in_progress(
+            "error: Your local changes to the following files would be overwritten by merge:"
+        ));
+        assert!(!is_unresolved_merge_in_progress(
+            "CONFLICT (content): Merge conflict in a.txt"
+        ));
+        assert!(!is_unresolved_merge_in_progress(""));
     }
 
     // The #521 shape: git refusing to merge over uncommitted local edits.

@@ -33,6 +33,8 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useFrameRebind } from './useFrameRebind';
+import { useSelectionCleared } from './useSelectionCleared';
 import { twMerge } from 'tailwind-merge';
 import {
   resolveClassnameSource,
@@ -423,6 +425,19 @@ export function useVisualEditor({
     },
     [post, setEditTarget, setLiveClass]
   );
+
+  // Nothing is selected any more — either the editor moved to another preview
+  // frame (the breakpoint canvas), where nothing is marked, or the user clicked
+  // the canvas background and dropped the selection.
+  const forgetSelection = useCallback(() => {
+    setSelection(null);
+    setLiveClass('');
+    setImageTarget(null);
+    setEditTarget({ kind: 'element' });
+    selectedSigRef.current = null;
+  }, [setLiveClass, setImageTarget, setEditTarget]);
+  useFrameRebind(iframeRef, forgetSelection);
+  useSelectionCleared(iframeRef, forgetSelection);
 
   // Activate/deactivate the in-iframe selection layer (external-system sync), and
   // keep it active across HMR reloads (each reload resets the script to inert).

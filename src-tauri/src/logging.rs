@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
-    fmt::{self, format::FmtSpan},
+    fmt::{self},
     layer::SubscriberExt,
     util::SubscriberInitExt,
     EnvFilter,
@@ -146,6 +146,12 @@ pub fn init_logging() -> Result<(), String> {
         tracing_appender::rolling::Builder::new()
             .rotation(tracing_appender::rolling::Rotation::DAILY)
             .filename_prefix("ship-studio.log")
+            // Uncapped rotation was an unbounded-disk-growth bug: daily files
+            // were never deleted, so the log directory grew forever (measured
+            // at ~45MB/day per running instance before the span-close noise
+            // cut below). Two weeks is generous for support/debugging and
+            // now costs single-digit MB/day per file after that cut.
+            .max_log_files(14)
             .build(&log_dir)
             .map_err(std::io::Error::other)
     }) {
@@ -168,11 +174,25 @@ pub fn init_logging() -> Result<(), String> {
 
     // Create the file layer with JSON formatting. `Option<Layer>` is itself a
     // layer, so the disabled case is a no-op rather than a separate build path.
+    //
+    // No `with_span_events(FmtSpan::CLOSE)` here (deliberately — it used to be
+    // on). Every `#[tracing::instrument]`'d command emits one INFO-level
+    // "close" record per call with a busy/idle duration, and on a real
+    // release-build log this was measured at 91.5% of all lines and 90.2% of
+    // all bytes (112,417 of 122,916 lines; ~41MB of a 45MB daily file) —
+    // almost entirely microsecond-scale entries like
+    // `get_dashboard_projects`/`list_accounts`/`snapshot_status` that nobody
+    // reads. Turning it off removes that volume without touching a single
+    // `info!`/`warn!`/`error!` call site: those keep firing at their own
+    // level with the same span context (the span's fields still populate the
+    // "span" object on every event via `with_current_span` below) because
+    // this only stops the *synthetic* close record, not span creation. The
+    // actual diagnostic signal — ~10.5k lines/day of real messages — is
+    // unaffected.
     let file_layer = file_writer.map(|writer| {
         fmt::layer()
             .json()
             .with_writer(writer)
-            .with_span_events(FmtSpan::CLOSE)
             .with_current_span(true)
             .with_target(true)
             .with_file(true)

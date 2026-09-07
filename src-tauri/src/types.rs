@@ -55,7 +55,7 @@ pub struct ProjectInfo {
 }
 
 /// Enhanced project info for dashboard display
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct DashboardProject {
     pub name: String,
     pub path: String,
@@ -89,23 +89,26 @@ pub struct PageInfo {
     pub file_path: String,
 }
 
-// ============ Project Metadata (Publish State Persistence) ============
-
-/// Record of a single publish event (staging or production)
-#[derive(Serialize, Deserialize, Clone)]
-pub struct PublishRecord {
-    pub url: String,
-    pub state: String,
-    #[serde(rename = "publishedAt")]
-    pub published_at: u64,
-}
-
-/// Publish metadata for staging and production
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct PublishMetadata {
-    pub staging: Option<PublishRecord>,
-    pub production: Option<PublishRecord>,
-}
+// ============ Project Metadata ============
+//
+// A `publish: { staging, production }` block used to live here, holding a URL
+// and a free-text state per environment. Nothing ever wrote it and nothing ever
+// read it, and its shape could not answer the question the hosting UI actually
+// asks — it carried no commit SHA, no provider, and no deployment id, so it
+// could not tell you whether *your* push went live. It was removed in schema
+// v4 in favour of `hosting` (see `commands::hosting::model`).
+//
+// What happens to an existing v3 file, verified end to end by
+// `migrating_a_real_v3_file_keeps_everything_and_invents_nothing` in
+// `commands::projects::metadata`: it parses, `migrate()` stamps it v4, and
+// every other field survives. The `publish` key is **not** dropped — it is
+// caught by the `extra` catch-all below and written back verbatim, so it stays
+// on disk indefinitely rather than "until the next write". That is inert
+// today, because nothing in Rust or TypeScript reads it, but it is the reason
+// `publish` must never be reintroduced as a field name: a future struct member
+// with that name would silently inherit a dead deployment URL and state from
+// before the upgrade, which is exactly the "never assume data" failure v4 was
+// meant to end.
 
 /// Information about stashed changes from a branch switch
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -142,7 +145,7 @@ pub struct RestoreResult {
 
 /// Current schema version for project metadata.
 /// Increment this when making breaking changes to the schema.
-pub const PROJECT_METADATA_SCHEMA_VERSION: u32 = 3;
+pub const PROJECT_METADATA_SCHEMA_VERSION: u32 = 4;
 
 /// A single saved terminal tab.
 #[derive(Serialize, Deserialize, Clone)]
@@ -175,7 +178,10 @@ pub struct ProjectMetadata {
     /// Schema version for migration support. Defaults to 1 if not present (legacy files).
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
-    pub publish: PublishMetadata,
+    /// Which provider(s) this project deploys to, and the last deployment we
+    /// saw, so the hosting section can paint before the network answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosting: Option<crate::commands::hosting::model::HostingMetadata>,
     /// Unix timestamp (ms) when project was last opened
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_opened: Option<u64>,
@@ -266,7 +272,7 @@ impl Default for ProjectMetadata {
         ProjectMetadata {
             description: "Ship Studio project metadata. Auto-generated - safe to delete if needed, will be recreated.".to_string(),
             schema_version: PROJECT_METADATA_SCHEMA_VERSION,
-            publish: PublishMetadata::default(),
+            hosting: None,
             last_opened: None,
             branch_prefix_username: None,
             stash_info: None,
@@ -297,10 +303,14 @@ impl ProjectMetadata {
             return false;
         }
 
+        // v3 -> v4 dropped the `publish` block. No data work is needed: the
+        // field is gone from the struct, so it is ignored on read and simply
+        // absent from the next write. Nothing consumed it, so nothing is lost.
+
         // Future migrations go here:
-        // if self.schema_version < 2 {
-        //     // Migrate from v1 to v2
-        //     self.schema_version = 2;
+        // if self.schema_version < 5 {
+        //     // Migrate from v4 to v5
+        //     self.schema_version = 5;
         // }
 
         // Update to current version
@@ -867,6 +877,10 @@ pub struct AppState {
     /// Defaults to false so existing users retain the classic two-row layout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compact_workspace_toolbar_enabled: Option<bool>,
+    /// Whether the selected element's DOM breadcrumb is shown in the preview.
+    /// Defaults to true so existing users retain the current preview layout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_breadcrumb_enabled: Option<bool>,
     /// Consent for automatic project-thumbnail capture. `None` = the user has
     /// never been asked (the in-app explainer is shown before the first
     /// auto-capture), `Some(true)` = allowed, `Some(false)` = opted out or a
@@ -926,6 +940,8 @@ pub struct AccountCredentialStatus {
     pub vercel_username: Option<String>,
     pub has_anthropic_base_url: bool,
     pub has_vercel_token: bool,
+    pub has_cloudflare_api_token: bool,
+    pub has_netlify_auth_token: bool,
     pub has_git_name: bool,
     pub has_git_email: bool,
 }

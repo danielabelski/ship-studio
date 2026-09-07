@@ -482,14 +482,6 @@ pub async fn list_all_workflows() -> Result<Vec<WorkflowView>, CommandError> {
     Ok(views)
 }
 
-/// List the workflows defined in one project.
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn list_project_workflows(project_path: String) -> Result<Vec<Workflow>, CommandError> {
-    let project = validate_project_path(&project_path)?;
-    Ok(read_project_workflows(&project))
-}
-
 /// Create or overwrite a workflow file.
 ///
 /// `slug` is `None` for a create (one is derived from the name, de-duplicated

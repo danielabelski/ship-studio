@@ -9,7 +9,7 @@ use crate::errors::CommandError;
 use crate::types::{
     HealthCheckResult, HealthCheckStatus, PackageManager, ProjectMetadata, ScriptCategory,
 };
-use crate::utils::{create_command, get_extended_path, validate_project_path};
+use crate::utils::{classify_fs_error, create_command, get_extended_path, validate_project_path};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{error, info, warn};
@@ -49,7 +49,7 @@ pub async fn run_health_script(
     // (issue #488, same class as the git fix in #296/#297).
     let Some(resolved_pm) = crate::utils::find_executable(pm_cmd) else {
         return Err(crate::errors::CommandError::expected(format!(
-            "This project uses {pm_cmd}, but it isn't installed or not on PATH, so health              checks can't run. Install {pm_cmd}, then try again."
+            "This project uses {pm_cmd}, but it isn't installed or not on PATH, so health checks can't run. Install {pm_cmd}, then try again."
         )));
     };
 
@@ -111,7 +111,7 @@ async fn save_health_result(
     // Read existing metadata or create default
     let mut metadata = if metadata_path.exists() {
         let contents = std::fs::read_to_string(&metadata_path)
-            .map_err(|e| format!("Failed to read metadata: {e}"))?;
+            .map_err(|e| classify_fs_error("read health results", &metadata_path, &e))?;
         serde_json::from_str::<ProjectMetadata>(&contents).unwrap_or_default()
     } else {
         ProjectMetadata::default()
@@ -143,7 +143,7 @@ async fn save_health_result(
     let contents = serde_json::to_string_pretty(&metadata)
         .map_err(|e| format!("Failed to serialize metadata: {e}"))?;
     std::fs::write(&metadata_path, contents)
-        .map_err(|e| format!("Failed to write metadata: {e}"))?;
+        .map_err(|e| classify_fs_error("write health results", &metadata_path, &e))?;
 
     Ok(())
 }
@@ -162,7 +162,7 @@ pub async fn get_health_status(
     }
 
     let contents = std::fs::read_to_string(&metadata_path)
-        .map_err(|e| format!("Failed to read metadata: {e}"))?;
+        .map_err(|e| classify_fs_error("read health results", &metadata_path, &e))?;
 
     let metadata: ProjectMetadata =
         serde_json::from_str(&contents).map_err(|e| format!("Failed to parse metadata: {e}"))?;
@@ -170,29 +170,55 @@ pub async fn get_health_status(
     Ok(metadata.health)
 }
 
-/// Clear health check results for a project
-#[tauri::command]
-#[tracing::instrument(fields(project = %project_path))]
-pub async fn clear_health_status(project_path: String) -> Result<(), CommandError> {
-    let validated_path = validate_project_path(&project_path)?;
-    let metadata_path = validated_path.join(".shipstudio").join("project.json");
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    if !metadata_path.exists() {
-        return Ok(());
+    /// Issue #886: a permission-denied metadata read must classify as
+    /// `CommandError::Expected` with actionable guidance (via
+    /// `classify_fs_error`), not a bare `CommandError::Other` built from
+    /// `format!("Failed to read metadata: {e}")`. Assumes the test process
+    /// isn't running as root (root ignores the file-permission bits this
+    /// test relies on).
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn save_health_result_classifies_permission_denied_reads() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let shipstudio_dir = tmp.path().join(".shipstudio");
+        std::fs::create_dir_all(&shipstudio_dir).unwrap();
+        let metadata_path = shipstudio_dir.join("project.json");
+        std::fs::write(&metadata_path, "{}").unwrap();
+        // Restrict the file's own read permission — `exists()`/`stat` on the
+        // parent directory still succeeds, so this hits `read_to_string`'s
+        // `open()` failing with EACCES, not a "file doesn't exist" branch.
+        std::fs::set_permissions(&metadata_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = HealthCheckResult {
+            status: "pass".to_string(),
+            last_run: chrono::Utc::now().to_rfc3339(),
+            duration_ms: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+            script_name: "test".to_string(),
+            category: ScriptCategory::Test,
+        };
+
+        let err = save_health_result(tmp.path(), &ScriptCategory::Test, &result)
+            .await
+            .expect_err("a permission-denied read must fail");
+
+        // Restore permissions so the tempdir can be cleaned up.
+        std::fs::set_permissions(&metadata_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(
+            matches!(err, CommandError::Expected { .. }),
+            "expected CommandError::Expected, got {err:?}"
+        );
+        let message = err.to_string();
+        assert!(message.contains("permission denied"), "got: {message}");
+        assert!(!message.contains("os error"), "got: {message}");
     }
-
-    let contents = std::fs::read_to_string(&metadata_path)
-        .map_err(|e| format!("Failed to read metadata: {e}"))?;
-
-    let mut metadata: ProjectMetadata =
-        serde_json::from_str(&contents).map_err(|e| format!("Failed to parse metadata: {e}"))?;
-
-    metadata.health = None;
-
-    let contents = serde_json::to_string_pretty(&metadata)
-        .map_err(|e| format!("Failed to serialize metadata: {e}"))?;
-    std::fs::write(&metadata_path, contents)
-        .map_err(|e| format!("Failed to write metadata: {e}"))?;
-
-    Ok(())
 }

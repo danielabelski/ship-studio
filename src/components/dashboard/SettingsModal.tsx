@@ -4,6 +4,8 @@
  * Contains:
  * - Projects folder (where projects are listed/created), with an optional move
  * - General settings and Appearance settings, including workspace layout and icon selection
+ * - Experimental: opt-in toys and half-finished ideas, kept out of Appearance so
+ *   that tab stays about how the app looks
  * - Analytics opt-out toggle
  *
  * @module components/SettingsModal
@@ -32,6 +34,9 @@ import {
   setTerminalGpuEnabled,
   getCompactWorkspaceToolbarEnabled,
   setCompactWorkspaceToolbarEnabled,
+  getElementBreadcrumbEnabled,
+  setElementBreadcrumbEnabled,
+  ELEMENT_BREADCRUMB_ENABLED_CHANGED_EVENT,
   getThumbnailsEnabled,
   setThumbnailsEnabled,
   getSpotifyWidgetEnabled,
@@ -71,7 +76,7 @@ interface MovePrompt {
   info: MovableProjects;
 }
 
-type SettingsTab = 'general' | 'appearance';
+type SettingsTab = 'general' | 'appearance' | 'experimental';
 
 export function SettingsModal({
   isOpen,
@@ -94,6 +99,7 @@ export function SettingsModal({
   const [appIcon, setLocalAppIcon] = useState<AppIcon>('brand');
   const [terminalGpuEnabled, setLocalTerminalGpuEnabled] = useState(true);
   const [compactWorkspaceToolbarEnabled, setLocalCompactWorkspaceToolbarEnabled] = useState(false);
+  const [elementBreadcrumbEnabled, setLocalElementBreadcrumbEnabled] = useState(true);
   const [thumbnailsOn, setLocalThumbnailsOn] = useState(true);
   const [spotifyWidgetEnabled, setLocalSpotifyWidgetEnabled] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('general');
@@ -118,6 +124,7 @@ export function SettingsModal({
         selectedAppIcon,
         gpuEnabled,
         compactToolbarEnabled,
+        breadcrumbEnabled,
         thumbnails,
         spotifyEnabled,
         root,
@@ -130,6 +137,7 @@ export function SettingsModal({
         getAppIcon(),
         getTerminalGpuEnabled(),
         getCompactWorkspaceToolbarEnabled(),
+        getElementBreadcrumbEnabled(),
         getThumbnailsEnabled(),
         isMac() ? getSpotifyWidgetEnabled() : Promise.resolve(false),
         getProjectsRoot().catch(() => ''),
@@ -143,6 +151,7 @@ export function SettingsModal({
         setLocalAppIcon(selectedAppIcon);
         setLocalTerminalGpuEnabled(gpuEnabled);
         setLocalCompactWorkspaceToolbarEnabled(compactToolbarEnabled);
+        setLocalElementBreadcrumbEnabled(breadcrumbEnabled);
         // `null` = not asked yet; the toggle reflects the default-on behavior
         // (the first auto-capture will show the in-app explainer).
         setLocalThumbnailsOn(thumbnails !== false);
@@ -175,6 +184,25 @@ export function SettingsModal({
     window.addEventListener(DASHBOARD_VISIBILITY_CHANGED_EVENT, handleVisibilityChanged);
     return () =>
       window.removeEventListener(DASHBOARD_VISIBILITY_CHANGED_EVENT, handleVisibilityChanged);
+  }, []);
+
+  // Keep the Appearance toggle in sync with previews and other Settings modal
+  // instances that share the persisted preference.
+  useEffect(() => {
+    const handleElementBreadcrumbChanged = (event: Event) => {
+      const detail = (event as CustomEvent<boolean>).detail;
+      if (typeof detail === 'boolean') setLocalElementBreadcrumbEnabled(detail);
+    };
+
+    window.addEventListener(
+      ELEMENT_BREADCRUMB_ENABLED_CHANGED_EVENT,
+      handleElementBreadcrumbChanged
+    );
+    return () =>
+      window.removeEventListener(
+        ELEMENT_BREADCRUMB_ENABLED_CHANGED_EVENT,
+        handleElementBreadcrumbChanged
+      );
   }, []);
 
   // The sidebar (which renders the widget) isn't a child of this modal, so a
@@ -270,6 +298,17 @@ export function SettingsModal({
       $screen_name: 'Settings',
     });
   }, [compactWorkspaceToolbarEnabled]);
+
+  const handleElementBreadcrumbToggle = useCallback(() => {
+    const enabled = !elementBreadcrumbEnabled;
+    setLocalElementBreadcrumbEnabled(enabled);
+    void setElementBreadcrumbEnabled(enabled);
+    void trackEvent('setting_changed', {
+      setting: 'element_breadcrumb',
+      value: enabled,
+      $screen_name: 'Settings',
+    });
+  }, [elementBreadcrumbEnabled]);
 
   const handleThumbnailsToggle = useCallback(() => {
     const newEnabled = !thumbnailsOn;
@@ -397,6 +436,9 @@ export function SettingsModal({
             </TabsTab>
             <TabsTab value="appearance" width="fill" className="command-palette-tab">
               Appearance
+            </TabsTab>
+            <TabsTab value="experimental" width="fill" className="command-palette-tab">
+              Experimental
             </TabsTab>
           </TabsList>
 
@@ -598,29 +640,6 @@ export function SettingsModal({
                       </span>
                     </button>
                   </div>
-                  {isMac() && (
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Spotify controls</span>
-                        <span className="settings-row-description">
-                          Show what's playing in Spotify in the sidebar, with play/pause and skip
-                          controls. macOS will ask permission to control Spotify the first time.
-                        </span>
-                      </div>
-                      <button
-                        className={`settings-toggle ${spotifyWidgetEnabled ? 'on' : 'off'}`}
-                        onClick={handleSpotifyWidgetToggle}
-                        disabled={loading}
-                        role="switch"
-                        aria-label="Spotify controls"
-                        aria-checked={spotifyWidgetEnabled}
-                      >
-                        <span className="settings-toggle-track">
-                          <span className="settings-toggle-thumb" />
-                        </span>
-                      </button>
-                    </div>
-                  )}
                 </div>
                 <div className="settings-row">
                   <div className="settings-row-info">
@@ -637,6 +656,26 @@ export function SettingsModal({
                     role="switch"
                     aria-label="Compact workspace toolbar"
                     aria-checked={compactWorkspaceToolbarEnabled}
+                  >
+                    <span className="settings-toggle-track">
+                      <span className="settings-toggle-thumb" />
+                    </span>
+                  </button>
+                </div>
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Show element breadcrumb</span>
+                    <span className="settings-row-description">
+                      Show the selected element&apos;s DOM path along the bottom of the preview.
+                    </span>
+                  </div>
+                  <button
+                    className={`settings-toggle ${elementBreadcrumbEnabled ? 'on' : 'off'}`}
+                    onClick={handleElementBreadcrumbToggle}
+                    disabled={loading}
+                    role="switch"
+                    aria-label="Show element breadcrumb"
+                    aria-checked={elementBreadcrumbEnabled}
                   >
                     <span className="settings-toggle-track">
                       <span className="settings-toggle-thumb" />
@@ -672,6 +711,46 @@ export function SettingsModal({
                       </button>
                     ))}
                   </div>
+                </div>
+              </div>
+            </div>
+          </TabsPanel>
+
+          {/* Things that are switched off by default and might not survive.
+              Kept out of Appearance because none of this is about how the app
+              looks — putting a Spotify remote under "Appearance" was a stretch
+              even with one of them. */}
+          <TabsPanel value="experimental" className="settings-tab-panel">
+            <div className="settings-modal-body">
+              <div className="settings-section">
+                <div className="settings-group">
+                  {isMac() ? (
+                    <div className="settings-row">
+                      <div className="settings-row-info">
+                        <span className="settings-row-label">Spotify controls</span>
+                        <span className="settings-row-description">
+                          Show what's playing in Spotify in the sidebar, with play/pause and skip
+                          controls. macOS will ask permission to control Spotify the first time.
+                        </span>
+                      </div>
+                      <button
+                        className={`settings-toggle ${spotifyWidgetEnabled ? 'on' : 'off'}`}
+                        onClick={handleSpotifyWidgetToggle}
+                        disabled={loading}
+                        role="switch"
+                        aria-label="Spotify controls"
+                        aria-checked={spotifyWidgetEnabled}
+                      >
+                        <span className="settings-toggle-track">
+                          <span className="settings-toggle-thumb" />
+                        </span>
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="settings-empty-note">
+                      Nothing experimental for this platform yet.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

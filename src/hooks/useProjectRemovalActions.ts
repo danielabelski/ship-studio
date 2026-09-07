@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import type { DashboardProject } from '../lib/project';
 import { deleteProject, removeProjectFromApp } from '../lib/project';
-import { asCommandError, formatCommandError } from '../lib/errors';
+import { asCommandError, formatCommandError, isProjectFolderGoneError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { trackError, trackEvent } from '../lib/analytics';
 
@@ -63,13 +63,23 @@ export function useProjectRemovalActions({
       removeProjectFromSelection(project.path);
       await loadAll();
     } catch (error) {
-      trackError('project_delete', error, 'Dashboard');
-      // CommandError rejections are plain tagged objects, not Error instances —
-      // String(error) renders them as "[object Object]" (issue #633). Format
-      // them the same way the user-facing alert below already does.
-      logger.error('Failed to delete project', {
-        error: formatCommandError(asCommandError(error)),
-      });
+      // A folder that's already gone (deleted/moved/renamed outside Ship
+      // Studio) is a normal, by-design environment change — not a
+      // malfunction. Skip trackError and use warn so it isn't auto-filed as
+      // a bug (issue #878, same class as #877's backend classification).
+      if (isProjectFolderGoneError(error)) {
+        logger.warn('Could not delete project — its folder no longer exists', {
+          error: formatCommandError(asCommandError(error)),
+        });
+      } else {
+        trackError('project_delete', error, 'Dashboard');
+        // CommandError rejections are plain tagged objects, not Error instances —
+        // String(error) renders them as "[object Object]" (issue #633). Format
+        // them the same way the user-facing alert below already does.
+        logger.error('Failed to delete project', {
+          error: formatCommandError(asCommandError(error)),
+        });
+      }
       alert('Failed to delete project: ' + formatCommandError(asCommandError(error)));
     } finally {
       setDeleting(false);
@@ -91,10 +101,19 @@ export function useProjectRemovalActions({
       await loadAll();
       showToast(`${project.name} was removed from Ship Studio`, 'success');
     } catch (error) {
-      trackError('project_remove_from_app', error, 'Dashboard');
-      logger.error('Failed to remove project from Ship Studio', {
-        error: formatCommandError(asCommandError(error)),
-      });
+      // The folder is already gone — a normal, by-design environment change
+      // (moved/renamed/deleted outside Ship Studio), not a malfunction. Skip
+      // trackError and use warn so it isn't auto-filed as a bug (issue #878).
+      if (isProjectFolderGoneError(error)) {
+        logger.warn('Could not remove project — its folder no longer exists', {
+          error: formatCommandError(asCommandError(error)),
+        });
+      } else {
+        trackError('project_remove_from_app', error, 'Dashboard');
+        logger.error('Failed to remove project from Ship Studio', {
+          error: formatCommandError(asCommandError(error)),
+        });
+      }
       showToast(`Failed to remove project: ${formatCommandError(asCommandError(error))}`, 'error');
     } finally {
       setRemoving(false);

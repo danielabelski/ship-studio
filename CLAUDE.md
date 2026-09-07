@@ -5,7 +5,7 @@
 Ship Studio is a desktop app for web developers that provides:
 - **Project Management** - Create new projects from templates (web + mobile starters), import repos from GitHub, register external local folders, and organize the dashboard with folders
 - **AI Agent Terminal** - Integrated terminal for Claude Code, Codex, or Opencode, with multi-tab and side-by-side panes
-- **Live Preview** - Responsive breakpoints, zoom, fullscreen mode, and a locale switcher for multilingual projects
+- **Live Preview** - Responsive breakpoints, zoom, fullscreen mode, and a locale switcher for multilingual projects. The breakpoint canvas shows every breakpoint at once, side by side, each showing its whole page at an honest viewport height, with editing in whichever frame is active (see `docs/breakpoint-canvas.md`)
 - **Visual Editing** - Point-and-click edit mode on the preview with a pinnable editor panel and a Webflow-style element tree (fullscreen)
 - **Mobile App Preview** - Build and mirror Expo / React Native / Flutter apps on the iOS simulator inside the workspace
 - **Branch Management** - Create, switch, and manage git branches
@@ -17,7 +17,7 @@ Ship Studio is a desktop app for web developers that provides:
 - **Plugins, Skills & MCP** - Extend the app with plugins; install agent skills and configure MCP servers
 - **Command Palette** - Cmd+K palette; every user-facing feature registers its actions here (see "New feature → contribute commands")
 - **IDE Integration** - Open projects in VS Code or Cursor with one click
-- **Vercel Deployment** - Publish to staging/production via Vercel integration
+- **Hosting Status** - After a push, see whether *that commit* deployed on Vercel, Cloudflare Pages or Netlify, with the build error when it didn't (see "Hosting Flow")
 - **Auto-Updates** - Automatic update detection and installation
 
 ## Core Principles
@@ -33,8 +33,13 @@ Ship Studio is a desktop app for web developers that provides:
 
 ### Data Storage
 - Project metadata is stored in `.shipstudio/project.json` within each project
-- This file stores: last_opened timestamp, publish records (staging/production with URL, state, publishedAt)
-- Vercel project linking info is in `.vercel/project.json` (managed by Vercel CLI)
+- This file stores: last_opened timestamp, and the project's hosting link (provider, project id, scope)
+- Schema v4 replaced the old `publish` block (staging/production URL + state + timestamp). It carried
+  no commit SHA, provider or deployment id, so it could not say *which* push it described — and it was
+  written from assumption rather than from a provider's answer. Deployment state is not cached in the
+  repo at all now; it is fetched per commit into a short-lived in-memory cache
+- Provider links are read from the CLIs' own files (`.vercel/project.json`, `.netlify/state.json`) or
+  set explicitly by the user; a link is never inferred from a folder merely existing
 - Only trust data that was explicitly saved - don't infer state from file existence alone
 
 ## Architecture
@@ -51,6 +56,7 @@ Ship Studio is a desktop app for web developers that provides:
 Command modules in `src-tauri/src/commands/`. Domains with submodules are directories:
 - `git/` - Git operations (branches, status, stash, sync) with TTL caching
 - `health/` - Project health checks (dependency audit, diagnostics)
+- `hosting/` - Native hosting status: per-provider adapters (Vercel, Cloudflare Pages, Netlify) over one provider-agnostic model, plus credential discovery, commit lookup and build logs
 - `ide/` - VS Code/Cursor launch, preview screenshots
 - `plugins/` - Plugin lifecycle and storage
 - `projects/` - Project CRUD: detection, metadata, dev-server config, pins, sessions, templates, UI state, window registry
@@ -79,7 +85,7 @@ Single-file domains:
 - `monorepo.rs` - Workspace detection for pnpm/yarn/npm monorepos
 - `proxy.rs` - Preview proxy control (the proxy itself lives in `src-tauri/src/proxy/`)
 - `pty_session.rs` - Long-lived backend-owned PTY sessions (e.g. mobile builds)
-- `publishing.rs` - Vercel deployment workflow and publish record tracking
+- `publishing.rs` - Pushing the current branch to origin, and the git-push error taxonomy
 - `pull_requests.rs` - PR listing and creation via `gh` CLI
 - `settings.rs` - App-level settings persistence
 - `snapshots.rs` - Project snapshots / backups (rewind)
@@ -111,6 +117,7 @@ Single-file domains:
 - `preview/` - Live preview, browser tools, device mirror (mobile), locale switcher, screenshots
 - `branches/` - Git/branch UI: branches/PR tabs, conflict resolution, diff, publish controls, GitHub button
 - `code/` - Code mode: viewer, file tree, code tab, health panel
+- `hosting/` - The Push popover's Hosting section: the fixed-geometry row, the address rows, the connect and link-picker flows, and the Deployments panel
 - `plugins/` - Plugin manager/slots/dropdown, MCP and Skills modals
 - `workflows/` - Workflows list, row, editor, template picker, run history
 - `inbox/` - Findings list and the report reader
@@ -147,10 +154,12 @@ Key modules in `src/lib/` (not exhaustive — `ls src/lib` for the full list):
 - `fonts.ts` - Font loading utilities for the terminal
 - `git.ts` - Git operations wrapper (status, commits, branches)
 - `github.ts` - GitHub operations (auth, push, clone) and publishing flow
+- `hosting.ts` / `hostingCopy.ts` - Hosting: the TS mirror of the Rust model, the invoke wrappers, the `deriveSectionState` reducer, and every user-facing string in the section (written to fit a 184px column — see the Hosting Flow)
 - `i18n.ts` - Multilingual support: status/config wrappers, full-ISO language search, locale path helpers for the preview switcher, and agent prompt builders (translate, App Router next-intl setup, removal cleanup)
 - `logger.ts` - Structured frontend logging
 - `mcp.ts` / `skills.ts` / `plugins.ts` / `plugin-loader.ts` - Agent extensions and the plugin system
 - `mobile.ts` / `androidMirror.ts` - Mobile app preview and device mirror
+- `previewCanvas.ts` - Breakpoint-canvas geometry and zoom maths (layout, fit scale, device heights, mount window, pointer anchoring) — see `docs/breakpoint-canvas.md`
 - `polling.ts` - Exponential backoff utilities for async operations
 - `project.ts` - Project metadata and file operations
 - `workflows.ts` / `workflowsStore.ts` / `workflowHandoff.ts` / `workflowTemplates.ts` - Workflows & Inbox: types mirroring the Rust shapes, the store over the Tauri commands, the queue that carries a finding's prompt into a workspace terminal, and the template library the new-workflow picker is built from
@@ -160,6 +169,39 @@ Key modules in `src/lib/` (not exhaustive — `ls src/lib` for the full list):
 - `updater.ts` - Auto-update functionality and version checking
 
 ## Testing
+
+### Looking at the UI (do this before guessing)
+
+You can see this app. `pnpm harness` boots the **real** frontend in a browser
+against a fixture backend, and `scripts/harness-capture.mjs` screenshots any
+state — no Tauri build, no particular machine state, no third-party accounts.
+
+```bash
+pnpm harness &                          # 127.0.0.1:1425
+pnpm harness:capture                    # ~70 PNGs + harness/shots/report.md
+```
+
+Use it whenever the question is "what does this look like", "did my change
+render", or "what happens with an empty/failed/expired state" — those are
+answerable directly instead of by reading components and inferring.
+
+Two sources of coverage:
+
+- **Scenarios** (`src/harness/scenarios/`) — states that are slow to reach for
+  real: empty account, fresh machine, 24 projects, failed deploy, expired
+  token, merge conflicts. Each says what to check.
+- **Palette sweep** (`--commands`) — every command in the Cmd+K registry, one
+  page load each. Because every feature must register there (see "New feature →
+  contribute commands"), new features get coverage automatically.
+
+**The rule:** a Tauri command with no fixture is never given a plausible
+default — it is recorded, badged, and fails the run. A screenshot from a
+scenario with unmocked commands is *incomplete* and is not evidence. Add the
+fixture, copying the shape from the `invoke<...>` type at the real call site
+including its casing.
+
+It cannot tell you anything about Rust, and it runs in Chrome rather than
+WKWebView. Full guide: [docs/ui-harness.md](docs/ui-harness.md).
 
 ### Frontend Tests (Vitest + React Testing Library)
 ```bash
@@ -312,10 +354,40 @@ These names predate the layered token system. Product code must use the canonica
 ## Common Patterns
 
 ### Publishing Flow
-1. User clicks Publish in PublishBranchDropdown
-2. Backend pushes to GitHub (staging or main branch)
-3. Vercel auto-deploys via GitHub integration
-4. Result (URL, state, timestamp) is saved to `.shipstudio/project.json`
+1. User clicks Push in `PublishBranchDropdown`
+2. `publish_branch` commits any pending changes and pushes the **current** branch to origin
+3. Whatever the project's host does next is the host's business — we push, we don't deploy
+
+That last point is the change: publishing used to push `HEAD:staging` or `HEAD:main` and then
+record `{ url, state, publishedAt }` into `.shipstudio/project.json`. The state was assumed rather
+than observed (a literal `"QUEUED"`), the URL was empty or assembled from the project name, and
+nothing invalidated it. Deployment truth is now *asked for*, per commit, by the Hosting Flow below.
+
+### Hosting Flow
+
+Answers one question: **did the commit I just pushed actually deploy?**
+
+1. `get_hosting_status` resolves the pushed commit (`origin/<branch>`), reads the project's link
+   (`.vercel/project.json`, `.netlify/state.json`, or one the user picked), and asks that provider
+   for a deployment **matching that SHA** — never "the most recent deployment", which answers a
+   different question and is what the old plugin did
+2. Credentials come from the keychain first, then the provider CLI's own login file. A rejected
+   token (401 **or** 403) is `Auth::Rejected` and renders as a broken connection — never as healthy,
+   and never as data
+3. `deriveSectionState` (`src/lib/hosting.ts`) folds auth, link, transport and timing into exactly
+   one state. Order encodes the honesty rules: nothing pushed beats everything; auth problems beat
+   data; a missing deployment is only ever "not found", never "failed"
+4. The row prints the provider's own status word (`status_label`) verbatim — "Ready", "Uploading",
+   "Pending review" — so this and the provider's dashboard never disagree. We own the sentence
+   around those words, not the words
+5. Copy is written to fit: the row's two upper lines get a 184px ellipsised column with no tooltip,
+   so anything longer than ~32 characters belongs on the third line, which wraps. A unit test holds
+   every string to that budget and the UI harness reports anything that still overflows
+6. A failure fetches its own build log and shows the error line, which is the thing people open the
+   dashboard for
+
+Verified against live accounts for all three providers, with what is observed versus assumed
+recorded in [docs/internal/hosting-provider-matrix.md](docs/internal/hosting-provider-matrix.md).
 
 ### Pull Request Flow
 1. User clicks "Submit for Review" on a branch
@@ -333,6 +405,16 @@ These names predate the layered token system. Product code must use the canonica
 5. In the Inbox, "Fix in \<project\>" queues the suggested prompt (`lib/workflowHandoff.ts`), opens the workspace, and `useWorkflowHandoff` types it once a terminal exists
 
 Full design: [docs/workflows-inbox.md](docs/workflows-inbox.md).
+
+### Breakpoint Canvas Flow
+
+1. "Every breakpoint" is the last option in the preview toolbar's viewport control — the same segmented control as the devices — or Cmd+K → "Show every breakpoint". A pane too narrow for the icon strip gets the same list from the overflow button beside refresh
+2. Each frame shows its page IN FULL at its own device width. That should be impossible — an iframe's height is the viewport it reports — so the injected script makes the page believe it is on that device instead: viewport units rewritten, root height pinned (percentage chains), and `window.innerHeight` answered with the device (JS-driven sizing, which is otherwise a runaway)
+3. Exactly one frame is active: interactive, editor-bound, inspected, and what screenshots crop to. `usePreviewEditorFrame` re-binds the editor hooks by changing the ref's object identity. What the others give up is only editability — **every** frame on a canvas holds still (`ss:canvas`), because a frame here is a whole page and an animation anywhere in it repaints the lot, forever; exempting the active frame alone doubled the preview's idle CPU on a real page. A frame nobody is in is additionally told it is a background tab (`ss:passive`): `hidden` is reported and its rAF clock suspended
+4. Wheel and gesture events that land on a frame never reach the app — the injected script forwards zoom gestures up with their coordinates, and hands up any wheel the page has no scroll left to spend so it pans the canvas
+5. The canvas itself does not scroll. A gesture moves a **camera** (`useCanvasCamera`) which writes one composited transform per animation frame and tells React only once the gesture settles; a native scroll container put position in `scrollLeft` and forced a full layout of four live pages on every event of a pinch. Frames are `scrolling="no"` — a frame's scrollbar is subtracted from the width its media queries are evaluated at, which flipped the 1024px frame below its own breakpoint and made it measure thousands of pixels too tall
+6. Everything the canvas adds is off until `ss:canvas` arrives, so the ordinary single-frame preview costs exactly what it did before
+7. Full design, including the measured performance numbers and the known limits: [docs/breakpoint-canvas.md](docs/breakpoint-canvas.md)
 
 ### Languages (Multilingual / i18n) Flow
 1. Cmd+K → "Languages" opens `LanguagesModal` (`useModal('i18n')`)
@@ -608,6 +690,12 @@ export function useBranchCommands({ currentBranch, switchBranch, hasConflicts }:
 - Anything that'd need more than two UI prompts after triggering — build a dedicated flow instead.
 
 See `src/commands/` for the infra (registry, scorer, frecency, `useCommands`) and `src/commands/useAppCommands.tsx` for a canonical example.
+
+**A second reason to follow this rule:** the UI harness sweeps the palette
+registry to screenshot every feature (`node scripts/harness-capture.mjs
+--commands`). A feature that registers its commands gets visual coverage for
+free; one that doesn't is invisible to review. See
+[docs/ui-harness.md](docs/ui-harness.md).
 
 ---
 

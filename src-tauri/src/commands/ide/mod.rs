@@ -16,7 +16,6 @@ use crate::errors::CommandError;
 use crate::types::{BrowserInfo, IdeAvailability};
 use crate::utils::{create_command, validate_project_path};
 use std::path::{Path, PathBuf};
-use tauri::{Manager, WebviewUrl};
 
 /// Browser configurations for macOS
 /// Tuple: (id, display_name, app_path)
@@ -318,34 +317,4 @@ pub async fn open_url_in_browser(url: String, browser_id: String) -> Result<(), 
         let _ = (url, browser_id);
         Err(("Browser selection not supported on this platform".to_string()).into())
     }
-}
-
-#[tauri::command]
-#[tracing::instrument(skip(app))]
-pub async fn open_studio_window(
-    app: tauri::AppHandle,
-    url: String,
-    title: String,
-) -> Result<(), CommandError> {
-    use tauri::WebviewWindowBuilder;
-
-    // Check if studio window already exists
-    if let Some(window) = app.get_webview_window("studio") {
-        // Focus existing window and navigate to URL
-        window.set_focus().map_err(|e| e.to_string())?;
-        let parsed_url: url::Url = url.parse().map_err(|e: url::ParseError| e.to_string())?;
-        window.navigate(parsed_url).map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    // Create new studio window
-    let parsed_url: url::Url = url.parse().map_err(|e: url::ParseError| e.to_string())?;
-    WebviewWindowBuilder::new(&app, "studio", WebviewUrl::External(parsed_url))
-        .title(&title)
-        .inner_size(1000.0, 700.0)
-        .resizable(true)
-        .build()
-        .map_err(|e| format!("Failed to create studio window: {e}"))?;
-
-    Ok(())
 }

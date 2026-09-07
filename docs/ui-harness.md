@@ -1,0 +1,332 @@
+# The UI harness — letting an agent see Ship Studio
+
+## What problem this solves
+
+Reviewing Ship Studio used to require a person: launch `pnpm tauri dev`, get the
+app into the state you care about, look at it, and describe what you saw. An
+agent could read the code and run `pnpm test:run`, but it could not *look* at
+the product — so every judgement about whether something works or looks right
+had to be relayed by hand, over and over.
+
+The harness boots the **real** Ship Studio frontend — real components, real CSS,
+real state machines — in headless Chrome against a fixture backend, and captures
+it. The only thing replaced is the Tauri IPC boundary.
+
+## Using it
+
+```bash
+pnpm harness &          # dev server on http://127.0.0.1:1425
+pnpm harness:capture    # every scenario + every palette command
+```
+
+Output lands in `harness/shots/`: one PNG per capture, plus `report.md` (a
+digest meant to be read directly) and `report.json` (the same data structured).
+The runner exits non-zero if anything crashed, never settled, or asked for a
+Tauri command with no fixture — so it gates CI as well as feeding a review.
+
+```bash
+node scripts/harness-capture.mjs                # scenarios only
+node scripts/harness-capture.mjs --commands     # palette sweep only
+node scripts/harness-capture.mjs hosting-       # filter by id prefix
+node scripts/harness-capture.mjs --out /tmp/a   # capture somewhere else
+```
+
+A full run owns the output directory and clears it, so nothing stale can be
+mistaken for current. A **filtered** run does not: it overwrites only what it
+captures, leaves the rest of the directory alone, and stamps `report.md` with a
+"Partial run" banner naming the filter. Otherwise re-capturing one scenario
+would delete the set a reviewer is halfway through, and the report replacing
+theirs would describe four files while the directory quietly held two runs at
+once.
+
+Interactively, open `http://127.0.0.1:1425/harness.html?scenario=<id>`. A
+switcher at the bottom lists every scenario and states what the screen is
+supposed to look like. Useful query parameters:
+
+| Parameter | Effect |
+| --- | --- |
+| `scenario=<id>` | Which fixture set to load |
+| `command=<palette id>` | Run one registered command once the app has settled |
+| `project=<path>` | Open a workspace instead of the dashboard |
+| `chrome=off` | Hide the harness's own switcher, for a clean capture |
+| `freeze=off` | Re-enable animation, for watching a transition by hand |
+
+The capture script speaks the Chrome DevTools Protocol over Node's built-in
+`WebSocket` and `fetch`. It has no npm dependencies on purpose — Playwright
+would add a second browser download and a build step for roughly this much code.
+
+## Two sources of coverage
+
+**Scenarios** (`src/harness/scenarios/`) are hand-written states that are slow or
+awkward to reach for real: an empty account, a fresh machine, 24 projects,
+hostile project names, merge conflicts, a failed deploy, an expired credential.
+Each carries a `looksRightWhen` caption naming what a reviewer should check, and
+that caption is reproduced in `report.md`.
+
+**The palette sweep** (`--commands`) runs every action in the Cmd+K registry, one
+page load each. `CLAUDE.md` makes palette registration mandatory for every
+user-facing feature, which turns the registry into the app's own inventory of
+what a user can do — so this mode tracks the app automatically instead of
+drifting from a hand-maintained list of screens. A feature that skips the
+palette rule shows up as a coverage gap rather than quietly going unseen.
+
+Commands are enumerated separately in the home and project contexts, because the
+palette gates on where you are. Non-visual and navigational commands are skipped
+via `SKIP_COMMANDS` in the runner, and every skip is listed in the report so the
+list cannot quietly hide a broken feature.
+
+## Provenance: which tree did these screenshots come from?
+
+The capture runner refuses to screenshot a harness that is serving a different
+checkout, and every report records the checkout path and HEAD it came from.
+
+This exists because of a real failure. The runner originally checked only that
+*something* answered on the harness port. On a machine running several
+worktrees — four agent sessions and five worktrees, on the day this was
+written — a capture attached to a neighbour's harness, screenshotted their
+tree, and wrote seventy-one green checkmarks plus a report captioned with
+*this* checkout's scenario names. Real images, wrong tree, no warning. Someone
+was one screenshot away from reporting ten deployment states verified against a
+build that did not contain the feature.
+
+That is worse than any bug the harness was built to catch, because every other
+failure here is loud: a missing fixture badges red, a crash fails the run, an
+unsettled frame is marked unstable. This one wrote ✓.
+
+So the harness now serves `/__harness/identity` (absolute repo root + git HEAD)
+and the runner compares it against the directory it was invoked from, aborting
+with both paths named. Two shapes of failure are caught: a server that cannot
+answer the endpoint at all (stale, or unrelated), and one that answers with a
+different root.
+
+The check runs before **every** capture, not once at startup. `strictPort`
+frees the port the moment a harness dies, so a server can be replaced partway
+through a run — and when that happened, `ready` and `stable` both reported
+healthy for pages serving a different product entirely. Those signals describe
+the page that answered; neither can tell you it was the wrong page. If the root
+or HEAD changes mid-run the sweep aborts and names the scenario it stopped at,
+so captures taken before that point stay usable.
+
+To run harnesses from several worktrees at once, give each its own port:
+
+```bash
+SHIPSTUDIO_HARNESS_PORT=1426 pnpm harness &
+SHIPSTUDIO_HARNESS_PORT=1426 node scripts/harness-capture.mjs --all
+```
+
+`strictPort` is deliberately still on: a harness that silently moved to another
+port would reintroduce exactly the ambiguity this section is about.
+
+## A scenario must prove its subject is on screen
+
+A scenario declares `requires: '<selector>'`, and the capture fails if nothing
+matches it.
+
+A scenario is a claim about a surface. When that surface stops rendering — the
+feature is not on this branch, a component was renamed, the click that opens a
+popover silently stopped working, the capture attached to the wrong tree — the
+run still produces a clean screenshot of *something*, captioned with this
+scenario's name, and nothing says the subject is missing. Every hosting
+scenario requires `.publish-dropdown-menu`, so a popover that fails to open is
+a failure rather than a tidy picture of the workspace labelled "deployed and
+openable".
+
+This is the general form of a lesson that cost two sessions an evening: a
+fixture written before or after its subject exists has an expiry date, and
+nothing in a repo marks it. `requires` marks it.
+
+Adding it found two of this repo's own scenarios reviewing nothing: `conflicts`
+and `prs-open` carried populated fixtures but never navigated to the surface
+they describe, so both were photographing the Preview tab. Both now reach their
+subject and assert it.
+
+## Fixtures that fail
+
+A scenario's `commands` may hold a function, and a function that throws rejects
+the call — `rejectsWith('…')` from `src/harness/reject.ts`. The same module has
+`neverAnswers()` for a call that does not come back, which is the only way to
+photograph a state that exists *while* a command is in flight ("Saving…",
+"Loading your Vercel projects…") — a fixture that resolves has left that state
+before the page settles.
+
+This matters more than it sounds. Several of this app's surfaces are only
+reachable through a failed call, so a fixture layer that can only resolve
+confines the harness to every feature's happy path. The merge-conflict panel is
+the clearest case: nothing opens it on success. It appears when `pull_and_merge`
+rejects with a message containing `MERGE_CONFLICT:`, which is what the
+`conflicts` scenario now does.
+
+Worth knowing while writing such a scenario: `branch.resolveConflicts` in the
+Cmd+K palette **cannot** open that panel. Its `when` predicate reads
+`hasConflicts`, which `WorkspaceView.tsx:845` wires to `showConflictResolution`
+— the flag that means the panel is already visible. The command therefore only
+appears once you no longer need it, and its handler then re-sets a flag that is
+already true. That is a product bug, reported separately; it is recorded here
+so nobody spends an afternoon assuming their fixture is at fault.
+
+## Surfaces more than one click in
+
+`openSelector` reaches a popover in one click. A scenario that needs more says
+so with `steps`, run in order after it:
+
+```ts
+steps: [
+  { click: '.hosting-row-action button' },              // open the modal
+  { fill: '.connect-modal-field input', value: 'tok' }, // type a token
+  { click: '.connect-modal-actions button:last-of-type' },
+]
+```
+
+Each step waits for its selector before acting, so a step that depends on the
+previous one's render is not a race. `fill` writes through React's own value
+setter and dispatches `input`: assigning `el.value` updates the DOM and leaves
+React's state alone, which photographs a filled field above a still-disabled
+Save button — a screen the app cannot actually produce.
+
+**A step that never finds its control fails the capture**, and the sequence
+stops there rather than clicking whatever happens to match on the wrong screen.
+This is separate from `requires` on purpose: `requires` catches the *first*
+step, and cannot catch a later one, because by then the surface it asserts is
+already on screen. A token that never got typed still yields a perfectly good
+picture of the modal.
+
+Without this the whole hosting connect flow was unreachable — its modal opens
+from a button inside the push popover — which is how it came to be the first
+screen a new user touches with no scenario at all.
+
+## Text being cut off
+
+`report.md` lists every visible element whose content is wider than its box
+(`text-overflow: ellipsis` or a line clamp, with `scrollWidth > clientWidth`),
+per capture.
+
+This is reported, never failed — plenty of truncation is deliberate. It exists
+because truncation is technically visible in a screenshot and practically
+invisible to a reviewer: a sentence clipped in a 184px column ends in a few
+pixels of "…", and it is entirely possible to read a set of captures twice,
+conclude they pass, and have missed that every status line lost its informative
+half. That is a real account of what happened, not a hypothetical. The list
+turns "look carefully" into something the runner can point at.
+
+Check what got cut, not just that something did.
+
+## The one rule that makes it trustworthy
+
+**A command with no fixture is never given a plausible default.**
+
+It is recorded, returned as `undefined`, listed in `window.__harness.unhandled()`,
+shown as a red badge in the harness chrome, and reported per-capture. A fake
+backend that answers everything with `[]` and `true` produces screenshots that
+look correct and are meaningless — the exact "never assume data" failure that
+the hosting rewrite exists to fix.
+
+So a capture that reports unmocked commands is **incomplete, not passing**, and
+its screenshot must not be used as evidence.
+
+An empty array is a legitimate fixture: "nothing configured yet" is a real
+backend answer. An invented value is not. That is the line.
+
+## Adding a scenario
+
+```ts
+{
+  id: 'branches-many',
+  title: 'Branches — a busy repo',
+  looksRightWhen: 'Long branch names truncate rather than overflow.',
+  project: WORKSPACE_PROJECT,                    // open a workspace
+  openSelector: '.source-control-push-button',   // clicked once settled
+  clipSelector: '.publish-dropdown-menu',        // capture just this element
+  storage: { 'shipstudio.onboardingMode': 'classic' },
+  commands: { ...workspaceCommands, list_branches: [...] },
+}
+```
+
+Register it in `src/harness/scenarios/index.ts`.
+
+Fixture shapes must be copied from the `invoke<...>` type at the real call site,
+**including its snake_case/camelCase inconsistency** — the backend is not
+uniform about casing, and a fixture that tidies it up tests a response the app
+never receives. (`get_conflict_info` returns snake_case; `get_full_setup_status`
+returns camelCase. Both are correct.)
+
+Fixture layering:
+
+| Layer | Contents |
+| --- | --- |
+| `base.ts` | A healthy, fully set-up machine; everything reachable from anywhere |
+| `workspace.ts` | What opening a project asks for |
+| `app.ts` | Dashboard and onboarding scenarios |
+| `features.ts` | Populated branches, PRs, conflicts, workflows, inbox |
+| `hosting.ts` | The ten push-popover deployment states |
+| `hostingConnect.ts` | The connect flow: the token modal and the link picker |
+
+Put a fixture in `base.ts` if the surface opens from the dashboard *and* from a
+project — Help, Skills and MCP all do, and a fixture that exists only in the
+workspace layer white-screens the dashboard path.
+
+Use `clipSelector` for popovers and modals: the harness has no dev server and no
+PTY, so the surrounding workspace shows a permanent "Starting dev server…"
+spinner and an idle agent pane. Clipping keeps those artifacts out of frame.
+
+## Reproducibility
+
+A screenshot you cannot diff is not much use, so the harness works at being
+deterministic:
+
+- **Storage is wiped** before any app module reads it (`resetStorage.ts`),
+  because captures share one Chrome profile and a preference written by an
+  earlier capture would silently change a later one.
+- **Motion is frozen** (`freeze.css`): animations, transitions, the xterm cursor
+  and OverlayScrollbars thumbs.
+- **External DNS is blocked**, so components that fetch the real internet (the
+  GitHub contributions calendar) cannot make a run depend on the network.
+- **Readiness is IPC quiescence**, not a fixed delay — the app has stopped
+  asking the backend for things.
+- **Each capture shoots until two consecutive frames agree**, and records
+  `stable` in the report if it never settled.
+
+About 80% of captures are byte-identical across runs. The rest vary in genuinely
+async regions — terminal output, and the workspace panel toggles, which settle
+open or closed differently between identical loads. Treat a byte difference
+between two runs as a prompt to look at the image, not as a regression by
+itself.
+
+## What it cannot tell you
+
+- **Nothing about Rust.** Backend logic, path validation and the git/provider
+  adapters are not exercised; those have their own `cargo test` suites.
+- **Chrome, not WebKit.** Ship Studio ships in a WKWebView. WebKit-specific
+  layout bugs will not appear here — the CSP/terminal-font gotcha in
+  `CLAUDE.md` is the standing example of a class of bug this cannot catch.
+- **No PTY, no dev server, no network.**
+- It proves the UI renders a given backend answer correctly. It does not prove
+  that any provider or backend ever sends that answer.
+
+## How an agent finds this
+
+The entry point is the **"Looking at the UI" section of `CLAUDE.md`**, which is
+tracked and loaded for every agent working in this repo, plus the pointer in
+`CONTRIBUTING.md` and this document.
+
+`.claude/skills/ui-harness/SKILL.md` is tracked too, so an agent that reads
+skills finds it without being told. That required narrowing `.gitignore` from
+`.claude/` to `.claude/*` with a `!.claude/skills/` exception — local state
+(`settings.local.json`, the worktrees) stays out of the repo, instructions for
+whoever works here next do not. A skill that lives on one machine is not
+documentation.
+
+## Files
+
+| Path | Role |
+| --- | --- |
+| `harness.html`, `vite.harness.config.ts` | Separate entry so nothing leaks into a shipped build |
+| `src/harness/main.tsx` | Installs the fake backend, renders the real `<App>`, settles, signals `__harnessReady` |
+| `src/harness/resetStorage.ts` | Wipes/seeds storage before app modules load |
+| `src/harness/fakeBackend.ts` | `mockIPC` router + IPC-quiescence signal |
+| `src/harness/unhandled.ts` | The never-assume-data guard |
+| `src/harness/commandBridge.ts` | Reads and runs the Cmd+K registry |
+| `src/harness/freeze.css` | Capture determinism |
+| `src/harness/scenarios/` | The fixture layers above |
+| `src/harness/stubs/` | Inert `tauri-pty`, screenshots, updater |
+| `scripts/harness-capture.mjs` | Headless capture, identity guard, `report.md`, `report.json` |
+| `.claude/skills/ui-harness/SKILL.md` | So an agent discovers this without being told |

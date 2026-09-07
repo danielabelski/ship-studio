@@ -27,9 +27,11 @@ import { usePreviewConnection, SERVER_MAX_RETRIES } from '../../hooks/usePreview
 import { useAgentBridge } from '../../hooks/useAgentBridge';
 import { AgentActivityOverlay } from './AgentActivityOverlay';
 import { PreviewSizeControl } from './PreviewSizeControl';
+import { PreviewCanvas, type CanvasZoom } from './PreviewCanvas';
 import { usePreviewCapture } from '../../hooks/usePreviewCapture';
+import { usePreviewEditorFrame } from '../../hooks/usePreviewEditorFrame';
+import { DEFAULT_DEVICE_HEIGHT, DEVICE_HEIGHTS, type CanvasFrame } from '../../lib/previewCanvas';
 import { Button } from '../primitives/Button';
-import { IconButton } from '../primitives/IconButton';
 import { MenuButton } from '../primitives/MenuButton';
 import { ToggleButton } from '../primitives/ToggleButton';
 import {
@@ -39,18 +41,17 @@ import {
   type Breakpoint,
 } from '../../hooks/usePreviewResize';
 import { useOptionalToast } from '../../contexts/ToastContext';
-import { DevServerLogs } from '../terminal/DevServerLogs';
 import { DevServerStatus } from '../terminal/DevServerStatus';
 import { stripAnsi } from '../../lib/ansi';
 import { asCommandError, formatCommandError } from '../../lib/errors';
 import { trackEvent } from '../../lib/analytics';
-import { BrowserTools } from './BrowserTools';
-import { HealthTabPanel, type HealthTabPanelRef } from '../code/HealthTabPanel';
+import { type HealthTabPanelRef } from '../code/HealthTabPanel';
 import { BrowserDropdown } from './BrowserDropdown';
 import { useVisualEditor } from '../../hooks/useVisualEditor';
 import { useTextEditing } from '../../hooks/useTextEditing';
-import { useElementStructure } from '../../hooks/useElementStructure';
+import { useElementStructure, type StructureSelection } from '../../hooks/useElementStructure';
 import { ElementToolbar } from '../edit/ElementToolbar';
+import { PreviewBreadcrumb } from './PreviewBreadcrumb';
 import { useCssCascadeEditor } from '../../hooks/useCssCascadeEditor';
 import { useElementSettings } from '../../hooks/useElementSettings';
 import { useCssVariables } from '../../hooks/useCssVariables';
@@ -67,15 +68,17 @@ import { VisualEditorPanel } from '../edit/VisualEditorPanel';
 import { ElementTreePanel } from '../edit/ElementTreePanel';
 import { VariablesPanel } from '../edit/VariablesPanel';
 import { useElementTree } from '../../hooks/useElementTree';
+import { useElementBreadcrumbVisibility } from '../../hooks/useElementBreadcrumbVisibility';
 import { PreviewLocaleSwitcher, type PreviewLocaleConfig } from './PreviewLocaleSwitcher';
 import {
   CompactIcon,
   ChevronIcon,
-  CloseIcon,
   DesktopIcon,
   EditIcon,
   ExpandIcon,
   FullBreakpointIcon,
+  GridIcon,
+  MoreHorizontalIcon,
   LaptopIcon,
   MobileIcon,
   PackageIcon,
@@ -90,7 +93,11 @@ import { Spinner } from '../primitives/Spinner';
 import { PanelResizeHandle } from '../primitives/PanelResizeHandle';
 import { DockablePanel } from '../primitives/DockablePanel';
 import { TREE_PANEL_MIN_WIDTH_PX, maxDockedPanelWidth } from './panelSizing';
-import { Tabs, TabsList, TabsPanel, TabsTab } from '../primitives/Tabs';
+import { Tabs, TabsList, TabsTab } from '../primitives/Tabs';
+import { InspectPanel, type InspectTab } from './InspectPanel';
+export type { InspectTab } from './InspectPanel';
+import { useCanvasCommentsLayer } from '../comments/CanvasComments';
+import type { CommentAgent } from '../../lib/canvasComments';
 import { pathLocale, switchPathLocale } from '../../lib/i18n';
 import { kbd } from '../../lib/shortcuts';
 import { useCommands } from '../../commands/useCommands';
@@ -116,9 +123,42 @@ const PREVIEW_BREAKPOINT_OPTIONS = PREVIEW_BREAKPOINTS.map((bp) => ({
   width: BREAKPOINTS[bp].width,
   icon: <BreakpointIcon type={bp} />,
 }));
+/** The viewport tab that means "all of them at once". Deliberately not a
+ *  breakpoint name, so it cannot collide with one. */
+const CANVAS_TAB = 'canvas';
+
+/**
+ * A frame reports its selection box in its OWN pixels. Host-side editor chrome
+ * draws at screen scale, so on the breakpoint canvas the rect has to come
+ * through the canvas scale first. (In focus mode the scale is 1 and this is a
+ * no-op.)
+ */
+const scaleSelection = (
+  selection: StructureSelection | null,
+  scale: number
+): StructureSelection | null => {
+  const rect = selection?.rect;
+  if (!selection || !rect) return selection;
+  return {
+    ...selection,
+    rect: {
+      top: rect.top * scale,
+      left: rect.left * scale,
+      width: rect.width * scale,
+      height: rect.height * scale,
+    },
+  };
+};
 
 /** Props for the Preview component */
 interface PreviewProps {
+  commentBranch?: string | null;
+  commentAgents?: CommentAgent[];
+  activeCommentAgentId?: number;
+  /** Comments open state lives in the workspace header, which owns the toggle. */
+  commentsOpen?: boolean;
+  onCommentsOpenChange?: (open: boolean) => void;
+  onCommentsPendingCountChange?: (count: number) => void;
   /** Dev server port (default: 3000) */
   port?: number;
   /** Absolute path to the project directory */
@@ -265,6 +305,12 @@ const EDITOR_PANEL_DEFAULT_VERSION_KEY = 'cssPanelDockedWidthDefault';
 
 export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   {
+    commentBranch = null,
+    commentAgents = [],
+    activeCommentAgentId,
+    commentsOpen = false,
+    onCommentsOpenChange,
+    onCommentsPendingCountChange,
     port = 3000,
     projectPath,
     onServerReady,
@@ -365,6 +411,67 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     onUserResize: () => setPinnedBreakpoint(null),
   });
 
+  // ── Breakpoint canvas ──────────────────────────────────────────────────────
+  // Every breakpoint at once, side by side, instead of one resizable frame.
+  // Exactly one canvas frame is active: it is interactive, the visual editor
+  // binds to it, and its width is the edit-target breakpoint.
+  const [canvasMode, setCanvasMode] = useState(false);
+  const [canvasZoom, setCanvasZoom] = useState<CanvasZoom>('fit');
+  const [canvasFrameId, setCanvasFrameId] = useState<Breakpoint>('desktop');
+  const [canvasFrameEl, setCanvasFrameEl] = useState<HTMLIFrameElement | null>(null);
+  // The canvas's own frame height, reported back so host-side editor chrome can
+  // be clamped to the same box the frames occupy.
+  const [canvasFrameStageHeight, setCanvasFrameStageHeight] = useState(0);
+  // Device columns, widest first, straight off the toolbar's own presets so the
+  // canvas and the breakpoint tabs can never disagree about a width. `full` has
+  // no fixed width, so it isn't a column.
+  const canvasFrames = useMemo<CanvasFrame[]>(
+    () =>
+      PREVIEW_BREAKPOINTS.filter((bp) => bp !== 'full').map((bp) => ({
+        id: bp,
+        label: BREAKPOINTS[bp].label,
+        width: parseInt(BREAKPOINTS[bp].width, 10),
+        // A frame's height is the viewport the page sees, so it comes from the
+        // device, never from the pane.
+        height: DEVICE_HEIGHTS[bp] ?? DEFAULT_DEVICE_HEIGHT,
+      })),
+    []
+  );
+  const canvasFrameWidth =
+    canvasFrames.find((frame) => frame.id === canvasFrameId)?.width ?? canvasFrames[0].width;
+  // One way in and out, so leaving the canvas by picking a breakpoint counts
+  // the same as leaving it by the toggle. Not inside a state updater: React is
+  // free to run one twice, and an analytics event is not something to send
+  // twice.
+  const setCanvasEnabled = useCallback(
+    (next: boolean) => {
+      setCanvasMode((current) => {
+        if (current !== next) {
+          void trackEvent('preview_canvas_toggled', { enabled: next, $screen_name: 'Workspace' });
+        }
+        return next;
+      });
+      // Leaving the canvas remounts the single preview frame, and it would open
+      // at the path it was last TOLD to load — not where the canvas actually
+      // is. Follow the navigation the user did on the canvas.
+      if (!next && conn.currentPage !== conn.iframePath) conn.setIframePath(conn.currentPage);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- specific conn properties are listed; conn object changes on every render
+    [conn.currentPage, conn.iframePath, conn.setIframePath]
+  );
+  const toggleCanvasMode = useCallback(
+    () => setCanvasEnabled(!canvasMode),
+    [canvasMode, setCanvasEnabled]
+  );
+  // Where the activating click landed inside the newly activated frame, held until the
+  // editor has finished binding to it (below).
+  const pendingCanvasSelectRef = useRef<{ x: number; y: number } | null>(null);
+  const activateCanvasFrame = useCallback((frameId: string, point?: { x: number; y: number }) => {
+    pendingCanvasSelectRef.current = point ?? null;
+    setCanvasFrameId(frameId as Breakpoint);
+    void trackEvent('preview_canvas_frame_activated', { breakpoint: frameId });
+  }, []);
+
   // Agent preview bridge: an MCP server the workspace agent uses to read the
   // preview's console/network/DOM, click/type/scroll in it, navigate it,
   // resize its viewport, and take screenshots. (Below `resize` because the
@@ -377,10 +484,13 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     pages: conn.filteredPages.map((p) => p.route),
     navigate: conn.handlePageSelect,
     reload: conn.handleRefresh,
-    setViewport: (value) =>
-      typeof value === 'number'
-        ? resize.previewAtWidth(value)
-        : resize.handleBreakpointClick(value),
+    setViewport: (value) => {
+      // A viewport request means one width — leave the canvas so the change is
+      // actually visible instead of silently doing nothing behind four frames.
+      setCanvasEnabled(false);
+      if (typeof value === 'number') resize.previewAtWidth(value);
+      else resize.handleBreakpointClick(value);
+    },
     getViewportWidth: () => resize.customWidth,
   });
 
@@ -551,27 +661,46 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // edit a layer the width wouldn't select on its own — e.g. Base at a wide canvas,
   // which must not force a shrink.
   const derivedBreakpoint = useMemo(() => {
-    const width = resize.customWidth ?? (resize.viewportWidth || 1280);
+    // On the breakpoint canvas the active frame IS the width being edited.
+    const width = canvasMode
+      ? canvasFrameWidth
+      : (resize.customWidth ?? (resize.viewportWidth || 1280));
     let active = breakpoints[0];
     for (const bp of breakpoints) if (bp.minPx <= width) active = bp;
     return active;
-  }, [resize.customWidth, resize.viewportWidth, breakpoints]);
+  }, [canvasMode, canvasFrameWidth, resize.customWidth, resize.viewportWidth, breakpoints]);
   // Keep a pin valid only while it still matches a known breakpoint (project switch).
-  const activeBreakpoint =
-    (pinnedBreakpoint && breakpoints.find((b) => b.name === pinnedBreakpoint.name)) ||
-    derivedBreakpoint;
+  // A pin means nothing on the canvas: every breakpoint is on screen, so the
+  // frame the user activated is the layer they mean to edit.
+  const activeBreakpoint = canvasMode
+    ? derivedBreakpoint
+    : (pinnedBreakpoint && breakpoints.find((b) => b.name === pinnedBreakpoint.name)) ||
+      derivedBreakpoint;
   // The selected edit breakpoint can exceed the width the canvas actually
   // renders at (e.g. a pinned wide layer while the canvas is narrower); edits
   // then apply but aren't visible, so the panel shows a note. A preset wider
   // than the pane does NOT trigger this: it renders at its true CSS width and
   // is only scaled down visually (previewScale), so its media queries hold.
+  // On the breakpoint canvas it can never happen — the layer is the frame.
   const renderedWidth = resize.customWidth ?? resize.viewportWidth;
   const breakpointTooWide =
-    activeBreakpoint.minPx > 0 && renderedWidth > 0 && renderedWidth < activeBreakpoint.minPx;
+    !canvasMode &&
+    activeBreakpoint.minPx > 0 &&
+    renderedWidth > 0 &&
+    renderedWidth < activeBreakpoint.minPx;
+
+  // Everything frame-bound — the visual editor, the inspector, screenshot
+  // cropping — follows the active frame through this one hook.
+  const editorFrameRef = usePreviewEditorFrame({
+    canvasMode,
+    canvasFrameEl,
+    focusFrameRef: iframeRef,
+    captureTargetRef: capture.iframeWrapperRef,
+  });
 
   // Visual editor (Next.js, Vite/React, Astro). Inert until the user toggles edit mode.
   const editor = useVisualEditor({
-    iframeRef,
+    iframeRef: editorFrameRef,
     projectPath,
     enabled: editorEnabled,
     activeBreakpoint,
@@ -589,7 +718,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // explanation.
   const cssEditorEnabled = conn.serverReady && qualifiedEditorMode === 'css';
   const cssEditor = useCssCascadeEditor({
-    iframeRef,
+    iframeRef: editorFrameRef,
     projectPath,
     enabled: cssEditorEnabled,
     cssModulesHint: projectType === 'nextjs',
@@ -597,7 +726,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   });
   // Settings tab (element tag/classes/attributes) — shares the cascade selection.
   const elementSettings = useElementSettings({
-    iframeRef,
+    iframeRef: editorFrameRef,
     projectPath,
     enabled: cssEditorEnabled,
     signature: cssEditor.selection?.signature ?? null,
@@ -608,7 +737,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const [cssScope, setCssScope] = useState<'style' | 'settings' | 'animations'>('style');
   // Project-global CSS variables are available from their own workspace panel.
   const cssVariables = useCssVariables({
-    iframeRef,
+    iframeRef: editorFrameRef,
     projectPath,
     enabled: editor.editMode || cssEditor.editMode || variablesPanelVisible,
     onToast,
@@ -634,7 +763,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // mounted once here, active whenever either editor's edit mode is on, so it
   // works for vanilla-CSS/Astro projects (cssEditor) as well as Tailwind.
   const textEditing = useTextEditing({
-    iframeRef,
+    iframeRef: editorFrameRef,
     projectPath,
     enabled: activeEditMode,
     onToast,
@@ -643,15 +772,64 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // editors the same way text editing is; drives the canvas toolbar and the
   // element tree's context menu.
   const structure = useElementStructure({
-    iframeRef,
+    iframeRef: editorFrameRef,
     projectPath,
     enabled: activeEditMode,
     onToast,
   });
+  // Clicking a frame the user isn't working in yet activates it — and, if they
+  // were editing, selects what they actually pointed at. Declared AFTER the
+  // editor hooks so it runs after their own re-bind effects have posted
+  // `ss:activate` to this frame; the script ignores a select while inert.
+  useEffect(() => {
+    const point = pendingCanvasSelectRef.current;
+    if (!point) return;
+    pendingCanvasSelectRef.current = null;
+    if (!canvasMode || !canvasFrameEl || !activeEditMode) return;
+    try {
+      canvasFrameEl.contentWindow?.postMessage(
+        { type: 'ss:selectAt', x: point.x, y: point.y },
+        '*'
+      );
+    } catch {
+      // The frame may have gone away between the click and this effect.
+    }
+  }, [canvasMode, canvasFrameEl, activeEditMode]);
+
+  // Clicking the canvas background drops the element selection. Until now the
+  // only way to get the outline off the design was to leave edit mode, which
+  // also takes away the panel you were working in.
+  const deselectOnCanvas = useCallback(() => {
+    if (!activeEditMode) return;
+    try {
+      canvasFrameEl?.contentWindow?.postMessage({ type: 'ss:deselect' }, '*');
+    } catch {
+      // The frame may have gone away between the click and this call.
+    }
+  }, [activeEditMode, canvasFrameEl]);
+
   // Imperative opener for the toolbar's insert palette (Cmd+K "Insert element…").
   const openInsertMenuRef = useRef<(() => void) | null>(null);
   const toggleActiveEditor =
     editorMode === 'css' ? cssEditor.toggleEditMode : editor.toggleEditMode;
+
+  // Comments bind to the frame the user is actually in, the same one the editor
+  // binds to — on a canvas that is the active frame, not the focus frame.
+  const comments = useCanvasCommentsLayer({
+    projectPath,
+    branch: commentBranch,
+    iframeRef: editorFrameRef,
+    agents: commentAgents,
+    activeAgentId: activeCommentAgentId,
+    open: commentsOpen,
+    onOpenChange: onCommentsOpenChange ?? (() => undefined),
+    onPendingCountChange: onCommentsPendingCountChange,
+    currentPage: conn.currentPage,
+    navigate: conn.handlePageSelect,
+    available: conn.serverReady && !isBranchSwitching && !isCropMode,
+    editing: activeEditMode,
+    stopEditing: toggleActiveEditor,
+  });
 
   // ── Cmd+K commands for the native CSS editor (vanilla-CSS projects only). The panel
   // is opened by toggling edit mode; the view state lets a command land straight on
@@ -703,6 +881,31 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           ]
         : [],
     [cssEditorEnabled, cssEditorOn, cssToggleEditMode, openCssEditor, onToast]
+  );
+
+  // ── Cmd+K commands for the breakpoint canvas. Always available on a project:
+  // the canvas is a view of the preview, not an editor feature.
+  useCommands(
+    () => [
+      {
+        id: 'preview.breakpointCanvas',
+        title: canvasMode ? 'Focus a single breakpoint' : 'Show every breakpoint',
+        category: 'action' as const,
+        when: 'project' as const,
+        keywords: [
+          'breakpoint',
+          'canvas',
+          'responsive',
+          'side by side',
+          'devices',
+          'mobile',
+          'tablet',
+          'desktop',
+        ],
+        run: toggleCanvasMode,
+      },
+    ],
+    [canvasMode, toggleCanvasMode]
   );
 
   // ── Cmd+K commands for structural editing. Registered only while an edit mode
@@ -853,6 +1056,20 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // view of the rendered page.
   const showTree = elementTreeVisible;
   const variablesPanelDocked = variablesPanelVisible && variablesPanelPinned;
+  const [elementBreadcrumbEnabled, setElementBreadcrumbEnabled] = useElementBreadcrumbVisibility();
+  useCommands(
+    () => [
+      {
+        id: 'preview.toggleElementBreadcrumb',
+        title: elementBreadcrumbEnabled ? 'Hide element breadcrumb' : 'Show element breadcrumb',
+        category: 'action' as const,
+        when: 'project' as const,
+        keywords: ['breadcrumb', 'element', 'path', 'navigation', 'appearance'],
+        run: () => setElementBreadcrumbEnabled(!elementBreadcrumbEnabled),
+      },
+    ],
+    [elementBreadcrumbEnabled, setElementBreadcrumbEnabled]
+  );
   // The Elements panel's Code (markup-edit) view needs a wider column than the
   // navigator; the tree panel reports its view so we can widen the grid track.
   const [treeCodeView, setTreeCodeView] = useState(false);
@@ -896,7 +1113,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // subscription when the preview is ready so its initial request reaches the
   // injected script even when the Elements panel is already open.
   const elementTree = useElementTree({
-    iframeRef,
+    iframeRef: editorFrameRef,
     enabled: showTree && conn.serverReady,
   });
 
@@ -1232,6 +1449,40 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     devServerUnexpectedExit,
   ]);
 
+  const breadcrumbSignature =
+    editorMode === 'css' ? cssEditor.selection?.signature : editor.selection?.signature;
+  const breadcrumbPath = breadcrumbSignature
+    ? breadcrumbSignature.elementPath?.length
+      ? breadcrumbSignature.elementPath
+      : [
+          {
+            tagName: breadcrumbSignature.tagName,
+            className: breadcrumbSignature.className,
+            domPath: breadcrumbSignature.domPath ?? '',
+          },
+        ]
+    : [];
+  const breadcrumbVisible =
+    !canvasMode && elementBreadcrumbEnabled && activeEditMode && breadcrumbPath.length > 0;
+  const selectBreadcrumbItem = useCallback(
+    (item: (typeof breadcrumbPath)[number]) => {
+      if (!item.domPath) return;
+      iframeRef.current?.contentWindow?.postMessage(
+        {
+          type: 'ss:reselect',
+          signature: {
+            className: item.className,
+            tagName: item.tagName,
+            domPath: item.domPath,
+            ancestorClasses: [],
+          },
+        },
+        '*'
+      );
+    },
+    [iframeRef]
+  );
+
   if (needsInstall) {
     return (
       <div className="preview-install-prompt">
@@ -1251,26 +1502,29 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
 
   if (conn.isLoading || conn.isStopped || conn.hasError) {
     return (
-      <DevServerStatus
-        // A known-dead process escalates straight to the error card — polling
-        // a port nothing listens on can only end in the same place, minutes
-        // later, so don't make the user sit through the retry loop.
-        phase={
-          conn.isStopped ? 'stopped' : conn.hasError || serverProcessGone ? 'error' : 'loading'
-        }
-        isStaticProject={isStaticProject}
-        port={port}
-        retryCount={conn.retryCount}
-        maxRetries={SERVER_MAX_RETRIES}
-        devServerOutput={devServerOutput}
-        onStop={conn.stopConnecting}
-        onRetry={conn.handleRetry}
-        processExited={serverProcessGone || conn.serverStale}
-        exitCode={devServerUnexpectedExit?.exitCode ?? null}
-        onRestartServer={onRestartDevServer}
-        onFixWithAgent={handleFixWithAgent && (() => handleFixWithAgent('server-down'))}
-        onInput={onDevServerInput}
-      />
+      <>
+        {comments.bar}
+        <DevServerStatus
+          // A known-dead process escalates straight to the error card — polling
+          // a port nothing listens on can only end in the same place, minutes
+          // later, so don't make the user sit through the retry loop.
+          phase={
+            conn.isStopped ? 'stopped' : conn.hasError || serverProcessGone ? 'error' : 'loading'
+          }
+          isStaticProject={isStaticProject}
+          port={port}
+          retryCount={conn.retryCount}
+          maxRetries={SERVER_MAX_RETRIES}
+          devServerOutput={devServerOutput}
+          onStop={conn.stopConnecting}
+          onRetry={conn.handleRetry}
+          processExited={serverProcessGone || conn.serverStale}
+          exitCode={devServerUnexpectedExit?.exitCode ?? null}
+          onRestartServer={onRestartDevServer}
+          onFixWithAgent={handleFixWithAgent && (() => handleFixWithAgent('server-down'))}
+          onInput={onDevServerInput}
+        />
+      </>
     );
   }
 
@@ -1297,6 +1551,32 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         .filter((column): column is string => column !== null)
         .join(' ')
     : undefined;
+
+  // Blank-page watchdog: the server is healthy top-level but the page never
+  // proved it rendered inside an embedded frame — e.g. an auth redirect loop
+  // aborted the subframe load (issue #179). Shared by both views; on the canvas
+  // it is the difference between "nothing renders" and knowing why.
+  const blankPageOverlay =
+    conn.iframeBlank && !isBranchSwitching && !isDevServerRestarting ? (
+      <div className="preview-iframe-error-overlay" data-education-id="preview-iframe-error">
+        <h3>The page isn't rendering in the preview</h3>
+        <p>
+          The dev server is up, but this page never painted inside the embedded preview. That
+          usually means it failed in the iframe — commonly an auth-middleware redirect loop (e.g.
+          Clerk development keys) — even though it may load fine in a normal browser.
+        </p>
+        <div className="preview-iframe-error-actions">
+          <Button variant="secondary" onClick={conn.handleRefresh}>
+            Retry
+          </Button>
+          {handleFixWithAgent && (
+            <Button variant="primary" onClick={() => handleFixWithAgent('blank-iframe')}>
+              Fix with agent
+            </Button>
+          )}
+        </div>
+      </div>
+    ) : null;
 
   return (
     <div
@@ -1361,6 +1641,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                 </span>
               </Tooltip>
             )}
+
+            {comments.bar}
 
             {onToggleLogs && (
               <ToggleButton
@@ -1506,6 +1788,49 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           <ResetIcon size={14} />
         </button>
 
+        {/* The same viewport choices as the strip below, for when the pane is
+            too narrow to show it. Only one of the two is ever visible — see
+            the density tiers in preview-toolbar.css. */}
+        <div className="preview-viewport-slot">
+          <Dropdown
+            menuClassName="preview-viewport-menu"
+            portal
+            align="right"
+            trigger={(props) => (
+              <button
+                {...props}
+                type="button"
+                className="preview-viewport-overflow"
+                title="Viewport"
+                aria-label="Viewport"
+              >
+                <MoreHorizontalIcon size={14} />
+              </button>
+            )}
+          >
+            {PREVIEW_BREAKPOINTS.map((bp) => (
+              <DropdownItem
+                key={bp}
+                icon={<BreakpointIcon type={bp} />}
+                active={!canvasMode && resize.getActiveBreakpoint() === bp}
+                onSelect={() => {
+                  setCanvasEnabled(false);
+                  resize.handleBreakpointClick(bp);
+                }}
+              >
+                {BREAKPOINTS[bp].label}
+              </DropdownItem>
+            ))}
+            <DropdownItem
+              icon={<GridIcon size={14} />}
+              active={canvasMode}
+              onSelect={() => setCanvasEnabled(true)}
+            >
+              Every breakpoint
+            </DropdownItem>
+          </Dropdown>
+        </div>
+
         <button
           type="button"
           className="preview-fullscreen-btn"
@@ -1519,17 +1844,30 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         <div className="preview-breakpoints" data-education-id="breakpoints">
           <div className="preview-breakpoints__inner">
             <Tabs
-              value={resize.getActiveBreakpoint()}
+              // "Every breakpoint" is one of the viewport choices, not a mode on
+              // top of one: it lives in the same segmented control so exactly one
+              // thing is ever selected. Highlighting a device tab AND the canvas
+              // button at the same time reads as two active states.
+              value={canvasMode ? CANVAS_TAB : resize.getActiveBreakpoint()}
               mode="navigation"
-              onValueChange={(value) => resize.handleBreakpointClick(value as Breakpoint)}
+              onValueChange={(value) => {
+                if (value === CANVAS_TAB) {
+                  setCanvasEnabled(true);
+                  return;
+                }
+                setCanvasEnabled(false);
+                resize.handleBreakpointClick(value as Breakpoint);
+              }}
               className="preview-breakpoint-tabs"
             >
               <TabsList aria-label="Preview viewport sizes">
                 {PREVIEW_BREAKPOINTS.map((bp) => (
                   <TabsTab
                     key={bp}
-                    value={bp}
+                    // The per-breakpoint modifier drives the responsive toolbar
+                    // rules that hide these progressively as the pane narrows.
                     className={`preview-breakpoint-tab preview-breakpoint-tab--${bp} button--icon-only`}
+                    value={bp}
                     size="default"
                     aria-label={BREAKPOINTS[bp].label}
                     title={`${BREAKPOINTS[bp].label} (${BREAKPOINTS[bp].width})`}
@@ -1537,10 +1875,21 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                     <BreakpointIcon type={bp} />
                   </TabsTab>
                 ))}
+                <TabsTab
+                  value={CANVAS_TAB}
+                  className="preview-breakpoint-tab preview-breakpoint-tab--canvas button--icon-only"
+                  size="default"
+                  data-education-id="breakpoint-canvas"
+                  aria-label="Every breakpoint"
+                  title="Every breakpoint, side by side"
+                >
+                  <GridIcon size={14} />
+                </TabsTab>
               </TabsList>
             </Tabs>
 
-            {iframeSize &&
+            {!canvasMode &&
+              iframeSize &&
               iframeSize.w > 0 &&
               iframeSize.h > 0 &&
               (() => {
@@ -1572,7 +1921,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         </div>
       </div>
       <div
-        className="preview-viewport"
+        className={`preview-viewport${breadcrumbVisible ? ' preview-viewport--with-breadcrumb' : ''}`}
         ref={resize.setViewportRefs}
         data-education-id="preview-viewport"
       >
@@ -1584,170 +1933,198 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
             }`}
           />
         )}
-        <div
-          className={`preview-frame-grid${
-            resize.customWidth !== null && resize.customHeight !== null
-              ? ' preview-frame-grid--floating'
-              : ''
-          }${
-            // Dragged all the way out (the drag snaps `customWidth` to null):
-            // the handle collapses into the pane's own right edge instead of
-            // stacking another gutter and two borders beside it.
-            resize.customWidth === null ? ' preview-frame-grid--full-width' : ''
-          }`}
-          style={{
-            // A width wider than the pane keeps its true size in the iframe
-            // and shrinks visually via previewScale — the grid (and with it
-            // the wrapper, handles, crop overlay and drag math) stays at the
-            // VISUAL size so every parent-side measurement remains in screen
-            // space.
-            width:
-              resize.customWidth === null
-                ? 'calc(100% - 4px)'
-                : `${Math.round(resize.customWidth * resize.previewScale) + RESIZE_HANDLE_PX}px`,
-            maxWidth: 'calc(100% - 4px)',
-            // While Inspect is open the bottom resize handle is hidden, so
-            // we ignore (but preserve) the user's customHeight to avoid an
-            // unreachable floating-iframe state. The value comes back when
-            // Inspect closes and the handle returns.
-            height:
-              resize.customHeight === null || showLogs
-                ? '100%'
-                : `${resize.customHeight + RESIZE_HANDLE_PX}px`,
-            maxHeight: '100%',
-          }}
-        >
-          <div ref={setIframeWrapperEl} className="preview-iframe-wrapper">
-            <iframe
-              key={projectPath}
-              ref={iframeRef}
-              src={conn.serverReady ? conn.currentUrl : 'about:blank'}
-              className="preview-iframe"
-              title=""
-              data-tooltip-disabled
-              onLoad={conn.handleIframeLoad}
-              // Scale-to-fit (Chrome-DevTools style): lay the page out at the
-              // true breakpoint width and shrink the rendering to the wrapper.
-              // Height is inflated by 1/scale so the scaled result fills the
-              // wrapper exactly. In-iframe overlays (visual editor) live in
-              // the scaled coordinate space and need no mapping.
-              style={
-                resize.previewScale < 1 && resize.customWidth !== null
-                  ? {
-                      width: `${resize.customWidth}px`,
-                      height: `${100 / resize.previewScale}%`,
-                      transform: `scale(${resize.previewScale})`,
-                      transformOrigin: 'top left',
-                    }
-                  : undefined
-              }
+        {canvasMode ? (
+          <>
+            {blankPageOverlay}
+            <PreviewCanvas
+              frames={canvasFrames}
+              // Passive frames follow wherever the page actually is; `navSignal`
+              // changes only on a deliberate navigation, so a link click inside
+              // the active frame doesn't reload that same frame.
+              url={`${conn.baseUrl}${conn.currentPage === '/' ? '' : conn.currentPage}`}
+              navSignal={conn.iframePath}
+              activeFrameId={canvasFrameId}
+              reloadToken={conn.reloadToken}
+              zoom={canvasZoom}
+              onZoomChange={setCanvasZoom}
+              onActivateFrame={activateCanvasFrame}
+              onActiveFrameElement={setCanvasFrameEl}
+              onStageHeightChange={setCanvasFrameStageHeight}
+              onBackgroundClick={deselectOnCanvas}
+              activeFrameOverlay={(scale) => (
+                <>
+                  {comments.pins(scale, {
+                    w: canvasFrameWidth * scale,
+                    h: canvasFrameStageHeight * scale,
+                  })}
+                  {activeEditMode ? (
+                    <ElementToolbar
+                      // The frame reports the selection box in its OWN pixels; the
+                      // toolbar draws at screen scale, so both the rect and the
+                      // bounds it is clamped to come through the canvas scale.
+                      selection={scaleSelection(structure.selection, scale)}
+                      bounds={{
+                        w: canvasFrameWidth * scale,
+                        h: canvasFrameStageHeight * scale,
+                      }}
+                      busy={structure.busy}
+                      hidden={structure.textEditing}
+                      onInsert={(position, kind) => void structure.insert(position, kind)}
+                      onDuplicate={() => void structure.duplicate()}
+                      onDelete={() => void structure.remove()}
+                      openMenuRef={openInsertMenuRef}
+                    />
+                  ) : null}
+                </>
+              )}
             />
-            {/* Structural-edit toolbar, tracking the canvas selection box */}
-            {activeEditMode && (
-              <ElementToolbar
-                selection={structure.selection}
-                bounds={iframeSize}
-                busy={structure.busy}
-                hidden={structure.textEditing}
-                onInsert={(position, kind) => void structure.insert(position, kind)}
-                onDuplicate={() => void structure.duplicate()}
-                onDelete={() => void structure.remove()}
-                openMenuRef={openInsertMenuRef}
+          </>
+        ) : (
+          <div
+            className={`preview-frame-grid${
+              resize.customWidth !== null && resize.customHeight !== null
+                ? ' preview-frame-grid--floating'
+                : ''
+            }${
+              // Dragged all the way out (the drag snaps `customWidth` to null):
+              // the handle collapses into the pane's own right edge instead of
+              // stacking another gutter and two borders beside it.
+              resize.customWidth === null ? ' preview-frame-grid--full-width' : ''
+            }`}
+            style={{
+              // A width wider than the pane keeps its true size in the iframe
+              // and shrinks visually via previewScale — the grid (and with it
+              // the wrapper, handles, crop overlay and drag math) stays at the
+              // VISUAL size so every parent-side measurement remains in screen
+              // space.
+              width:
+                resize.customWidth === null
+                  ? 'calc(100% - 4px)'
+                  : `${Math.round(resize.customWidth * resize.previewScale) + RESIZE_HANDLE_PX}px`,
+              // While Inspect is open the bottom resize handle is hidden, so
+              // we ignore (but preserve) the user's customHeight to avoid an
+              // unreachable floating-iframe state. The value comes back when
+              // Inspect closes and the handle returns.
+              height:
+                resize.customHeight === null || showLogs
+                  ? '100%'
+                  : `${resize.customHeight + RESIZE_HANDLE_PX}px`,
+            }}
+          >
+            <div ref={setIframeWrapperEl} className="preview-iframe-wrapper">
+              <iframe
+                key={projectPath}
+                ref={iframeRef}
+                src={conn.serverReady ? conn.currentUrl : 'about:blank'}
+                className="preview-iframe"
+                title=""
+                data-tooltip-disabled
+                onLoad={conn.handleIframeLoad}
+                // Scale-to-fit (Chrome-DevTools style): lay the page out at the
+                // true breakpoint width and shrink the rendering to the wrapper.
+                // Height is inflated by 1/scale so the scaled result fills the
+                // wrapper exactly. In-iframe overlays (visual editor) live in
+                // the scaled coordinate space and need no mapping.
+                style={
+                  resize.previewScale < 1 && resize.customWidth !== null
+                    ? {
+                        width: `${resize.customWidth}px`,
+                        height: `${100 / resize.previewScale}%`,
+                        transform: `scale(${resize.previewScale})`,
+                        transformOrigin: 'top left',
+                      }
+                    : undefined
+                }
               />
-            )}
-            {/* Agent activity layer: glow + cursor + action chip while the
+              {/* Pinned comments, tracking their elements in the live frame */}
+              {!canvasMode && comments.pins(1, iframeSize)}
+              {/* Structural-edit toolbar, tracking the canvas selection box */}
+              {activeEditMode && (
+                <ElementToolbar
+                  selection={structure.selection}
+                  bounds={iframeSize}
+                  busy={structure.busy}
+                  hidden={structure.textEditing}
+                  onInsert={(position, kind) => void structure.insert(position, kind)}
+                  onDuplicate={() => void structure.duplicate()}
+                  onDelete={() => void structure.remove()}
+                  openMenuRef={openInsertMenuRef}
+                />
+              )}
+              {/* Agent activity layer: glow + cursor + action chip while the
                 workspace agent drives the preview through the agent bridge. */}
-            <AgentActivityOverlay />
-            {/* Blank-iframe watchdog overlay: the server is healthy top-level but
+              <AgentActivityOverlay />
+              {/* Blank-iframe watchdog overlay: the server is healthy top-level but
                 the page never proved it rendered inside the embedded iframe —
                 e.g. an auth redirect loop aborted the subframe load (issue #179). */}
-            {conn.iframeBlank && !isBranchSwitching && !isDevServerRestarting && (
-              <div
-                className="preview-iframe-error-overlay"
-                data-education-id="preview-iframe-error"
-              >
-                <h3>The page isn't rendering in the preview</h3>
-                <p>
-                  The dev server is up, but this page never painted inside the embedded preview.
-                  That usually means it failed in the iframe — commonly an auth-middleware redirect
-                  loop (e.g. Clerk development keys) — even though it may load fine in a normal
-                  browser.
-                </p>
-                <div className="preview-iframe-error-actions">
-                  <Button variant="secondary" onClick={conn.handleRefresh}>
-                    Retry
-                  </Button>
-                  {handleFixWithAgent && (
-                    <Button variant="primary" onClick={() => handleFixWithAgent('blank-iframe')}>
-                      Fix with agent
-                    </Button>
+              {blankPageOverlay}
+              {/* Branch switching overlay */}
+              {isBranchSwitching && (
+                <div className="preview-branch-switching-overlay">
+                  <Spinner size="lg" style={{ color: 'var(--accent-active)' }} />
+                  <span>Switching branch...</span>
+                </div>
+              )}
+              {/* Dev server restarting overlay */}
+              {isDevServerRestarting && (
+                <div className="preview-branch-switching-overlay">
+                  <Spinner size="lg" style={{ color: 'var(--accent-active)' }} />
+                  <span>Restarting dev server...</span>
+                </div>
+              )}
+              {/* Crop selection overlay */}
+              {isCropMode && (
+                <div
+                  ref={capture.cropOverlayRef}
+                  className="crop-overlay"
+                  onMouseDown={capture.handleCropMouseDown}
+                  onMouseMove={capture.handleCropMouseMove}
+                  onMouseUp={() => void capture.handleCropMouseUp()}
+                  onMouseLeave={() => {
+                    if (capture.isSelecting) {
+                      void capture.handleCropMouseUp();
+                    }
+                  }}
+                >
+                  {/* Selection rectangle */}
+                  {/* Selection box with box-shadow creating the dark overlay */}
+                  {capture.selectionStart && capture.selectionEnd && (
+                    <div
+                      className="crop-selection"
+                      style={{
+                        left: Math.min(capture.selectionStart.x, capture.selectionEnd.x),
+                        top: Math.min(capture.selectionStart.y, capture.selectionEnd.y),
+                        width: Math.abs(capture.selectionEnd.x - capture.selectionStart.x),
+                        height: Math.abs(capture.selectionEnd.y - capture.selectionStart.y),
+                      }}
+                    />
+                  )}
+                  {/* Instructions */}
+                  {!capture.selectionStart && (
+                    <div className="crop-instructions">
+                      Click and drag to select area
+                      <span className="crop-hint">Press Esc to cancel</span>
+                    </div>
                   )}
                 </div>
-              </div>
-            )}
-            {/* Branch switching overlay */}
-            {isBranchSwitching && (
-              <div className="preview-branch-switching-overlay">
-                <Spinner size="lg" style={{ color: 'var(--accent-active)' }} />
-                <span>Switching branch...</span>
-              </div>
-            )}
-            {/* Dev server restarting overlay */}
-            {isDevServerRestarting && (
-              <div className="preview-branch-switching-overlay">
-                <Spinner size="lg" style={{ color: 'var(--accent-active)' }} />
-                <span>Restarting dev server...</span>
-              </div>
-            )}
-            {/* Crop selection overlay */}
-            {isCropMode && (
-              <div
-                ref={capture.cropOverlayRef}
-                className="crop-overlay"
-                onMouseDown={capture.handleCropMouseDown}
-                onMouseMove={capture.handleCropMouseMove}
-                onMouseUp={() => void capture.handleCropMouseUp()}
-                onMouseLeave={() => {
-                  if (capture.isSelecting) {
-                    void capture.handleCropMouseUp();
-                  }
-                }}
-              >
-                {/* Selection rectangle */}
-                {/* Selection box with box-shadow creating the dark overlay */}
-                {capture.selectionStart && capture.selectionEnd && (
-                  <div
-                    className="crop-selection"
-                    style={{
-                      left: Math.min(capture.selectionStart.x, capture.selectionEnd.x),
-                      top: Math.min(capture.selectionStart.y, capture.selectionEnd.y),
-                      width: Math.abs(capture.selectionEnd.x - capture.selectionStart.x),
-                      height: Math.abs(capture.selectionEnd.y - capture.selectionStart.y),
-                    }}
-                  />
-                )}
-                {/* Instructions */}
-                {!capture.selectionStart && (
-                  <div className="crop-instructions">
-                    Click and drag to select area
-                    <span className="crop-hint">Press Esc to cancel</span>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
+            {/* Right (horizontal) resize handle — height tracks iframe via grid */}
+            <div className="preview-resize-handle" onMouseDown={resize.handleResizeStart}>
+              <div className="preview-resize-handle-bar" />
+            </div>
+            {/* Bottom (vertical) resize handle — width tracks iframe via grid */}
+            <div
+              className="preview-resize-handle preview-resize-handle--vertical"
+              onMouseDown={resize.handleVerticalResizeStart}
+            >
+              <div className="preview-resize-handle-bar preview-resize-handle-bar--vertical" />
+            </div>
           </div>
-          {/* Right (horizontal) resize handle — height tracks iframe via grid */}
-          <div className="preview-resize-handle" onMouseDown={resize.handleResizeStart}>
-            <div className="preview-resize-handle-bar" />
-          </div>
-          {/* Bottom (vertical) resize handle — width tracks iframe via grid */}
-          <div
-            className="preview-resize-handle preview-resize-handle--vertical"
-            onMouseDown={resize.handleVerticalResizeStart}
-          >
-            <div className="preview-resize-handle-bar preview-resize-handle-bar--vertical" />
-          </div>
-        </div>
+        )}
+        {breadcrumbVisible && (
+          <PreviewBreadcrumb path={breadcrumbPath} onSelect={selectBreadcrumbItem} />
+        )}
       </div>
       {showLogs && (
         <PanelResizeHandle
@@ -2033,129 +2410,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           )}
         </>
       )}
-    </div>
-  );
-});
-
-export type InspectTab = 'logs' | 'browser' | 'health';
-
-interface InspectPanelProps {
-  hidden: boolean;
-  projectPath: string;
-  devServerOutput: string;
-  devServerOutputVersion: number;
-  onClose?: () => void;
-  onSendToAgent?: (text: string) => void;
-  /** Controlled tab. When set, the component is fully controlled. */
-  activeTab?: InspectTab;
-  onActiveTabChange?: (tab: InspectTab) => void;
-  healthPanelRef?: RefObject<HealthTabPanelRef | null>;
-  onHealthOutput?: (data: string) => void;
-  /** Type into the dev-server PTY — answers interactive CLI prompts. */
-  onDevServerInput?: (data: string) => void;
-  /** Sync the dev-server PTY size to the logs terminal. */
-  onDevServerResize?: (cols: number, rows: number) => void;
-}
-
-const InspectPanel = forwardRef<HTMLDivElement, InspectPanelProps>(function InspectPanel(
-  {
-    hidden,
-    projectPath,
-    devServerOutput,
-    devServerOutputVersion,
-    onClose,
-    onSendToAgent,
-    activeTab: activeTabProp,
-    onActiveTabChange,
-    healthPanelRef,
-    onHealthOutput,
-    onDevServerInput,
-    onDevServerResize,
-  },
-  ref
-) {
-  const [activeTabLocal, setActiveTabLocal] = useState<InspectTab>('logs');
-  const activeTab = activeTabProp ?? activeTabLocal;
-  const setActiveTab = onActiveTabChange ?? setActiveTabLocal;
-
-  return (
-    <div ref={ref} className="preview-logs-panel" aria-hidden={hidden}>
-      <Tabs value={activeTab} onValueChange={(next) => setActiveTab(next as InspectTab)}>
-        <div className="preview-logs-header">
-          {/* The underline appearance is the primitive's own — the strip used
-              to be a segmented pill list with a hand-rolled underline layered
-              over it, which is why the active tab never matched its
-              neighbours. */}
-          <TabsList
-            className="preview-logs-tabs"
-            variant="stretch"
-            appearance="underline"
-            aria-label="Preview diagnostics"
-          >
-            <TabsTab value="logs" className="preview-logs-tab">
-              Server Logs
-            </TabsTab>
-            <TabsTab value="browser" className="preview-logs-tab">
-              Browser Tools
-            </TabsTab>
-            <TabsTab value="health" className="preview-logs-tab">
-              Health
-            </TabsTab>
-          </TabsList>
-          {onClose && (
-            <IconButton
-              variant="ghost"
-              size="compact"
-              className="preview-logs-close"
-              icon={<CloseIcon size={14} />}
-              onClick={onClose}
-              title="Hide panel"
-              aria-label="Hide panel"
-            />
-          )}
-        </div>
-        {/* Both tab contents stay mounted and stack in the same grid cell.
-            Toggling `is-active` swaps visibility via CSS (opacity) so
-            DevServerLogs doesn't re-init xterm and BrowserTools keeps its
-            scroll/state; TabsPanel makes inactive slots inert. */}
-        <div className="preview-logs-body">
-          <TabsPanel
-            value="logs"
-            keepMounted
-            className={`preview-logs-slot ${activeTab === 'logs' ? 'is-active' : ''}`}
-          >
-            <DevServerLogs
-              output={devServerOutput}
-              outputVersion={devServerOutputVersion}
-              onSendToAgent={onSendToAgent}
-              onInput={onDevServerInput}
-              onResize={onDevServerResize}
-            />
-          </TabsPanel>
-          <TabsPanel
-            value="browser"
-            keepMounted
-            className={`preview-logs-slot ${activeTab === 'browser' ? 'is-active' : ''}`}
-          >
-            <BrowserTools
-              onSendToAgent={onSendToAgent}
-              active={!hidden && activeTab === 'browser'}
-            />
-          </TabsPanel>
-          <TabsPanel
-            value="health"
-            keepMounted
-            className={`preview-logs-slot ${activeTab === 'health' ? 'is-active' : ''}`}
-          >
-            <HealthTabPanel
-              ref={healthPanelRef}
-              projectPath={projectPath}
-              onAskClaude={onSendToAgent}
-              onHealthOutput={onHealthOutput}
-            />
-          </TabsPanel>
-        </div>
-      </Tabs>
     </div>
   );
 });

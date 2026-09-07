@@ -17,6 +17,11 @@ import type { PluginModule } from '../lib/plugin-loader';
 vi.mock('../lib/plugins', () => ({
   listPlugins: vi.fn(),
   updatePlugin: vi.fn(),
+  // The hook asks this whether a plugin has been replaced by a native feature
+  // or a skill. Defaults to "nothing is superseded"; individual tests below
+  // override this to verify the filtering itself (issues #386/#804).
+  supersededReason: vi.fn(() => null),
+  isExpectedPluginFailure: () => false,
 }));
 
 vi.mock('../lib/plugin-loader', () => ({
@@ -24,12 +29,13 @@ vi.mock('../lib/plugin-loader', () => ({
   unloadPluginModule: vi.fn(),
 }));
 
-import { listPlugins, updatePlugin } from '../lib/plugins';
+import { listPlugins, updatePlugin, supersededReason } from '../lib/plugins';
 import { loadPluginModule } from '../lib/plugin-loader';
 
 const mockListPlugins = vi.mocked(listPlugins);
 const mockUpdatePlugin = vi.mocked(updatePlugin);
 const mockLoadPluginModule = vi.mocked(loadPluginModule);
+const mockSupersededReason = vi.mocked(supersededReason);
 
 function makeInfo(overrides: Partial<PluginInfo> = {}): PluginInfo {
   return {
@@ -64,6 +70,7 @@ const missingBundleError = new Error(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSupersededReason.mockImplementation(() => null);
 });
 
 describe('usePlugins missing-bundle self-heal', () => {
@@ -133,5 +140,45 @@ describe('usePlugins missing-bundle self-heal', () => {
     await waitFor(() => expect(result.current.failures).toHaveLength(1));
     expect(mockUpdatePlugin).not.toHaveBeenCalled();
     expect(result.current.failures[0].reason).toContain('Plugin must export a name');
+  });
+});
+
+describe('usePlugins skips superseded plugins entirely (issues #386, #804)', () => {
+  // A superseded plugin (native hosting replaced vercel/cloudflare/netlify)
+  // must be filtered out before loadPluginModule ever runs — not merely
+  // hidden from render — so its onActivate hook and background timers never
+  // start. That's what keeps a bundled hosting plugin's stale/missing files
+  // from ever reaching the "deactivated" toast (#386), and what keeps its
+  // old required_commands calls (e.g. a removed DNS-credential lookup, #804)
+  // from ever firing again.
+  it('never calls loadPluginModule for a plugin with a supersededReason', async () => {
+    mockListPlugins.mockResolvedValue([
+      makeInfo({
+        manifest: {
+          id: 'cloudflare',
+          name: 'Cloudflare Pages',
+          version: '1.0.0',
+          description: '',
+          slots: ['toolbar'],
+          author: '',
+          repository: '',
+          setup: [],
+          min_app_version: '',
+          icon: '',
+          required_commands: [],
+          api_version: 1,
+        },
+      }),
+    ]);
+    mockSupersededReason.mockImplementation((id: string) =>
+      id === 'cloudflare' ? 'Hosting is built in now.' : null
+    );
+
+    const { result } = renderHook(() => usePlugins('/projects/superseded'));
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.plugins).toHaveLength(0);
+    expect(result.current.failures).toHaveLength(0);
+    expect(mockLoadPluginModule).not.toHaveBeenCalled();
   });
 });

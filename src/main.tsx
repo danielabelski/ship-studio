@@ -163,7 +163,6 @@ const OS_SKIP_SELECTOR = [
   '.dashboard-with-changelog',
   '.dashboard-scroll-container',
   '.changelog-list',
-  '.support-panel',
   // ValueField menus are fixed, body-portaled listboxes. OverlayScrollbars
   // rewrites their children and collapses the menu's max-content width in
   // WebKit, leaving an open listbox mounted but visually hidden.
@@ -191,6 +190,16 @@ const OS_SKIP_SELECTOR = [
   '.inbox-list',
   '.workflow-row-activity',
   '.inbox-detail-pane',
+  // The breakpoint canvas is a design surface, not a document: it scrolls
+  // itself, positions its own content, and reads its own box to decide the fit
+  // scale and how far the canvas may be pushed past its frames. Relocating its
+  // children into a viewport wrapper breaks both halves of that — the scroll
+  // offsets are written to a node that no longer scrolls, and the host stops
+  // clipping, so the canvas's own height feeds back into the size it measures
+  // itself by and the surface runs away to millions of pixels.
+  '.preview-canvas',
+  // Comments replace draft/list children often; preserve React's DOM ownership.
+  '.canvas-comments-panel',
 ].join(', ');
 
 function initScrollbars() {

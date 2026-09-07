@@ -269,7 +269,6 @@ async fn simctl_stdout(
 ///
 /// Errors if `xcrun` is unavailable (Xcode not installed). Returns an empty
 /// vec when Xcode is present but no simulator is booted.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn list_booted_simulators() -> Result<Vec<MobileSimulator>, CommandError> {
     tracing::info!("list_booted_simulators: invoked");
@@ -521,7 +520,6 @@ fn parse_adb_devices(stdout: &str) -> Vec<AndroidDevice> {
 
 /// List currently-connected, ready Android devices/emulators. Empty vec when none
 /// are running (or adb is absent); errors only on an unexpected adb failure.
-#[tauri::command]
 #[tracing::instrument]
 pub async fn list_android_devices() -> Result<Vec<AndroidDevice>, CommandError> {
     let mut cmd = adb_command();
@@ -2233,8 +2231,28 @@ async fn spawn_serve_sim(udid: &str, start_port: u16) -> Result<MirrorInfo, Comm
         SERVE_SIM_TIMEOUT_SECS,
     )
     .await
-    .map_err(|e| npm_cache_permission_error(&e).unwrap_or(e))?;
+    .map_err(|e| {
+        serve_sim_timeout_error(&e)
+            .or_else(|| npm_cache_permission_error(&e))
+            .unwrap_or(e)
+    })?;
     parse_mirror_info(&stdout)
+}
+
+/// `serve-sim --detach` timing out after `SERVE_SIM_TIMEOUT_SECS`. Unlike the
+/// sibling `boot`/`bootstatus` timeouts just above — which already classify a
+/// slow-but-plausible simulator as an expected environment state (issues
+/// #411/#554/#814/#865) — this one propagated as a raw, unclassified
+/// `CommandError::Timeout` with no explanation the user can act on, and
+/// auto-filed a bug report on every occurrence (issue #866).
+fn serve_sim_timeout_error(err: &CommandError) -> Option<CommandError> {
+    matches!(err, CommandError::Timeout { .. }).then(|| {
+        CommandError::expected(
+            "The iOS Simulator mirror (serve-sim) is taking a long time to start — often a \
+             sign the simulator itself is wedged. Try again; if it keeps happening, quit \
+             Simulator.app, reboot the simulator, and retry.",
+        )
+    })
 }
 
 /// `npx` failing to fetch serve-sim because `~/.npm` has root-owned files
@@ -3180,6 +3198,29 @@ mod tests {
             secs: 1
         })
         .is_none());
+    }
+
+    #[test]
+    fn serve_sim_timeout_becomes_an_actionable_wedged_boot_message() {
+        // The raw timeout serve-sim's 90s watchdog produces (issue #866) must
+        // become an Expected error with guidance, not fall through
+        // unclassified to auto-file a bug report.
+        let timeout = CommandError::Timeout {
+            cmd: "serve-sim --detach".into(),
+            secs: 90,
+        };
+        let err = serve_sim_timeout_error(&timeout).expect("classified");
+        assert!(matches!(err, CommandError::Expected { .. }));
+        assert!(err.to_string().contains("wedged"), "got: {err}");
+
+        // A Process failure (e.g. the npm-cache EACCES case) is a different
+        // shape and must not be reclassified here.
+        let process = CommandError::Process {
+            cmd: "serve-sim --detach".into(),
+            exit_code: 1,
+            stderr: "Error: no booted simulator".into(),
+        };
+        assert!(serve_sim_timeout_error(&process).is_none());
     }
 
     #[test]

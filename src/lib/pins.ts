@@ -49,13 +49,3 @@ export async function listPinnedProjects(): Promise<string[]> {
 export async function reorderPins(orderedPaths: string[]): Promise<string[]> {
   return invoke<string[]>('reorder_pins', { orderedPaths });
 }
-
-/** Persist per-pin session metadata. Skipped silently if path is not pinned. */
-export async function savePinSession(projectPath: string, session: PinLastSession): Promise<void> {
-  return invoke('save_pin_session', { projectPath, session });
-}
-
-/** Read per-pin session metadata. Returns `null` if not yet saved. */
-export async function getPinSession(projectPath: string): Promise<PinLastSession | null> {
-  return invoke<PinLastSession | null>('get_pin_session', { projectPath });
-}

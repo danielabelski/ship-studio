@@ -1,3 +1,4 @@
+import { commentAgents } from '../../lib/commentAgents';
 /**
  * Workspace view component.
  *
@@ -49,10 +50,9 @@ import { useShopifyTheme } from '../../hooks/useShopifyTheme';
 import { isMac } from '../../lib/setup';
 import { kbd } from '../../lib/shortcuts';
 import type { TerminalTab } from '../../hooks/useTerminalManagement';
-import type { TerminalHandle } from '../terminal/Terminal';
+import type { AgentStatus, TerminalHandle } from '../terminal/Terminal';
 import type { Toast, ToastType } from '../../hooks/useToasts';
 import type { NotificationSettings } from '../../lib/sounds';
-import type { AgentStatus } from '../terminal/Terminal';
 import type { IntegrationState, AuthTerminalConfig } from '../../hooks/useIntegrationStatus';
 import type { BranchInfo, PullRequestInfo } from '../../lib/branches';
 import type { ChangedFile } from '../../lib/git';
@@ -64,6 +64,7 @@ import { sessionRegistry } from '../../lib/sessionRegistry';
 import { defaultWorkspaceTab, workspacePreviewCapabilities } from './workspaceViewState';
 import { useWorkspaceShortcutControls } from '../../hooks/useWorkspaceShortcutControls';
 import { useWorkspacePanelCommands } from '../../hooks/useWorkspacePanelCommands';
+import { useWorkspaceComments } from '../../hooks/useWorkspaceComments';
 import '../../styles/features/notifications.css';
 
 // ---------------------------------------------------------------------------
@@ -247,6 +248,9 @@ interface BranchProps {
   ) => void;
   showConflictResolution: boolean;
   setShowConflictResolution: (show: boolean) => void;
+  /** Whether the repository is mid-merge, as opposed to whether the resolution
+   *  panel is on screen. Polled, so a merge started in a terminal counts. */
+  repoHasConflicts: boolean;
   fetchBranchInfo: (projectPath: string) => Promise<void>;
   checkGitStatus: (projectPath: string) => Promise<void>;
   handleBranchSwitch: (branchName: string) => Promise<void>;
@@ -599,6 +603,7 @@ export const WorkspaceView = memo(function WorkspaceView({
     setGitError,
     showConflictResolution,
     setShowConflictResolution,
+    repoHasConflicts,
     fetchBranchInfo,
     checkGitStatus,
     handleBranchSwitch,
@@ -775,6 +780,12 @@ export const WorkspaceView = memo(function WorkspaceView({
       void handleStartDevServer();
     }
   }, [handleStartDevServer, setIsPreviewHidden, setWorkspaceTab, variablesPanelOpen]);
+  const comments = useWorkspaceComments({
+    isWebProject,
+    setIsPreviewHidden,
+    setWorkspaceTab,
+    startDevServer: handleStartDevServer,
+  });
   const toggleAgentPanel = useCallback(() => {
     if (!isAgentPanelHidden) {
       setIsPreviewHidden(false);
@@ -824,7 +835,11 @@ export const WorkspaceView = memo(function WorkspaceView({
   useWorkspaceCommands({
     currentBranch,
     hasUncommittedChanges,
-    hasConflicts: showConflictResolution,
+    // The repository's actual state, not whether the panel happens to be open.
+    // Gating the palette entry on the panel meant "Resolve merge conflicts"
+    // only appeared once you had already found your way to the resolution UI,
+    // which is precisely when you no longer need a shortcut to it.
+    hasConflicts: repoHasConflicts,
     setWorkspaceTab,
     setShowSubmitReview,
     handleResolveConflicts: () => void handleResolveConflicts(),
@@ -1047,6 +1062,7 @@ export const WorkspaceView = memo(function WorkspaceView({
     variablesPanelVisible: variablesPanelOpen,
     variablesPanelAvailable: isWebProject,
     onToggleVariablesPanel: toggleVariablesPanel,
+    ...comments.header,
     modes: modesNode,
     headerExtras: (
       <PluginsDropdown
@@ -1293,6 +1309,16 @@ export const WorkspaceView = memo(function WorkspaceView({
                   }
                   right={
                     <WorkspacePreviewPane
+                      activeCommentAgentId={activeTerminalTab}
+                      commentsOpen={comments.open}
+                      onCommentsOpenChange={comments.setOpen}
+                      onCommentsPendingCountChange={comments.setPendingCount}
+                      commentAgents={commentAgents(
+                        currentProject.path,
+                        terminal,
+                        tabTitles,
+                        setIsAgentPanelHidden
+                      )}
                       currentProject={currentProject}
                       previewRef={previewRef}
                       workspaceTab={workspaceTab}

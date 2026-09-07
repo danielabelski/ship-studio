@@ -150,6 +150,26 @@ afterEach(() => {
   localStorage.clear();
 });
 
+describe('useVisualEditor selection', () => {
+  it('lets the selection go when the frame reports it was dropped', async () => {
+    // Clicking the canvas background deselects. Edit mode stays ON — that is
+    // the whole point of it — so the panel has to stop describing an element
+    // nothing is pointing at any more.
+    const { result, iframeRef } = setup();
+    act(() => result.current.toggleEditMode());
+    const source = iframeRef.current!.contentWindow!;
+    await select('p-3', source);
+    expect(result.current.selection).not.toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', { source, data: { type: 'ss:deselect' } }));
+      await Promise.resolve();
+    });
+    expect(result.current.selection).toBeNull();
+    expect(result.current.editMode).toBe(true);
+  });
+});
+
 describe('useVisualEditor auto-save', () => {
   it('does NOT save automatically when auto-save is off', async () => {
     const { result, iframeRef } = setup();

@@ -334,6 +334,19 @@
   gap: 16px;
 }
 
+/* The spinner draws its arc in currentColor, so the muted tone belongs here
+   rather than as an inline style on the element. */
+.project-list-loading .ss-spinner {
+  color: var(--text-muted);
+}
+
+.project-list-load-error {
+  max-width: 480px;
+  margin: 0;
+  text-align: center;
+  color: var(--text-muted);
+}
+
 .project-list-cleanup-status {
   font-size: var(--font-size-body-md);
   color: var(--text-muted);

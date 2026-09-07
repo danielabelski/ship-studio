@@ -102,38 +102,3 @@ export async function closeProjectSession(projectPath: string): Promise<number> 
   await unregisterProjectSession(projectPath);
   return killed;
 }
-
-/**
- * Bump `last_activity_at` on the backend. Cheap, safe to call frequently
- * (focus events, terminal input, etc.). Drives LRU eviction in Phase 5.
- */
-export async function touchProjectSession(projectPath: string): Promise<void> {
-  return invoke('touch_project_session', { projectPath });
-}
-
-/** Snapshot of all currently registered sessions (active + suspended). */
-export async function listProjectSessions(): Promise<ProjectSessionInfo[]> {
-  return invoke<ProjectSessionInfo[]>('list_project_sessions');
-}
-
-/** Look up a single session by path, or `null` if not registered. */
-export async function getProjectSessionInfo(
-  projectPath: string
-): Promise<ProjectSessionInfo | null> {
-  return invoke<ProjectSessionInfo | null>('get_project_session_info', {
-    projectPath,
-  });
-}
-
-/**
- * Count of active (non-suspended) sessions. Used by the rail UI to enforce
- * the soft cap before allowing a new session to spawn.
- */
-export async function getActiveSessionCount(): Promise<number> {
-  return invoke<number>('get_active_session_count');
-}
-
-/** Memory usage breakdown for a project session, in bytes. */
-export async function getSessionMemory(projectPath: string): Promise<SessionMemoryReport> {
-  return invoke<SessionMemoryReport>('get_session_memory', { projectPath });
-}

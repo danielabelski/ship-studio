@@ -3,7 +3,9 @@
 //! Functions for injecting scripts and error overlays into HTML responses.
 //! Used by the preview proxy to add navigation tracking and error display.
 
-use super::{NAV_SCRIPT, RELOAD_SUPPRESS, SCROLLBAR_STYLE, SCROLL_RESTORE, SELECT_SCRIPT};
+use super::{
+    COMMENTS_SCRIPT, NAV_SCRIPT, RELOAD_SUPPRESS, SCROLLBAR_STYLE, SCROLL_RESTORE, SELECT_SCRIPT,
+};
 
 /// Inject the navigation tracking script + the (inert until activated) visual-
 /// editor selection layer into an HTML response body, plus the scrollbar-hiding
@@ -14,7 +16,10 @@ use super::{NAV_SCRIPT, RELOAD_SUPPRESS, SCROLLBAR_STYLE, SCROLL_RESTORE, SELECT
 /// the site's own scrollbar styling overrides ours, and the scroll-restore must
 /// run before first paint to avoid a visible jump — see those consts).
 pub fn inject_nav_script(html: &[u8]) -> Vec<u8> {
-    let with_scripts = inject_into_html(html, &format!("{NAV_SCRIPT}{SELECT_SCRIPT}"));
+    let with_scripts = inject_into_html(
+        html,
+        &format!("{NAV_SCRIPT}{SELECT_SCRIPT}{COMMENTS_SCRIPT}"),
+    );
     inject_at_head_start(
         &with_scripts,
         &format!("{SCROLLBAR_STYLE}{RELOAD_SUPPRESS}{SCROLL_RESTORE}"),
@@ -313,7 +318,9 @@ mod tests {
         let result = inject_nav_script(html);
         let result_str = String::from_utf8(result).unwrap();
         // Both scripts land before </head>, nav first.
-        assert!(result_str.contains(&format!("{NAV_SCRIPT}{SELECT_SCRIPT}</head>")));
+        assert!(result_str.contains(&format!(
+            "{NAV_SCRIPT}{SELECT_SCRIPT}{COMMENTS_SCRIPT}</head>"
+        )));
     }
 
     #[test]
@@ -321,7 +328,9 @@ mod tests {
         let html = b"<html><body>Hello</body></html>";
         let result = inject_nav_script(html);
         let result_str = String::from_utf8(result).unwrap();
-        assert!(result_str.contains(&format!("{NAV_SCRIPT}{SELECT_SCRIPT}</body>")));
+        assert!(result_str.contains(&format!(
+            "{NAV_SCRIPT}{SELECT_SCRIPT}{COMMENTS_SCRIPT}</body>"
+        )));
     }
 
     #[test]
@@ -329,7 +338,7 @@ mod tests {
         let html = b"<html>Hello";
         let result = inject_nav_script(html);
         let result_str = String::from_utf8(result).unwrap();
-        assert!(result_str.ends_with(SELECT_SCRIPT));
+        assert!(result_str.ends_with(COMMENTS_SCRIPT));
         assert!(result_str.contains("ss:select"));
     }
 
@@ -344,6 +353,31 @@ mod tests {
         assert!(SELECT_SCRIPT.contains("data-ss-sel"));
         assert!(SELECT_SCRIPT.contains("@media (min-width:"));
         assert!(SELECT_SCRIPT.contains("ss-preview"));
+    }
+
+    #[test]
+    fn canvas_holds_every_frame_still_and_backgrounds_the_idle_ones() {
+        // Two separate treatments, and keeping them separate is the point.
+        // Holding still rides on `ss:canvas`, so EVERY frame gets it — a frame
+        // here is a whole page, and one exempted frame animating forever
+        // doubled the preview's idle CPU. Background-tab semantics ride on
+        // `ss:passive`, so only frames nobody is working in get them.
+        assert!(SELECT_SCRIPT.contains("ssHoldStill(true)"));
+        assert!(SELECT_SCRIPT.contains("ss-still-style"));
+        assert!(SELECT_SCRIPT.contains("animation-iteration-count:1!important"));
+        assert!(SELECT_SCRIPT.contains("ss:passive'){ssBackground("));
+        assert!(SELECT_SCRIPT.contains("visibilityState"));
+        assert!(SELECT_SCRIPT.contains("ssRafHeld"));
+        // A committed page height is never committed twice: that is the
+        // feedback loop the agreement rule cannot see.
+        assert!(SELECT_SCRIPT.contains("ssPageCommitted"));
+        assert!(SELECT_SCRIPT.contains("ssPageLocked"));
+        // ...and the ratchet, which never repeats a value at all, so the
+        // visited list is blind to it. Cause and backstop both.
+        assert!(SELECT_SCRIPT.contains("position:relative!important"));
+        assert!(SELECT_SCRIPT.contains("ratchet"));
+        // The settle observer must not be able to feed itself.
+        assert!(SELECT_SCRIPT.contains("if(pin.textContent!==css)"));
     }
 
     #[test]
@@ -514,6 +548,24 @@ mod tests {
         assert!(page.contains("shipstudio:alive"));
         assert!(page.contains("shipstudio:navigate"));
         assert!(page.contains("shipstudio:error"));
+    }
+
+    #[test]
+    fn injected_scripts_contain_no_opening_head_or_html_tag() {
+        // `inject_at_head_start` scans the WHOLE response for the first `<head`,
+        // so a literal opening tag anywhere in an injected script — a comment
+        // included — makes the proxy splice its head-start snippet into the
+        // middle of that script instead of into the page.
+        for (name, script) in [("NAV_SCRIPT", NAV_SCRIPT), ("SELECT_SCRIPT", SELECT_SCRIPT)] {
+            assert!(
+                !script.contains("<head"),
+                "{name} contains a literal `<head`"
+            );
+            assert!(
+                !script.contains("<html"),
+                "{name} contains a literal `<html`"
+            );
+        }
     }
 
     #[test]

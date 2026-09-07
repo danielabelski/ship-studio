@@ -3,128 +3,16 @@
 //! Commands for GitHub/agent authentication flows, auth process cleanup,
 //! version rewinding (download + install), and system architecture detection.
 
-use super::{is_mock_installed, is_mock_mode, mock_install, AUTH_PIDS};
+use super::{is_mock_installed, is_mock_mode, AUTH_PIDS};
 use crate::agent::{get_active_agent, get_agent_by_id};
 use crate::commands::accounts::{
-    agent_auth_dir, claude_cli_auth_status, get_active_account_id, get_env_vars_for_active_account,
-    resolve_claude_identity, ClaudeConnState, DEFAULT_ACCOUNT_ID,
+    agent_auth_dir, claude_cli_auth_status, get_active_account_id, resolve_claude_identity,
+    ClaudeConnState, DEFAULT_ACCOUNT_ID,
 };
 use crate::commands::claude::find_binary_by_name;
 use crate::errors::CommandError;
-use crate::utils::{create_command, find_executable};
+use crate::utils::create_command;
 use tauri::Emitter;
-
-/// Start GitHub authentication (opens browser)
-#[tauri::command]
-#[tracing::instrument(skip(app))]
-pub async fn start_github_auth(app: tauri::AppHandle) -> Result<String, CommandError> {
-    let _ = app.emit(
-        "setup-progress",
-        serde_json::json!({
-            "itemId": "gh_auth",
-            "message": "Opening browser..."
-        }),
-    );
-
-    if is_mock_mode() {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-        mock_install("gh_auth");
-        return Ok("Mock auth completed".to_string());
-    }
-
-    let gh_path = find_executable("gh").ok_or("GitHub CLI not installed")?;
-
-    let child = create_command(&gh_path)
-        .args([
-            "auth",
-            "login",
-            "--web",
-            "--git-protocol",
-            "https",
-            "--clipboard",
-        ])
-        .envs(get_env_vars_for_active_account())
-        .spawn()
-        .map_err(|e| format!("Failed to start GitHub auth: {e}"))?;
-
-    // Store the process PID for potential cleanup instead of forgetting it
-    let pid = child.id();
-    if let Ok(mut pids) = AUTH_PIDS.lock() {
-        pids.insert("github".to_string(), pid);
-    }
-    // Spawn a thread to wait for the process and clean up the registry when it exits
-    std::thread::spawn(move || {
-        let _ = child.wait_with_output();
-        if let Ok(mut pids) = AUTH_PIDS.lock() {
-            pids.remove("github");
-        }
-    });
-
-    Ok("A code has been copied to your clipboard. Paste it in the browser to connect.".to_string())
-}
-
-/// Start agent authentication.
-/// If `agent_id` is provided, authenticate that specific agent. Otherwise, use the active agent.
-#[tauri::command]
-#[tracing::instrument(skip(app))]
-pub async fn start_claude_auth(
-    app: tauri::AppHandle,
-    agent_id: Option<String>,
-) -> Result<String, CommandError> {
-    let agent = match agent_id.as_deref() {
-        Some(id) => get_agent_by_id(id),
-        None => get_active_agent(),
-    };
-
-    let _ = app.emit(
-        "setup-progress",
-        serde_json::json!({
-            "itemId": agent.setup_item_ids.1,
-            "message": "Opening browser..."
-        }),
-    );
-
-    if is_mock_mode() {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-        mock_install(agent.setup_item_ids.1);
-        return Ok("Mock auth completed".to_string());
-    }
-
-    let agent_path = find_binary_by_name(agent.binary_name)
-        .ok_or(format!("{} not installed", agent.display_name))?;
-
-    // Strip any previously injected token before an interactive login: a
-    // revoked-but-not-expired vault token in the env shadows the fresh login
-    // and re-auth can never succeed (issue #159, same pattern as
-    // connect_claude_account).
-    let mut env = get_env_vars_for_active_account();
-    env.remove("CLAUDE_CODE_OAUTH_TOKEN");
-
-    let child = create_command(&agent_path)
-        .args(agent.auth_trigger_args)
-        .envs(env)
-        .spawn()
-        .map_err(|e| format!("Failed to start {} auth: {}", agent.display_name, e))?;
-
-    // Store the process PID for potential cleanup instead of forgetting it
-    let pid = child.id();
-    if let Ok(mut pids) = AUTH_PIDS.lock() {
-        pids.insert(agent.id.to_string(), pid);
-    }
-    // Spawn a thread to wait for the process and clean up the registry when it exits
-    let agent_id_str = agent.id.to_string();
-    std::thread::spawn(move || {
-        let _ = child.wait_with_output();
-        if let Ok(mut pids) = AUTH_PIDS.lock() {
-            pids.remove(&agent_id_str);
-        }
-    });
-
-    Ok(format!(
-        "Browser opened. Log in to your {} account to continue.",
-        agent.display_name
-    ))
-}
 
 /// Check if an agent is authenticated.
 /// If `agent_id` is provided, check that specific agent. Otherwise, use the active agent.
@@ -236,23 +124,6 @@ pub fn cleanup_auth_processes_sync() -> u32 {
     }
 
     count
-}
-
-/// Kill all tracked auth processes (Tauri command wrapper).
-///
-/// This is useful for cleanup when closing the app to prevent orphaned processes.
-/// Returns the number of processes that were killed.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn cleanup_auth_processes() -> Result<u32, CommandError> {
-    Ok(cleanup_auth_processes_sync())
-}
-
-/// Get the system CPU architecture (e.g., "aarch64" or "x86_64").
-#[tauri::command]
-#[tracing::instrument]
-pub fn get_system_arch() -> String {
-    std::env::consts::ARCH.to_string()
 }
 
 /// Download and install a specific app version (for downgrading/rewinding).

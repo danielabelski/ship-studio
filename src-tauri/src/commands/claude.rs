@@ -4,8 +4,6 @@
 //! Uses the agent abstraction layer to support multiple AI coding agents.
 
 use crate::agent::get_active_agent;
-use crate::commands::setup::is_mock_mode;
-use crate::errors::CommandError;
 use crate::external_command::run_with_timeout;
 use crate::types::AgentCliStatus;
 use crate::utils::{create_command, get_extended_path};
@@ -426,53 +424,6 @@ pub async fn check_claude_cli_status() -> AgentCliStatus {
     AgentCliStatus {
         installed: true,
         version,
-    }
-}
-
-#[tauri::command]
-#[tracing::instrument]
-pub async fn install_claude_cli() -> Result<(), CommandError> {
-    let agent = get_active_agent();
-
-    if is_mock_mode() {
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        crate::commands::setup::mock_install(agent.setup_item_ids.0);
-        return Ok(());
-    }
-
-    #[cfg(windows)]
-    {
-        if let Some(msg) = agent.install_message_windows {
-            return Err((msg.to_string()).into());
-        }
-        return Err((format!(
-            "{} does not support automatic installation on Windows.",
-            agent.display_name
-        ))
-        .into());
-    }
-
-    #[cfg(not(windows))]
-    {
-        let install_cmd = agent.install_command_unix.ok_or_else(|| {
-            format!(
-                "{} does not support automatic installation.",
-                agent.display_name
-            )
-        })?;
-
-        let output = create_command("bash")
-            .args(["-c", install_cmd])
-            .env("PATH", get_extended_path())
-            .output()
-            .map_err(|e| format!("Failed to run installer: {e}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err((format!("Failed to install {}: {}", agent.display_name, stderr)).into());
-        }
-
-        Ok(())
     }
 }
 

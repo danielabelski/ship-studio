@@ -105,6 +105,129 @@ fn plugin_shell_timeout_error(plugin_id: &str, command: &str, timeout: u64) -> C
     ))
 }
 
+/// Whether `plugin_id`'s files are present on disk for this project — dev
+/// plugins check their linked local folder, installed ones check
+/// `.shipstudio/plugins/{id}`. Shared by every plugin-context capability
+/// (`shell.exec`, and the `fs.*` primitives below) so an uninstalled or
+/// unlinked plugin is rejected consistently everywhere, not just for shell.
+fn check_plugin_exists(plugin_id: &str, project_path: &str) -> Result<(), CommandError> {
+    let registry = read_registry(project_path)?;
+    let entry = registry.plugins.iter().find(|e| e.plugin_id == plugin_id);
+    let plugin_exists = if let Some(entry) = entry {
+        if entry.is_dev {
+            PathBuf::from(&entry.local_path).exists()
+        } else {
+            get_plugins_dir(project_path)?.join(plugin_id).exists()
+        }
+    } else {
+        false
+    };
+    if !plugin_exists {
+        return Err(CommandError::expected(format!(
+            "Plugin '{plugin_id}' not found"
+        )));
+    }
+    Ok(())
+}
+
+/// Join a plugin-supplied, project-relative path onto an already-validated
+/// project root, for the `fs.*` primitives below.
+///
+/// `shell.exec` already runs with the project directory as its cwd, so a
+/// plugin doing `shell.exec('cat', ['package.json'])` resolves relative to
+/// the project root; `fs.exists`/`fs.readText` keep that same mental model.
+/// Rejects absolute paths and any `..` component outright — no plugin has a
+/// legitimate reason to read outside its own project, and unlike an opaque
+/// shell command, a structured path argument lets the host actually enforce
+/// that instead of merely asking nicely. Pure and root-agnostic so it's
+/// directly unit-testable without going through `validate_project_path`.
+fn join_relative_plugin_path(
+    root: &std::path::Path,
+    relative: &str,
+) -> Result<PathBuf, CommandError> {
+    let rel = std::path::Path::new(relative);
+
+    if rel.is_absolute() {
+        return Err(CommandError::expected(format!(
+            "Plugin path '{relative}' must be relative to the project directory, not absolute"
+        )));
+    }
+    if rel
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(CommandError::expected(format!(
+            "Plugin path '{relative}' may not contain '..'"
+        )));
+    }
+
+    Ok(root.join(rel))
+}
+
+/// Core of [`plugin_fs_exists`], taking an already-validated project root so
+/// it's unit-testable without a real `~/ShipStudio` project on disk.
+fn plugin_fs_exists_at(root: &std::path::Path, relative: &str) -> Result<bool, CommandError> {
+    let resolved = join_relative_plugin_path(root, relative)?;
+    Ok(resolved.exists())
+}
+
+/// Core of [`plugin_fs_read_text`] — see [`plugin_fs_exists_at`].
+fn plugin_fs_read_text_at(
+    root: &std::path::Path,
+    relative: &str,
+) -> Result<Option<String>, CommandError> {
+    let resolved = join_relative_plugin_path(root, relative)?;
+    match fs::read_to_string(&resolved) {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(crate::utils::classify_fs_error(
+            "read this file for a plugin",
+            &resolved,
+            &e,
+        )),
+    }
+}
+
+/// Check whether a file exists within the project, without shelling out.
+///
+/// Cross-platform host primitive replacing a plugin's `shell.exec('test',
+/// ['-f', path])` (or `ls`) — `test` isn't on PATH by default on Windows, so
+/// every plugin using it for file-existence checks failed outright there
+/// (issues #840, #693, #816). `path` is relative to the project root, exactly
+/// like `shell.exec`'s working directory.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub fn plugin_fs_exists(
+    plugin_id: String,
+    project_path: String,
+    path: String,
+) -> Result<bool, CommandError> {
+    check_plugin_exists(&plugin_id, &project_path)?;
+    let validated_root = validate_project_path(&project_path)?;
+    plugin_fs_exists_at(&validated_root, &path)
+}
+
+/// Read a UTF-8 text file within the project, without shelling out.
+///
+/// Cross-platform host primitive replacing a plugin's `shell.exec('cat',
+/// [path])` — `cat` isn't on PATH by default on Windows (issues #777, #751).
+/// Returns `Ok(None)` when the file doesn't exist rather than an error: the
+/// common plugin use case is "read this config file if it's there", and
+/// forcing a separate `plugin_fs_exists` call first would just add an IPC
+/// round trip and a TOCTOU gap. Any other I/O failure (permissions, not
+/// valid UTF-8, etc.) is still a real error.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub fn plugin_fs_read_text(
+    plugin_id: String,
+    project_path: String,
+    path: String,
+) -> Result<Option<String>, CommandError> {
+    check_plugin_exists(&plugin_id, &project_path)?;
+    let validated_root = validate_project_path(&project_path)?;
+    plugin_fs_read_text_at(&validated_root, &path)
+}
+
 /// Execute a shell command in a plugin's context
 ///
 /// Security: validates project_path, uses extended PATH, enforces configurable timeout (default 120s).
@@ -121,22 +244,7 @@ pub async fn exec_plugin_shell(
     let validated_path = validate_project_path(&project_path)?;
 
     // Validate plugin exists in this project
-    let registry = read_registry(&project_path)?;
-    let entry = registry.plugins.iter().find(|e| e.plugin_id == plugin_id);
-    let plugin_exists = if let Some(entry) = entry {
-        if entry.is_dev {
-            PathBuf::from(&entry.local_path).exists()
-        } else {
-            get_plugins_dir(&project_path)?.join(&plugin_id).exists()
-        }
-    } else {
-        false
-    };
-    if !plugin_exists {
-        return Err(CommandError::expected(format!(
-            "Plugin '{plugin_id}' not found"
-        )));
-    }
+    check_plugin_exists(&plugin_id, &project_path)?;
 
     // Resolve the binary up front so a missing tool yields an actionable
     // message naming the plugin and command, not a raw "No such file or
@@ -415,5 +523,74 @@ mod tests {
             format!("{err}"),
             "Plugin 'vercel' shell command 'git' timed out after 10s"
         );
+    }
+
+    // ── fs.exists / fs.readText (issues #840, #816, #777, #751, #693) ──────
+    //
+    // These are the cross-platform host primitives plugins should use instead
+    // of shelling out to POSIX-only `test -f` / `cat` (which don't exist on
+    // Windows by default and can never work there no matter how the plugin
+    // is fixed, since `exec_plugin_shell` correctly refuses to run a binary
+    // it can't resolve). `plugin_fs_exists_at`/`plugin_fs_read_text_at` take
+    // an already-validated root so they're testable without a real project
+    // under `~/ShipStudio`.
+
+    #[test]
+    fn fs_exists_true_for_a_present_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("pnpm-lock.yaml"), "").unwrap();
+        assert!(plugin_fs_exists_at(tmp.path(), "pnpm-lock.yaml").unwrap());
+    }
+
+    #[test]
+    fn fs_exists_false_for_a_missing_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        assert!(!plugin_fs_exists_at(tmp.path(), "pnpm-lock.yaml").unwrap());
+    }
+
+    #[test]
+    fn fs_exists_works_for_a_nested_relative_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src").join("next.config.ts"), "").unwrap();
+        assert!(plugin_fs_exists_at(tmp.path(), "src/next.config.ts").unwrap());
+        assert!(!plugin_fs_exists_at(tmp.path(), "src/astro.config.mjs").unwrap());
+    }
+
+    #[test]
+    fn fs_read_text_returns_file_contents() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("package.json"), "{\"name\":\"demo\"}").unwrap();
+        let content = plugin_fs_read_text_at(tmp.path(), "package.json").unwrap();
+        assert_eq!(content, Some("{\"name\":\"demo\"}".to_string()));
+    }
+
+    /// The whole point of this primitive over `cat`: a missing file is a
+    /// normal `None`, not an error the plugin has to `.catch(() => null)`.
+    #[test]
+    fn fs_read_text_returns_none_for_a_missing_file_not_an_error() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let content = plugin_fs_read_text_at(tmp.path(), "package.json").unwrap();
+        assert_eq!(content, None);
+    }
+
+    #[test]
+    fn fs_paths_reject_traversal_outside_the_project() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let err = plugin_fs_exists_at(tmp.path(), "../../etc/passwd").unwrap_err();
+        assert!(matches!(err, CommandError::Expected { .. }), "got: {err:?}");
+        let err = plugin_fs_read_text_at(tmp.path(), "../secret").unwrap_err();
+        assert!(matches!(err, CommandError::Expected { .. }), "got: {err:?}");
+    }
+
+    #[test]
+    fn fs_paths_reject_absolute_paths() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        #[cfg(unix)]
+        let absolute = "/etc/passwd";
+        #[cfg(windows)]
+        let absolute = "C:\\Windows\\System32\\config\\SAM";
+        let err = plugin_fs_exists_at(tmp.path(), absolute).unwrap_err();
+        assert!(matches!(err, CommandError::Expected { .. }), "got: {err:?}");
     }
 }

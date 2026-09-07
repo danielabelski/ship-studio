@@ -109,6 +109,14 @@ function buildAncestors(root: ElementTreeNode): Map<number, number[]> {
   return out;
 }
 
+/** The CSS-selector-shaped string the tree row's own label is built from
+ *  (tag + every class, dot-joined) — what "Copy selector" puts on the
+ *  clipboard, so pasting it into a chat matches what was right-clicked. */
+function elementSelector(tag: string, cls: string): string {
+  const classes = cls.trim().split(/\s+/).filter(Boolean);
+  return classes.length > 0 ? `${tag}.${classes.join('.')}` : tag;
+}
+
 function RowLabel({ node, showTagIcons }: { node: ElementTreeNode; showTagIcons: boolean }) {
   const firstClass = node.cls.split(/\s+/)[0] ?? '';
   const elementIcon = showTagIcons ? getElementIcon(node.tag) : undefined;
@@ -164,15 +172,20 @@ export function ElementTreePanel({
   const contextTargetRef = useRef<{
     nodeId: number;
     tag: string;
+    cls: string;
     x: number;
     y: number;
   } | null>(null);
+  const { showToast } = useOptionalToast();
+  const { copy: copySelector } = useCopyToClipboard({
+    onCopy: () => showToast('Selector copied', 'success'),
+    onError: () => showToast('Could not copy the selector', 'error'),
+  });
   const [insertFor, setInsertFor] = useState<{
     nodeId: number;
     tag: string;
     anchor: { left: number; top: number; bottom: number };
   } | null>(null);
-  const { showToast } = useOptionalToast();
   const notifyCopy = useCallback(
     () => showToast('Element id copied — paste it to your agent', 'success'),
     [showToast]
@@ -269,6 +282,7 @@ export function ElementTreePanel({
                 contextTargetRef.current = {
                   nodeId: node.id,
                   tag: node.tag,
+                  cls: node.cls,
                   x: e.clientX,
                   y: e.clientY,
                 };
@@ -322,6 +336,14 @@ export function ElementTreePanel({
               >
                 {elementIdCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
                 <span>{elementIdCopied ? 'Copied' : 'Copy ID'}</span>
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  void copySelector(elementSelector(node.tag, node.cls));
+                }}
+              >
+                <CopyIcon size={12} />
+                <span>Copy selector</span>
               </ContextMenuItem>
               <ContextMenuItem
                 onSelect={() => structure.selectAndRun(node.id, structure.duplicate)}

@@ -20,8 +20,13 @@ import { asCommandError, formatCommandError, isProjectFolderGoneError } from '..
 import { getWindowLabel } from '../lib/window';
 import { trackEvent } from '../lib/analytics';
 
-/** How often to refresh the page list (ms) */
-const PAGE_REFRESH_INTERVAL_MS = 5000;
+/** How often to refresh the page list (ms). This drives a real filesystem
+ *  walk on the backend (`list_pages` → `scan_astro_pages`), not a cheap
+ *  in-memory read — a profiled idle workspace showed it as the one poller
+ *  actually burning CPU (`scan_astro_pages_at`/`read_scan_dir` frames in a
+ *  sampled idle window). The page list only feeds a dropdown picker, so a
+ *  20s staleness window is an acceptable trade for a quarter of the walks. */
+const PAGE_REFRESH_INTERVAL_MS = 20_000;
 /** Timeout for the periodic health check once the server is already up (ms).
  *  The server is warm here, so a healthy reply is near-instant; 3s is plenty
  *  and keeps a crashed server from lingering in the "ready" state. */

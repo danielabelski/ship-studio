@@ -18,24 +18,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 /**
- * Enter compact mode - transforms window to minimal floating bar.
- * Removes window decorations, resizes to compact dimensions,
- * and restores saved position/always-on-top state.
- */
-export async function enterCompactMode(): Promise<void> {
-  return invoke('enter_compact_mode');
-}
-
-/**
- * Exit compact mode - restores window to full size.
- * Saves current position before exiting, restores decorations,
- * and centers the window on screen.
- */
-export async function exitCompactMode(): Promise<void> {
-  return invoke('exit_compact_mode');
-}
-
-/**
  * Toggle always-on-top state for the window.
  * When enabled, window stays above all other windows.
  * State is persisted across sessions.
@@ -44,23 +26,6 @@ export async function exitCompactMode(): Promise<void> {
  */
 export async function setAlwaysOnTop(enabled: boolean): Promise<void> {
   return invoke('set_always_on_top', { enabled });
-}
-
-/**
- * Start native window drag.
- * Call this on mousedown to allow user to drag the window.
- * The window will follow the cursor until mouse is released.
- */
-export async function startWindowDrag(): Promise<void> {
-  return invoke('start_window_drag');
-}
-
-/**
- * Focus the window and bring it to front.
- * Useful after opening external apps (like a browser) that may steal focus.
- */
-export async function focusWindow(): Promise<void> {
-  return invoke('focus_window');
 }
 
 /**
@@ -158,17 +123,6 @@ export async function findAndReservePort(
 export async function releaseReservedPort(projectPath: string): Promise<void> {
   const windowLabel = getWindowLabel();
   return invoke('release_reserved_port', { windowLabel, projectPath });
-}
-
-/**
- * Look up the port already reserved for a given project in this window, if any.
- */
-export async function getReservedPortForProject(projectPath: string): Promise<number | null> {
-  const windowLabel = getWindowLabel();
-  return invoke<number | null>('get_reserved_port_for_window', {
-    windowLabel,
-    projectPath,
-  });
 }
 
 /**
