@@ -26,17 +26,12 @@
  *                                   --width 1240
  */
 
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { CHROME, launchChrome } from './headless-chrome.mjs';
 
-const CDP_PORT = Number(process.env.SHIPSTUDIO_STRUCTURE_CDP_PORT ?? 9338);
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/usr/bin/google-chrome',
-].find((p) => existsSync(p));
-
+/** Preferred debugging port; the launcher moves off it if it is taken. */
+let CDP_PORT = Number(process.env.SHIPSTUDIO_STRUCTURE_CDP_PORT ?? 9338);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -242,29 +237,10 @@ async function main() {
   }
   const width = Number(args.width ?? 1440);
 
-  const chrome = spawn(
-    CHROME,
-    [
-      '--headless=new',
-      `--remote-debugging-port=${CDP_PORT}`,
-      '--hide-scrollbars',
-      '--force-device-scale-factor=1',
-      '--disable-gpu',
-      '--no-first-run',
-      `--user-data-dir=${path.join(process.env.TMPDIR ?? '/tmp', 'shipstudio-structure-chrome')}`,
-    ],
-    { stdio: 'ignore' }
-  );
+  const chrome = await launchChrome({ tool: 'structure', basePort: CDP_PORT });
+  CDP_PORT = chrome.port;
 
   try {
-    for (let i = 0; i < 60; i += 1) {
-      try {
-        await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
-        break;
-      } catch {
-        await sleep(250);
-      }
-    }
 
     const ref = await fingerprint(args.reference, width);
     const reb = await fingerprint(args.rebuild, width);
@@ -287,7 +263,7 @@ async function main() {
     console.log(section('surfaces', ref.surfaces, reb.surfaces, 'px²'));
     console.log(section('vertical rhythm', ref.rhythm, reb.rhythm, ' blocks'));
   } finally {
-    chrome.kill();
+    chrome.close();
   }
 }
 

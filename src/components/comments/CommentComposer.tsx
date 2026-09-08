@@ -8,7 +8,7 @@
  * A guard on the button alone is not enough either, since Cmd+Enter goes down
  * the same path, so the in-flight flag is checked at the one place both reach.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '../primitives/Button';
 import { TextArea } from '../primitives/TextField';
 import {
@@ -26,6 +26,17 @@ interface Props {
 export function CommentComposer({ target, existing, onSave, onCancel }: Props) {
   const [body, setBody] = useState(existing?.body ?? '');
   const [saving, setSaving] = useState(false);
+  const field = useRef<HTMLTextAreaElement>(null);
+
+  // Focus without `autoFocus`, because focus() scrolls every scrollable
+  // ancestor to reveal the element and `autoFocus` gives no way to opt out.
+  // The composer is absolutely positioned over the frame at the point that was
+  // clicked, so clicking anything low on a page taller than the pane scrolled
+  // the preview down to it — the frame appeared to jump upward, and stayed
+  // there after Cancel, since nothing scrolls it back.
+  useEffect(() => {
+    field.current?.focus({ preventScroll: true });
+  }, []);
   // A ref as well as the state: two clicks in the same tick both read the old
   // state, and the second one would still get through.
   const inFlight = useRef(false);
@@ -66,8 +77,8 @@ export function CommentComposer({ target, existing, onSave, onCancel }: Props) {
       </div>
       <p className="canvas-comments-hint">Click another element to change the target.</p>
       <TextArea
+        ref={field}
         aria-label="What should change?"
-        autoFocus
         value={body}
         maxLength={8000}
         rows={3}

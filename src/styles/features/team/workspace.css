@@ -147,6 +147,22 @@
   font-weight: var(--font-weight-body);
 }
 
+/* Provenance, not a button: it sits with the title at the weight of a caption
+   so it reads as a footnote to "Team" rather than competing with the tabs. */
+.team-float-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  margin-left: var(--spacing-2xs);
+  padding: var(--spacing-2xs) var(--spacing-xs);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-body);
+  white-space: nowrap;
+}
+
 .team-float-header-actions {
   display: inline-flex;
   align-items: center;
