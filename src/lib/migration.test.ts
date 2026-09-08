@@ -154,6 +154,14 @@ describe('loadFidelityRun', () => {
     expect(template.breakpoints[0].dir).toBe('/p/.shipstudio/fidelity/pass-2/home/1440');
   });
 
+  it('carries whether the latest run finished', async () => {
+    // A run is written after every width so an interruption is not lost, which
+    // means a report can describe two widths when four were asked for. Without
+    // this the panel would present half a run as a verdict on the whole page.
+    const run = await loadFidelityRun('/p');
+    expect(run.complete).toBe(true);
+  });
+
   it('fails rather than inventing a run when there are none', async () => {
     clearMocks();
     mockIPC(() => []);
@@ -179,6 +187,7 @@ describe('runScore', () => {
     const run: FidelityRun = {
       reference: 'https://example.com/',
       rebuild: 'http://localhost:3000/',
+      complete: true,
       rebuildOverlay: null,
       history: [],
       templates: [

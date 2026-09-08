@@ -457,6 +457,28 @@ async function compare(referenceB64, rebuildB64, width) {
   }
 }
 
+/**
+ * Write what has been measured so far.
+ *
+ * `complete` says whether every requested width was reached, so a reader can
+ * tell a finished run from an interrupted one rather than inferring it from
+ * how many entries happen to be present — and so a score from two widths is
+ * never mistaken for a verdict across four.
+ */
+async function writeReport(outDir, results, meta) {
+  const report = {
+    ...meta,
+    capturedAt: new Date().toISOString(),
+    // The worst breakpoint is the score, not the mean. A migration that is
+    // perfect on desktop and broken on mobile is a broken migration, and an
+    // average is exactly the statistic that would hide it.
+    score: Math.min(...results.map((r) => r.score)),
+    breakpoints: results,
+  };
+  await mkdir(outDir, { recursive: true });
+  await writeFile(path.join(outDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+}
+
 // ─── Runner ────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -538,29 +560,35 @@ async function main() {
 
       const { diff: _diff, ...summary } = cmp;
       results.push({ breakpoint: width, ...summary, dir: path.relative(process.cwd(), dir) });
+
+      // Written after every breakpoint, not once at the end.
+      //
+      // A four-width run takes about four minutes, and an agent's shell call
+      // is routinely killed before that. Writing only on completion meant a
+      // run that captured three widths and was then interrupted left three
+      // directories of images and no report at all — the work was done and
+      // entirely unreadable, and from outside it looked like the tool had
+      // produced nothing. Three separate trials lost confirmation runs that
+      // way. A partial report is worth having; a lost one never is.
+      await writeReport(outDir, results, {
+        label,
+        reference,
+        rebuild,
+        // Recorded so the panel can say the rebuild side is a stand-in rather
+        // than letting two identical URLs imply the comparison is meaningless.
+        rebuildCss: args['rebuild-css'] ? path.basename(args['rebuild-css']) : null,
+        complete: results.length === breakpoints.length,
+      });
       console.log(
         `${summary.score}%  (${summary.referenceHeight}px vs ${summary.rebuildHeight}px)` +
           (ref.cached ? '  [original from cache]' : '')
       );
     }
 
-    const report = {
-      label,
-      reference,
-      rebuild,
-      // Recorded so the panel can say the rebuild side is a stand-in rather
-      // than letting two identical URLs imply the comparison is meaningless.
-      rebuildCss: args['rebuild-css'] ? path.basename(args['rebuild-css']) : null,
-      capturedAt: new Date().toISOString(),
-      // The worst breakpoint is the score, not the mean. A migration that is
-      // perfect on desktop and broken on mobile is a broken migration, and an
-      // average is exactly the statistic that would hide it.
-      score: Math.min(...results.map((r) => r.score)),
-      breakpoints: results,
-    };
-    await mkdir(outDir, { recursive: true });
-    await writeFile(path.join(outDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-    console.log(`\n  worst breakpoint: ${report.score}%  →  ${path.relative(process.cwd(), outDir)}/report.json`);
+    console.log(
+      `\n  worst breakpoint: ${Math.min(...results.map((r) => r.score))}%` +
+        `  →  ${path.relative(process.cwd(), outDir)}/report.json`
+    );
   } finally {
     chrome.kill();
   }

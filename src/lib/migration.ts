@@ -133,6 +133,8 @@ export type TemplateFidelity =
 export interface FidelityRun {
   reference: string;
   rebuild: string;
+  /** False when the latest run stopped before every width it was asked for. */
+  complete: boolean;
   /**
    * Set when the rebuild side is not really a rebuild.
    *
@@ -185,6 +187,15 @@ interface FidelityReport {
   score: number;
   breakpoints: Omit<BreakpointComparison, 'dir'>[];
   rebuildCss?: string | null;
+  /**
+   * False when the run was interrupted before every requested width.
+   *
+   * The report is written after each breakpoint so an interrupted run is not
+   * lost, which means a report can legitimately describe two widths when four
+   * were asked for. Without this flag a score from half a run reads as a
+   * verdict on the whole of it.
+   */
+  complete?: boolean;
 }
 
 /** One run directory as the backend found it. */
@@ -234,6 +245,9 @@ export async function loadFidelityRun(projectPath: string): Promise<FidelityRun>
   return {
     reference: report.reference,
     rebuild: report.rebuild,
+    // Absent in reports written before the flag existed; those were only ever
+    // written on completion, so their absence means complete.
+    complete: report.complete ?? true,
     rebuildOverlay: report.rebuildCss ?? null,
     // One entry per run, labelled with the run's own directory name. The
     // agent chooses those names, and a name it chose is more informative than
