@@ -300,6 +300,16 @@ export const PHASE_LABEL: Record<MigrationPhaseId, string> = {
 };
 
 /**
+ * Where the rebuild is served when nobody has said.
+ *
+ * The app knows the project's real port and passes it; this is for callers
+ * that do not, and it matches the dev-server default so it is right more often
+ * than not. Getting it wrong is not silent — the tool refuses to score a URL it
+ * could not load.
+ */
+const REBUILD_URL_FALLBACK = 'http://localhost:3000/';
+
+/**
  * The first thing the agent is told.
  *
  * Deliberately short. The method lives in the `shipstudio-site-to-code` skill,
@@ -311,7 +321,7 @@ export const PHASE_LABEL: Record<MigrationPhaseId, string> = {
  * The last line is the one that matters. An agent that finishes a phase and
  * says nothing has, from the user's side, stalled.
  */
-export function buildMigrationPrompt(sourceUrl: string): string {
+export function buildMigrationPrompt(sourceUrl: string, rebuildUrl = REBUILD_URL_FALLBACK): string {
   return [
     `Rebuild ${sourceUrl} in this project.`,
     '',
@@ -329,7 +339,7 @@ export function buildMigrationPrompt(sourceUrl: string): string {
     '',
     '  node .shipstudio/fidelity/site-fidelity.mjs \\',
     `    --reference ${sourceUrl} \\`,
-    '    --rebuild http://localhost:3000/ \\',
+    `    --rebuild ${rebuildUrl} \\`,
     '    --breakpoints <widths from the survey> \\',
     '    --label home --out .shipstudio/fidelity/<pass-name>',
     '',
@@ -346,16 +356,16 @@ export function buildMigrationPrompt(sourceUrl: string): string {
     '',
     '  node .shipstudio/fidelity/site-structure.mjs \\',
     `    --reference ${sourceUrl} \\`,
-    '    --rebuild http://localhost:3000/ --width <width>',
+    `    --rebuild ${rebuildUrl} --width <width>`,
     '',
     'It reads both pages\u2019 computed styles and names the differences —',
     'container widths, type sizes and line-heights, colours, section padding.',
     'Diagnose from that, not from the diff image: a single wrong container width',
     'moves every image on the page, so the picture exaggerates one mistake into',
     'a hundred and tells you the name of none of them.',
-    'Use the dev server URL this project actually runs on — start it yourself in',
-    'the background if nothing is serving the rebuild, since the tool needs a URL',
-    'it can load. Take one throwaway comparison right after the survey to prove',
+    'That is the URL this project is configured to serve on. Check it is up',
+    'before measuring, and start the dev server yourself if it is not — the tool',
+    'needs a URL it can load, and it will tell you plainly if it cannot. Take one throwaway comparison right after the survey to prove',
     'the loop works before anything depends on it. A page is not done below',
     '99.5% at its worst breakpoint.',
     '',
@@ -426,7 +436,7 @@ export function buildMigrationPrompt(sourceUrl: string): string {
  * what the files say would give the agent two sources that can disagree, and
  * the files are the one that is actually true.
  */
-export function buildResumePrompt(sourceUrl: string): string {
+export function buildResumePrompt(sourceUrl: string, rebuildUrl = REBUILD_URL_FALLBACK): string {
   return [
     `Resume the rebuild of ${sourceUrl} in this project. It was interrupted.`,
     '',
@@ -441,5 +451,8 @@ export function buildResumePrompt(sourceUrl: string): string {
     '',
     'Carry on from there under the shipstudio-site-to-code skill, and keep',
     '`.shipstudio/migration.json` current in the shape it already uses.',
+    '',
+    `The rebuild is served at ${rebuildUrl} — check it is up before measuring,`,
+    'and start the dev server yourself if it is not.',
   ].join('\n');
 }

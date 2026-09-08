@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
 import {
   buildMigrationPrompt,
+  buildResumePrompt,
   fidelityBand,
   fidelityImageUrl,
   loadFidelityRun,
@@ -73,6 +74,19 @@ describe('buildMigrationPrompt', () => {
   it('asks for the site’s own breakpoints rather than the tool’s defaults', () => {
     expect(prompt).toContain('--breakpoints');
     expect(prompt).toContain('media queries');
+  });
+
+  it('names where the rebuild is actually served', () => {
+    // The app knows the project's port; leaving the agent to discover it is
+    // the difference between measuring and hunting.
+    expect(buildMigrationPrompt('https://example.com/', 'http://localhost:4321/')).toContain(
+      '--rebuild http://localhost:4321/'
+    );
+    expect(buildResumePrompt('https://example.com/', 'http://localhost:4321/')).toContain(
+      'http://localhost:4321/'
+    );
+    // And falls back rather than emitting an empty URL when nobody said.
+    expect(buildMigrationPrompt('https://example.com/')).toContain('http://localhost:3000/');
   });
 });
 

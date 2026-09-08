@@ -38,6 +38,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { trackError } from '../lib/analytics';
 import { buildMigrationPrompt, initMigration } from '../lib/migration';
+import { getDevServerPort } from '../lib/project';
 import { queueHandoff } from '../lib/workflowHandoff';
 import { friendlyProcessError } from '../lib/errors';
 import { getWindowLabel } from '../lib/window';
@@ -495,7 +496,14 @@ export function useProjectCreation({ onComplete, onCancel }: UseProjectCreationP
         // repo, and the migration can be restarted from the palette.
         try {
           await initMigration(projectPath, migrationUrl);
-          queueHandoff(projectPath, buildMigrationPrompt(migrationUrl));
+          // Tell the agent where its own rebuild will be served, rather than
+          // leaving it to discover a port. The template decides this, and the
+          // project has just been scaffolded from one, so it is knowable now.
+          const port = await getDevServerPort(projectPath).catch(() => null);
+          queueHandoff(
+            projectPath,
+            buildMigrationPrompt(migrationUrl, port ? `http://localhost:${port}/` : undefined)
+          );
         } catch (err) {
           logger.warn('[ProjectCreation] Could not start the migration', {
             error: String(err),

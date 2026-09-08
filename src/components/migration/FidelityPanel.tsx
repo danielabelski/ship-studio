@@ -34,6 +34,7 @@ import {
   type MigrationStatus,
 } from '@/lib/migration';
 import { queueHandoff } from '@/lib/workflowHandoff';
+import { getDevServerPort } from '@/lib/project';
 import { logger } from '@/lib/logger';
 import { useOptionalToast } from '../../contexts/ToastContext';
 
@@ -87,7 +88,12 @@ export function FidelityPanel({ projectPath }: FidelityPanelProps) {
         error: String(err),
       });
     }
-    queueHandoff(projectPath, buildResumePrompt(status.sourceUrl));
+    // The port the project is configured to serve on, so the agent is not
+    // guessing at where its own rebuild lives. Absent for a project that has
+    // never had one set, and the prompt's fallback covers that.
+    const port = await getDevServerPort(projectPath).catch(() => null);
+    const rebuildUrl = port ? `http://localhost:${port}/` : undefined;
+    queueHandoff(projectPath, buildResumePrompt(status.sourceUrl, rebuildUrl));
     toast?.showToast('Picking the migration back up in a new terminal', 'info');
   };
 
