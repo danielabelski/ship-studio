@@ -37,6 +37,17 @@ export function useClickOutside<T extends HTMLElement>(
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
       if (ref.current && !ref.current.contains(target)) {
+        // A modal is a layer *above* whatever is watching for outside clicks,
+        // not a sibling of it. ModalFrame already marks every other body child
+        // `inert` while a dialog is open, but a document-level listener is not
+        // subject to `inert` — so without this, filling in a dialog dismisses
+        // the popover underneath it. When that popover owns the dialog's mount
+        // (a dropdown rendering a modal in its own subtree) the dialog goes
+        // with it, and the feature is simply unusable: this is what made the
+        // Create GitHub Repository dialog close on its first click.
+        if ((target as Element).closest?.('[data-modal-root]')) {
+          return;
+        }
         // Check if click is on an excluded element
         if (excludeSelector && (target as Element).closest?.(excludeSelector)) {
           return;
