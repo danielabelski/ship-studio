@@ -136,6 +136,96 @@ describe('friendlyProcessError', () => {
     expect(describeProcessError('npm ERR! code E401').expected).toBe(true);
   });
 
+  it('maps a clone cut off mid-transfer to "try again" (issue #902)', () => {
+    // The reported payload. curl 92 is the HTTP/2 flavour; the four lines
+    // after it are git describing the aftermath of the same interruption.
+    const raw = [
+      'Process exited with code 1',
+      '',
+      "Cloning into 'achylsluna-microjob-1'...",
+      'error: RPC failed; curl 92 HTTP/2 stream 5 was not closed cleanly: CANCEL (err 8)',
+      'error: 11057 bytes of body are still expected',
+      'fetch-pack: unexpected disconnect while reading sideband packet',
+      'fatal: early EOF',
+      'fatal: fetch-pack: invalid index-pack output',
+      'failed to run git: exit status 128',
+    ].join('\n');
+    const info = describeProcessError(raw);
+    expect(info.expected).toBe(true);
+    expect(info.message).toMatch(/cut off/i);
+    expect(info.message).not.toContain('curl 92');
+    // Each line of the aftermath identifies it on its own — a truncated or
+    // differently-ordered dump must classify too.
+    expect(describeProcessError('fatal: early EOF').expected).toBe(true);
+    expect(describeProcessError('fatal: fetch-pack: invalid index-pack output').expected).toBe(
+      true
+    );
+  });
+
+  it('names a broken package-manager install rather than dumping Node (issue #903)', () => {
+    const raw = [
+      'Process exited with code 1',
+      '',
+      'node:internal/modules/cjs/loader:1147',
+      '  throw err;',
+      '  ^',
+      "Error: Cannot find module '../lib/cli.js'",
+      'Require stack:',
+      '- /usr/local/bin/npm',
+      '    at Module._resolveFilename (node:internal/modules/cjs/loader:1144:15)',
+      'Node.js v20.11.1',
+    ].join('\n');
+    const info = describeProcessError(raw);
+    expect(info.expected).toBe(true);
+    expect(info.message).toContain('/usr/local/bin/npm');
+    expect(info.message).toMatch(/reinstall/i);
+    expect(info.message).not.toContain('node:internal');
+  });
+
+  it('does not mistake a project module for a broken package manager', () => {
+    // A project whose own code fails to resolve an import is a real failure
+    // in the repository, and must keep reporting.
+    const raw = [
+      'Process exited with code 1',
+      "Error: Cannot find module './config'",
+      'Require stack:',
+      '- /Users/x/projects/site/build.js',
+    ].join('\n');
+    expect(describeProcessError(raw).expected).toBe(false);
+
+    // Nor a project that merely lives in a folder with the tool's name in it.
+    const inNamedFolder = [
+      "Error: Cannot find module './config'",
+      'Require stack:',
+      '- /Users/x/code/npm-tools/build.js',
+    ].join('\n');
+    expect(describeProcessError(inNamedFolder).expected).toBe(false);
+
+    // But a Windows entrypoint, and a `.cjs` shim, are the real thing.
+    for (const entry of ['C:\\Program Files\\nodejs\\npm', '/opt/homebrew/bin/pnpm.cjs']) {
+      const broken = [
+        "Error: Cannot find module '../lib/cli.js'",
+        'Require stack:',
+        `- ${entry}`,
+      ].join('\n');
+      expect(describeProcessError(broken).expected).toBe(true);
+    }
+  });
+
+  it('maps pnpm 9 rejecting a settings-only workspace file (issue #915)', () => {
+    const raw = [
+      'Process exited with code 1',
+      '',
+      ' ERROR  packages field missing or empty',
+      'For help, run: pnpm help install',
+    ].join('\n');
+    const info = describeProcessError(raw);
+    expect(info.expected).toBe(true);
+    expect(info.message).toContain('pnpm-workspace.yaml');
+    expect(info.message).toMatch(/pnpm 10/);
+    expect(info.message).not.toContain('pnpm help install');
+  });
+
   it('maps HTTPS credential-prompt failures to gh auth guidance (issue #637)', () => {
     const raw =
       "Process exited with code 1\n\nCloning into 'ogeh-ai-website'...\nfatal: could not read Password for 'https://user@github.com': Device not configured\nfailed to run git: exit status 128";

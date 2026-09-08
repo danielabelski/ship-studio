@@ -576,9 +576,31 @@ fn classify_mcp_failure(action: &str, details: &str) -> CommandError {
     // subcommand, so a single value the installed version no longer accepts
     // (e.g. `service_tier = "default"` in ~/.codex/config.toml) breaks add,
     // remove and list alike. The user's own config, not our call (issue #755).
+    //
+    // Two shapes reach here. The CLI's own refusal of a value it no longer
+    // accepts is one. The other is the config file being unparseable at all —
+    // a lone carriage return, an unclosed string, a stray bracket — which the
+    // TOML parser reports with a line, a column and a caret, and which
+    // `mcp remove`/`list` wrap as "failed to load MCP servers from …" rather
+    // than "failed to load configuration" (issue #911). Both mean the same
+    // thing to the user: the agent CLI cannot read its own config, and the
+    // file is theirs to fix.
     if lower.contains("failed to load configuration")
+        || lower.contains("failed to load mcp servers")
+        || lower.contains("toml parse error")
         || (lower.contains("unknown variant") && lower.contains("config.toml"))
     {
+        // A syntax error and a rejected value need different advice: nobody
+        // can "remove the setting" from a file that doesn't parse, because
+        // the parser never got far enough to name one.
+        if lower.contains("toml parse error") || lower.contains("expected newline") {
+            let line = toml_error_line(details)
+                .map(|line| format!(" (around line {line})"))
+                .unwrap_or_default();
+            return CommandError::expected(format!(
+                "{message}\n\nThe agent CLI couldn't read its own config file — it isn't valid TOML{line}. Open the config file named above and fix the syntax there (a stray quote, bracket, or line ending), then try again."
+            ));
+        }
         let setting = invalid_config_key(details)
             .map(|key| format!(" (`{key}`)"))
             .unwrap_or_default();
@@ -608,6 +630,33 @@ fn classify_mcp_failure(action: &str, details: &str) -> CommandError {
     }
 
     message.into()
+}
+
+/// Pull the line number out of a TOML syntax error, which reports its
+/// position twice — once as `…/config.toml:7:2: <reason>` and once as
+/// `TOML parse error at line 7, column 2` (issue #911). Either form will do;
+/// without one the guidance says "fix the syntax" and names no line rather
+/// than inventing one.
+fn toml_error_line(details: &str) -> Option<u32> {
+    for line in details.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("TOML parse error at line ") {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(n) = digits.parse() {
+                return Some(n);
+            }
+        }
+        // `<path>:<line>:<col>: message` — take the number before the column,
+        // being careful of a Windows drive letter's own colon.
+        if let Some(idx) = trimmed.find(".toml:") {
+            let rest = &trimmed[idx + ".toml:".len()..];
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(n) = digits.parse() {
+                return Some(n);
+            }
+        }
+    }
+    None
 }
 
 /// Pull the offending setting's name out of a Codex config-parse error,
@@ -1063,6 +1112,67 @@ mod tests {
         ));
         assert_eq!(invalid_config_key(details).as_deref(), Some("service_tier"));
         assert_eq!(invalid_config_key("no key here"), None);
+    }
+
+    /// Issue #911: the same "the CLI can't read its own config" condition,
+    /// but the file doesn't parse at all rather than carrying a value the CLI
+    /// rejects — and `mcp remove` wraps it in different words from `mcp add`.
+    #[test]
+    fn unparseable_config_is_expected_and_says_it_is_a_syntax_error() {
+        let details = "Error: failed to load MCP servers from C:\\Users\\me\\.codex\n\n\
+             Caused by:\n    \
+             0: C:\\Users\\me\\.codex\\config.toml:7:2: carriage return must be followed by \
+             newline, expected newline\n    \
+             1: TOML parse error at line 7, column 2\n         |\n       \
+             7 | model_reasoning_effort = \"medium\"\n         |  ^\n       \
+             carriage return must be followed by newline, expected newline";
+
+        match classify_mcp_failure("remove MCP server", details) {
+            CommandError::Expected { message } => {
+                assert!(message.contains("isn't valid TOML"), "got: {message}");
+                assert!(message.contains("line 7"), "got: {message}");
+                // The value-rejection advice would be nonsense here: the
+                // parser never got far enough to name a setting.
+                assert!(
+                    !message.contains("no longer accepts"),
+                    "wrong branch: {message}"
+                );
+            }
+            other => panic!("expected Expected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn toml_error_line_reads_either_form_and_invents_nothing() {
+        assert_eq!(
+            toml_error_line("TOML parse error at line 42, column 1"),
+            Some(42)
+        );
+        assert_eq!(
+            toml_error_line("  0: /home/me/.codex/config.toml:7:2: expected newline"),
+            Some(7)
+        );
+        // A Windows path's drive-letter colon must not be mistaken for the
+        // position separator.
+        assert_eq!(
+            toml_error_line("0: C:\\Users\\me\\.codex\\config.toml:19:4: bad"),
+            Some(19)
+        );
+        assert_eq!(toml_error_line("something else entirely"), None);
+        assert_eq!(toml_error_line(""), None);
+    }
+
+    /// The value-rejection shape must keep its own, more specific advice.
+    #[test]
+    fn a_rejected_setting_still_names_the_setting() {
+        let details = "Error: failed to load configuration\n\nCaused by:\n    0: C:\\Users\\me\\.codex\\config.toml:3:16: unknown variant `default`\n    1: unknown variant `default`\n       in `service_tier`";
+        match classify_mcp_failure("add MCP server", details) {
+            CommandError::Expected { message } => {
+                assert!(message.contains("`service_tier`"), "got: {message}");
+                assert!(message.contains("no longer accepts"), "got: {message}");
+            }
+            other => panic!("expected Expected, got {other:?}"),
+        }
     }
 
     #[test]

@@ -654,6 +654,57 @@ export function describeProcessError(
         "This project's dependencies have a version conflict npm won't resolve on its own (see the peer dependency mismatch in the output). Update the conflicting package to a version they agree on, or re-run the install with `--legacy-peer-deps` if that's safe for this project.",
     };
   }
+  // A clone whose pack transfer was cut off partway. curl 92
+  // (CURLE_HTTP2_STREAM) with "stream ... was not closed cleanly" is the
+  // HTTP/2 flavour — a flaky link, a proxy or VPN multiplexing badly, or a
+  // brief GitHub blip — and git reports the aftermath in four more lines
+  // ("unexpected disconnect", "early EOF", "invalid index-pack output")
+  // because it cannot resume a half-received pack. `gh repo clone` wraps git
+  // and exits with its own code 1, so nothing but the wording identifies it.
+  // Retrying is the fix (issue #902).
+  if (
+    lower.includes('rpc failed') ||
+    lower.includes('was not closed cleanly') ||
+    lower.includes('unexpected disconnect while reading sideband packet') ||
+    lower.includes('early eof') ||
+    lower.includes('invalid index-pack output')
+  ) {
+    return {
+      expected: true,
+      message:
+        'The download was cut off partway through — a network blip, a proxy, or a VPN, not a problem with the repository. Git cannot resume a half-received clone, so try again.',
+    };
+  }
+  // Node cannot start the package manager at all, because the package
+  // manager's own entrypoint is missing a file it requires — a broken or
+  // half-upgraded npm install on this machine, nothing to do with the project
+  // being imported. The stack is Node's, so it says MODULE_NOT_FOUND and
+  // exits 1 like everything else; only the require stack naming the tool
+  // identifies it (issue #903).
+  // The tool name has to be the *basename* of the entrypoint, not merely
+  // somewhere in the path — a project living in `~/code/npm-tools` failing to
+  // resolve its own import is a real failure in that repository.
+  const brokenToolInstall = msg.match(
+    /Cannot find module '[^']*'[\s\S]*?Require stack:[^\S\n]*\n?[^\S\n]*-[^\S\n]*([^\n]*[\\/](?:npm|pnpm|yarn|bun)(?:\.\w+)?)[^\S\n]*$/im
+  );
+  if (brokenToolInstall) {
+    return {
+      expected: true,
+      message: `The package manager at ${brokenToolInstall[1]} is broken — its own program files are missing, so it can't start. Reinstall Node.js (or that package manager) on this computer, then try again.`,
+    };
+  }
+  // pnpm 9 and earlier require a `packages:` field in any pnpm-workspace.yaml.
+  // pnpm 10 dropped that: a workspace file carrying only settings (a catalog,
+  // onlyBuiltDependencies) means "single package repo". So a repository built
+  // against pnpm 10 fails outright on an older local pnpm — a version
+  // mismatch on this machine, and the fix is on this machine (issue #915).
+  if (lower.includes('packages field missing or empty')) {
+    return {
+      expected: true,
+      message:
+        "This project's `pnpm-workspace.yaml` carries settings but lists no packages, which needs pnpm 10 or newer — the pnpm on this computer is older. Update it (`corepack use pnpm@latest`, or `npm install -g pnpm@latest`), then retry the install.",
+    };
+  }
   // Corrupted pnpm store: the content-addressable cache has dangling links,
   // so installs die with "ENOENT: no such file or directory, open
   // '…/pnpm/store/v11/links/…'". A local-cache state that `pnpm store prune`
