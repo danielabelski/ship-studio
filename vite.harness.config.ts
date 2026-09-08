@@ -9,6 +9,7 @@
 
 import { defineConfig, mergeConfig, type Plugin, type UserConfig } from 'vite';
 import { execSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import base from './vite.config';
 
@@ -44,6 +45,38 @@ function identityPlugin(): Plugin {
 }
 
 /**
+ * Serve the migration fixtures, which deliberately do not live in `public/`.
+ *
+ * They are full-page screenshots of a real site — megabytes of them — and
+ * anything under `public/` is copied into the shipped app. A reviewer needs
+ * them to look at the comparison viewer; a user has no use for them at all,
+ * and would be downloading them with every release.
+ */
+function migrationFixturesPlugin(): Plugin {
+  const dir = path.resolve(__dirname, './harness/migration-demo');
+
+  return {
+    name: 'shipstudio-harness-migration-fixtures',
+    configureServer(server) {
+      server.middlewares.use('/migration-demo', (req, res, next) => {
+        const rel = decodeURIComponent((req.url ?? '/').split('?')[0]);
+        const file = path.join(dir, rel);
+        // Nothing outside the fixture directory, whatever the URL claims.
+        if (!file.startsWith(dir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+          next();
+          return;
+        }
+        res.setHeader(
+          'Content-Type',
+          file.endsWith('.json') ? 'application/json' : 'image/png'
+        );
+        res.end(fs.readFileSync(file));
+      });
+    },
+  };
+}
+
+/**
  * Worktrees would otherwise serialise on one port — `strictPort` means the
  * second harness fails to start, and with four sessions live that is a real
  * cost. Overriding the port lets them run side by side.
@@ -56,7 +89,7 @@ export default defineConfig(async (env) => {
   )) as UserConfig;
 
   return mergeConfig(resolved, {
-    plugins: [identityPlugin()],
+    plugins: [identityPlugin(), migrationFixturesPlugin()],
     resolve: {
       alias: {
         'tauri-pty': path.resolve(__dirname, './src/harness/stubs/tauri-pty.ts'),

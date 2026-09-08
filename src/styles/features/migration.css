@@ -1,0 +1,835 @@
+/*
+ * Webflow migration — the Fidelity panel and the source picker.
+ *
+ * The panel's whole job is to make a number legible next to the picture that
+ * produced it, so most of what follows is about keeping two tall page
+ * screenshots comparable on screen: fixed pane heights, synchronised scroll
+ * areas, and a diff that stays readable when it is twelve thousand pixels tall.
+ */
+
+:root {
+  /*
+   * Score bands. These are feature-specific accents rather than app status:
+   * "close" is not a warning and "off" is not an error — nothing is wrong with
+   * the app, a measurement is simply not where you want it yet. Naming them
+   * after the status roles would make the panel shout.
+   */
+  --mig-band-match: var(--accent-success);
+  --mig-band-close: #7cc4a4;
+  --mig-band-off: #d9a441;
+  --mig-band-broken: #d4736b;
+  /* The diff's magenta, matching what the capture script paints. */
+  --mig-diff-mark: #ff00c8;
+}
+
+/*
+ * The panel holds two full-page screenshots side by side. At the default modal
+ * width each pane is narrower than a phone, which makes the comparison — the
+ * only reason the panel exists — the thing there is least room for.
+ */
+.mig-modal {
+  width: min(72rem, 92vw);
+  max-width: none;
+}
+
+/* ── Panel ────────────────────────────────────────────────────────────── */
+
+.mig-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  overflow-y: auto;
+  height: 100%;
+}
+
+.mig-panel--centred {
+  align-items: center;
+  justify-content: center;
+}
+
+.mig-panel__empty {
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: var(--font-size-body-lg);
+  line-height: 1.6;
+}
+
+.mig-panel__empty-detail {
+  color: var(--text-muted);
+  font-size: var(--font-size-label);
+}
+
+.mig-panel__header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.mig-panel__score-block {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+}
+
+.mig-panel__score {
+  font-size: var(--font-size-3xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.mig-panel__score--match {
+  color: var(--mig-band-match);
+}
+.mig-panel__score--close {
+  color: var(--mig-band-close);
+}
+.mig-panel__score--off {
+  color: var(--mig-band-off);
+}
+.mig-panel__score--broken {
+  color: var(--mig-band-broken);
+}
+
+.mig-panel__score-unit {
+  font-size: var(--font-size-h4);
+  margin-left: 2px;
+}
+
+.mig-panel__band {
+  font-size: var(--font-size-body-lg);
+  color: var(--text-secondary);
+}
+
+.mig-panel__score-note,
+.mig-panel__no-score {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.mig-panel__sources {
+  display: flex;
+  gap: var(--spacing-lg);
+  margin: 0;
+  margin-left: auto;
+}
+
+.mig-panel__sources dt {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.mig-panel__sources dd {
+  margin: 0;
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* Names the stand-in stylesheet, so two identical URLs do not read as a bug. */
+.mig-panel__overlay-note {
+  color: var(--mig-band-off);
+}
+
+.mig-panel__sources a {
+  color: var(--accent-active);
+  text-decoration: none;
+}
+
+.mig-panel__sources a:hover {
+  text-decoration: underline;
+}
+
+/* An interrupted run's score covers only the widths it reached. */
+.mig-panel__partial {
+  font-size: var(--font-size-label);
+  color: var(--mig-band-off);
+}
+
+.mig-panel__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.mig-panel__hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-body-lg);
+  text-align: center;
+  padding: var(--spacing-xl) 0;
+}
+
+/* ── History ──────────────────────────────────────────────────────────── */
+
+.mig-history {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--spacing-md);
+  background: var(--surface-panel);
+}
+
+.mig-history__summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.mig-history__from {
+  color: var(--mig-band-off);
+  font-weight: 600;
+}
+
+.mig-history__arrow {
+  color: var(--text-muted);
+}
+
+.mig-history__to {
+  color: var(--mig-band-match);
+  font-weight: 600;
+}
+
+.mig-history__passes {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.mig-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.mig-history__item {
+  display: grid;
+  grid-template-columns: 1fr auto minmax(0, 16rem);
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.mig-history__track {
+  height: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  overflow: hidden;
+}
+
+.mig-history__bar {
+  height: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.mig-history__bar--match {
+  background: var(--mig-band-match);
+}
+.mig-history__bar--close {
+  background: var(--mig-band-close);
+}
+.mig-history__bar--off {
+  background: var(--mig-band-off);
+}
+.mig-history__bar--broken {
+  background: var(--mig-band-broken);
+}
+
+.mig-history__value {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mig-history__note {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Matrix ───────────────────────────────────────────────────────────── */
+
+.mig-matrix {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mig-matrix__caption {
+  caption-side: top;
+  text-align: left;
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  padding-bottom: var(--spacing-sm);
+}
+
+.mig-matrix__corner,
+.mig-matrix__head {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  font-weight: 500;
+  text-align: center;
+  padding: var(--spacing-xs);
+  border-bottom: 1px solid var(--border);
+}
+
+.mig-matrix__corner {
+  text-align: left;
+}
+
+.mig-matrix__row-head {
+  text-align: left;
+  padding: var(--spacing-sm) var(--spacing-xs);
+  font-weight: 400;
+  border-bottom: 1px solid var(--border);
+}
+
+.mig-matrix__name {
+  display: block;
+  font-size: var(--font-size-body-lg);
+  color: var(--text-primary);
+}
+
+.mig-matrix__route {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.mig-matrix__cell {
+  text-align: center;
+  padding: var(--spacing-xs);
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+ * A template nobody has compared gets words, not a number and not a colour.
+ * Rendering it as 0% would say the rebuild is broken; rendering a grey "—" in
+ * a score cell still reads as a measurement that came back empty. Neither is
+ * true, and both are the kind of invented state the project forbids.
+ */
+.mig-matrix__pending {
+  text-align: left;
+  padding: var(--spacing-sm);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  font-style: italic;
+  border-bottom: 1px solid var(--border);
+}
+
+.mig-matrix__none {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.mig-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  min-width: 4.25rem;
+  justify-content: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color var(--transition-interaction);
+}
+
+.mig-score:hover {
+  border-color: var(--border);
+}
+
+.mig-score--selected {
+  border-color: var(--accent-active);
+}
+
+.mig-score__value {
+  font-size: var(--font-size-body-lg);
+}
+
+.mig-score__unit {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.mig-score--match .mig-score__value {
+  color: var(--mig-band-match);
+}
+.mig-score--close .mig-score__value {
+  color: var(--mig-band-close);
+}
+.mig-score--off .mig-score__value {
+  color: var(--mig-band-off);
+}
+.mig-score--broken .mig-score__value {
+  color: var(--mig-band-broken);
+}
+
+/* ── Comparison viewer ────────────────────────────────────────────────── */
+
+.mig-comparison {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.mig-comparison__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
+.mig-comparison__meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+}
+
+.mig-comparison__template {
+  font-size: var(--font-size-body-lg);
+  color: var(--text-primary);
+}
+
+.mig-comparison__width,
+.mig-comparison__delta {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+/* A height difference is a layout fault the pixel score understates, so it is
+   called out rather than left for someone to notice in the two images. */
+.mig-comparison__delta {
+  color: var(--mig-band-off);
+}
+
+.mig-comparison__panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+}
+
+.mig-comparison__pane {
+  margin: 0;
+  background: var(--surface-app);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mig-comparison__caption {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+ * A fixed height is the point: these are full-page screenshots, often ten
+ * thousand pixels tall, and the panes have to be a window onto them rather
+ * than something the page grows to contain.
+ */
+.mig-comparison__scroll {
+  height: 26rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--surface-app);
+}
+
+.mig-comparison__scroll--wide {
+  height: 32rem;
+}
+
+.mig-comparison__scroll img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.mig-comparison__single {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Overlay wipe ─────────────────────────────────────────────────────── */
+
+.mig-overlay {
+  position: relative;
+}
+
+.mig-overlay__base {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.mig-overlay__clip {
+  position: absolute;
+  inset: 0 auto 0 0;
+  overflow: hidden;
+}
+
+/* The clipped copy must be as wide as the container, not as wide as its own
+   clip, or the rebuild rescales as the wipe moves and nothing lines up. */
+.mig-overlay__clip img {
+  display: block;
+  height: auto;
+  max-width: none;
+}
+
+.mig-overlay__seam {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent-active);
+}
+
+.mig-comparison__wipe {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
+.mig-comparison__wipe input {
+  flex: 1;
+}
+
+.mig-comparison__wipe-label {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.mig-comparison__legend {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--border);
+  background: var(--surface-panel);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mig-comparison__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--mig-diff-mark);
+}
+
+/* ── Phase rail ───────────────────────────────────────────────────────── */
+
+.mig-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.mig-rail {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+/* Five columns of prose need the panel's width. */
+.mig-rail--full {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+/*
+ * Names only, wrapping to as many columns as fit. Forcing five across the
+ * create modal's width would set each phase in a two-character-wide column,
+ * and the rail is there to be read at a glance or not at all.
+ */
+.mig-rail--compact {
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+}
+
+/* No border or fill: these are a sequence being described, not controls, and
+   a bordered box directly under a grid of selectable cards reads as one. */
+.mig-rail--compact .mig-rail__item {
+  padding: var(--spacing-xs) 0;
+  align-items: baseline;
+  border: none;
+  background: none;
+  opacity: 1;
+}
+
+.mig-rail--compact .mig-rail__marker {
+  margin-top: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.mig-rail--compact .mig-rail__label {
+  color: var(--text-secondary);
+}
+
+.mig-rail__item {
+  display: flex;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
+  min-width: 0;
+}
+
+/* Only the active phase is emphasised. Ticking every finished phase in green
+   makes a migration that is 20% through look like a wall of success. */
+.mig-rail__item--active {
+  border-color: var(--accent-active);
+}
+
+.mig-rail__item--not-started {
+  opacity: 0.55;
+}
+
+.mig-rail__item--blocked {
+  border-color: var(--mig-band-off);
+}
+
+.mig-rail__marker {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--text-muted);
+}
+
+.mig-rail__item--done .mig-rail__marker {
+  color: var(--mig-band-match);
+}
+
+.mig-rail__item--active .mig-rail__marker {
+  color: var(--accent-active);
+}
+
+.mig-rail__item--blocked .mig-rail__marker {
+  color: var(--mig-band-off);
+}
+
+.mig-rail__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mig-rail__label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-label);
+  color: var(--text-primary);
+}
+
+.mig-rail__now {
+  font-size: var(--font-size-label);
+  color: var(--accent-active);
+}
+
+.mig-rail__detail {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* ── Needs you ────────────────────────────────────────────────────────── */
+
+/*
+ * A question the agent is waiting on outranks everything else on the screen:
+ * while one is open the migration is not slow, it is stopped, and the user is
+ * the only one who can restart it.
+ */
+.mig-needs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.mig-needs__title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin: 0;
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--mig-band-off);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mig-needs__count {
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}
+
+.mig-needs__item {
+  border: 1px solid var(--mig-band-off);
+  border-radius: var(--radius);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-panel);
+}
+
+.mig-needs__head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--mig-band-off);
+  cursor: pointer;
+  /* The default triangle sits outside the flex row and breaks the alignment;
+     the icon already says this is a question. */
+  list-style: none;
+}
+
+.mig-needs__head::-webkit-details-marker {
+  display: none;
+}
+
+.mig-needs__question {
+  margin: 0;
+  font-size: var(--font-size-body-lg);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.mig-needs__why {
+  margin: var(--spacing-xs) 0 0;
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.mig-needs__rec {
+  margin: var(--spacing-sm) 0 0;
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.mig-needs__rec-label {
+  display: inline-block;
+  margin-right: var(--spacing-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Four-part report ─────────────────────────────────────────────────── */
+
+.mig-report {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-md);
+}
+
+.mig-report__col {
+  min-width: 0;
+}
+
+.mig-report__title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mig-report__count {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+/* Every heading renders even at zero. A migration claiming nothing is
+   outstanding should have to say so, not omit the column. */
+.mig-report__empty {
+  margin: 0;
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.mig-report__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.mig-report__list li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-label);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.mig-report__list svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.mig-report__col--done svg {
+  color: var(--mig-band-match);
+}
+.mig-report__col--doing svg {
+  color: var(--accent-active);
+}
+.mig-report__col--pending svg {
+  color: var(--text-muted);
+}
+.mig-report__col--blocked svg {
+  color: var(--mig-band-broken);
+}
+
+/* ── URL entry ────────────────────────────────────────────────────────── */
+
+/*
+ * Almost nothing here on purpose. The field is the `<label>` + `<input>` pair
+ * `.create-modal-content` already styles, the headings are `.stack-group-title`
+ * from the stack picker beside it, and the phases are the shared rail. What is
+ * left is the spacing between those and the one line of copy that belongs to
+ * this tab alone.
+ */
+.mig-url {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.mig-url__promise {
+  margin: var(--spacing-md) 0 0;
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  line-height: 1.55;
+}

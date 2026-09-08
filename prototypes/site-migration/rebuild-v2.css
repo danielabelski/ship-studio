@@ -1,0 +1,4 @@
+/* Rebuild, iteration 2 — container width fixed; type scale and colour still wrong. */
+.nav-text { font-size: 40px !important; line-height: 48px !important; }
+.big-paragraph { font-size: 17px !important; line-height: 28px !important; }
+:root { --dark-cyan: #2a9d8f !important; }

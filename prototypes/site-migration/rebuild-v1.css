@@ -1,0 +1,20 @@
+/*
+ * Rebuild, iteration 1 — three mistakes a real migration makes.
+ *
+ * See README.md: this is a stand-in for generated code, applied over the live
+ * page so the loop has something to measure before any real migration output
+ * exists. Each rule is a mistake with a name, and each is fixed in a later
+ * iteration so the score has somewhere to travel.
+ */
+
+/* 1. Container width taken from the framework default instead of the site.
+      The real value is 1200px. Reflows every section on the page. */
+.container { max-width: 1140px !important; }
+
+/* 2. Type scale rounded to the nearest step of a utility scale.
+      44/50 and 19/30 are the site's actual values. */
+.nav-text { font-size: 40px !important; line-height: 48px !important; }
+.big-paragraph { font-size: 17px !important; line-height: 28px !important; }
+
+/* 3. Accent colour transcribed by eye rather than copied from the variable. */
+:root { --dark-cyan: #2a9d8f !important; }
