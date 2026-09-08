@@ -21,6 +21,8 @@ import { exposeReactGlobals, lookupBlobOwner, markPluginCrashed } from './lib/pl
 import { uninstallPlugin } from './lib/plugins';
 import { exposePluginContextRef } from './contexts/PluginContext';
 import { reportError } from './lib/errorReporting';
+import { classifyRejection, describeRejectionReason } from './lib/globalErrorFilters';
+import { isExpectedCommandError } from './lib/errors';
 import { OverlayScrollbars } from 'overlayscrollbars';
 import 'overlayscrollbars/overlayscrollbars.css';
 
@@ -39,6 +41,12 @@ window.addEventListener('error', (event) => {
     msg.includes('Plugin context') ||
     msg.includes('plugin-sdk');
   if (!isPluginError) {
+    // A backend-classified Expected value thrown synchronously is the same
+    // non-bug it is on the rejection path (issue #916) — never file it.
+    if (isExpectedCommandError(event.error)) {
+      console.warn('[Ship Studio] Uncaught Expected backend error — not reported:', msg);
+      return;
+    }
     // App bug (not third-party plugin code) — report to the admin agent.
     reportError({
       message: msg,
@@ -61,52 +69,37 @@ window.addEventListener('error', (event) => {
     );
   }
 });
-// Promises are often rejected with plain objects rather than Errors (Tauri
-// IPC error payloads especially) — String() renders those as "[object
-// Object]", which both destroys the diagnostic and collapses every such
-// rejection onto one dedupe fingerprint (issue #333). Serialize the shape.
-const describeRejectionReason = (r: unknown): string => {
-  if (typeof r === 'string') return r;
-  try {
-    return JSON.stringify(r) ?? String(r);
-  } catch {
-    return String(r); // circular structures etc.
-  }
-};
-
 window.addEventListener('unhandledrejection', (event) => {
   const reason: unknown = event.reason;
-  const stack = reason instanceof Error ? reason.stack || '' : describeRejectionReason(reason);
   const message = reason instanceof Error ? reason.message : describeRejectionReason(reason);
 
-  if (stack.includes('blob:')) {
-    event.preventDefault();
-    console.error('[Ship Studio] Plugin unhandled rejection caught by global handler:', reason);
-    return;
-  }
+  switch (classifyRejection(reason)) {
+    case 'plugin':
+      event.preventDefault();
+      console.error('[Ship Studio] Plugin unhandled rejection caught by global handler:', reason);
+      return;
 
-  // Silently drop Tauri's internal race: when a plugin:pty|read invoke's
-  // response arrives after the component that issued it unmounted (common
-  // during rapid project switches), the runtime looks up a listener that
-  // was already garbage-collected and throws TypeError accessing
-  // `listeners[eventId].handlerId` from its injected bootstrap script.
-  // This is a Tauri v2 runtime bug — not our code — and doesn't affect
-  // functionality. Suppressing to keep the console clean.
-  if (
-    message.includes('listeners[eventId]') ||
-    stack.includes('listeners[eventId]') ||
-    (message.includes('handlerId') && stack.includes('user-script'))
-  ) {
-    event.preventDefault();
-    return;
-  }
+    case 'tauri-race':
+      // Inert Tauri v2 runtime race — suppressed to keep the console clean.
+      event.preventDefault();
+      return;
 
-  // Genuine unhandled rejection from app code — report to the admin agent.
-  reportError({
-    message,
-    stack: reason instanceof Error ? reason.stack : undefined,
-    source: 'unhandled-rejection',
-  });
+    case 'expected':
+      // The backend already classified this a recognized environment state
+      // with a user-side fix. Nobody caught the promise, which is worth a
+      // local trace, but it is not a malfunction and must not be filed as
+      // one (issue #916).
+      console.warn('[Ship Studio] Uncaught Expected backend error — not reported:', message);
+      return;
+
+    case 'report':
+      // Genuine unhandled rejection from app code — report to the admin agent.
+      reportError({
+        message,
+        stack: reason instanceof Error ? reason.stack : undefined,
+        source: 'unhandled-rejection',
+      });
+  }
 });
 
 // Patch removeChild to handle nodes relocated by OverlayScrollbars.

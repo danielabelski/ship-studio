@@ -30,7 +30,9 @@ import {
   onPtySessionData,
   onPtySessionExit,
   createAttachGate,
+  setPtySessionPaused,
 } from '../../lib/ptySession';
+import { createTerminalFlowControl } from '../../lib/terminalFlowControl';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useAgentBridge } from '../../contexts/AgentBridgeContext';
 
@@ -840,9 +842,22 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         // just when visible) so `term.onTitleChange` fires for background
         // tabs — that's what drives the agent-done sound + green-label
         // notification while the user is on another project.
+        //
+        // Paced against xterm's own parse rate: writing faster than xterm can
+        // parse grows its internal buffer until it discards data outright and
+        // the user loses output (issue #910). The flow controller pauses the
+        // backend reader while the backlog is high, which lets the kernel PTY
+        // buffer fill and blocks the child — real backpressure, nothing
+        // queued on our heap.
+        const flow = createTerminalFlowControl(term, {
+          onPause: () => setPtySessionPaused(backendSessionId, true),
+          onResume: () => setPtySessionPaused(backendSessionId, false),
+        });
+        ptyDisposablesRef.current.push({ dispose: () => flow.dispose() });
+
         const writeToTerminal = (data: string | Uint8Array | number[]) => {
           const normalized = Array.isArray(data) ? new Uint8Array(data) : data;
-          terminalRef.current?.write(normalized);
+          flow.write(normalized);
         };
 
         // Store disposables so cleanup() can remove IPC listeners and prevent CPU leak.
@@ -989,7 +1004,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         if (attach.buffer.length > 0) {
           // Replay ring-buffer tail so a newly-attached xterm shows prior
           // output (critical for project switches back to a background tab).
-          terminalRef.current?.write(attach.buffer);
+          // Through the flow controller like every other bulk write, so the
+          // replay counts towards the backlog it contributes to.
+          flow.write(attach.buffer);
         }
         // Open the gate: flush queued live chunks, dropping the ones the
         // snapshot already covers (offset < endOffset).
