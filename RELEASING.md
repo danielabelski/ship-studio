@@ -203,13 +203,19 @@ After the workflow completes (~15–25 min for the Windows build):
   ```bash
   curl -sL https://github.com/ship-studio/releases/releases/latest/download/latest.json | jq '.version'
   ```
-- [ ] The site's static download links all still resolve (every release must carry the other platform's installers forward, or flipping the "latest" alias 404s them — this bit us when v0.6.8-win shipped without the DMGs):
+- [ ] The site's static download links all still resolve (every release must carry the other platform's installers forward, or flipping the "latest" alias 404s them — this bit us when v0.6.8-win shipped without the DMGs, and again when v1.2.0-win shipped without `ShipStudio_darwin-universal.dmg`):
   ```bash
-  for f in ShipStudio_darwin-aarch64.dmg ShipStudio_darwin-x86_64.dmg ShipStudio_windows-x86_64-setup.exe; do
+  for f in ShipStudio_darwin-universal.dmg ShipStudio_darwin-aarch64.dmg \
+           ShipStudio_darwin-x86_64.dmg ShipStudio_windows-x86_64-setup.exe; do
     curl -s -o /dev/null -w "$f -> %{http_code}\n" -L -r 0-0 \
       "https://github.com/ship-studio/releases/releases/latest/download/$f"
-  done   # all three should print 206
+  done   # all four should print 206
   ```
+  `ShipStudio_darwin-universal.dmg` is the one that actually matters: it is what
+  the marketing site's "Download for Mac" button points at (`DOWNLOAD_LINKS.mac`
+  in `ship-studio-marketing/lib/constants.ts`), and what `lib/releases.ts` reads
+  the displayed file size from. The `-aarch64` / `-x86_64` names are legacy
+  copies — checking only those passes while every Mac download 404s.
 - [ ] A draft release also lands in the main repo (the build-artifact dump); publishing it is optional — the public repo is what users and the updater read.
 
 ### History: the silent-draft gap
