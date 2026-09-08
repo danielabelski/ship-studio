@@ -216,6 +216,14 @@ Write this to `MIGRATION.md` in the project root, grouped by template, with an
 explicit "cannot come across" section. Show it to the user. This is also the
 moment to confirm the target stack if the project does not already have one.
 
+**Then prove you can measure, before you build anything.** Make sure the
+rebuild is actually being served — start the dev server yourself if nothing is
+running — and take one comparison of the untouched starter against the
+original. The score will be terrible and that is fine; it is not the point. The
+point is that the loop you are about to depend on works, at a moment when
+nothing is invested in it. Finding out at the end of the homepage that you
+cannot measure is how a migration turns into a rewrite nobody checked.
+
 `MIGRATION.md` is not a document you write once. It is the state of the work,
 and you keep it current — it is what survives the conversation ending.
 
