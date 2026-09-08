@@ -202,7 +202,7 @@ export function useEnvEditor({
       }
     } catch (e) {
       logger.error('Failed to check sync status', {
-        error: e instanceof Error ? e.message : String(e),
+        error: formatCommandError(asCommandError(e)),
       });
       setSyncStatus(null);
     }
@@ -224,7 +224,7 @@ export function useEnvEditor({
       void checkSyncStatus(files);
     } catch (e) {
       logger.error('Failed to load env files', {
-        error: e instanceof Error ? e.message : String(e),
+        error: formatCommandError(asCommandError(e)),
       });
     }
   }, [projectPath, selectedFile, checkSyncStatus]);
@@ -244,7 +244,7 @@ export function useEnvEditor({
       trackError('env_read', e, 'Workspace');
       setError(`Failed to read ${selectedFile.name}`);
       logger.error('Failed to read env file', {
-        error: e instanceof Error ? e.message : String(e),
+        error: formatCommandError(asCommandError(e)),
       });
     } finally {
       setIsLoading(false);
@@ -299,7 +299,7 @@ export function useEnvEditor({
       setError(`Failed to save ${selectedFile.name}`);
       onToast?.(`Failed to save ${selectedFile.name}`, 'error');
       logger.error('Failed to save env file', {
-        error: e instanceof Error ? e.message : String(e),
+        error: formatCommandError(asCommandError(e)),
       });
     } finally {
       setIsSaving(false);
@@ -462,7 +462,7 @@ export function useEnvEditor({
       setError('Failed to sync to .env.example');
       onToast?.('Failed to sync to .env.example', 'error');
       logger.error('Failed to sync to .env.example', {
-        error: e instanceof Error ? e.message : String(e),
+        error: formatCommandError(asCommandError(e)),
       });
     }
   };
@@ -506,7 +506,7 @@ export function useEnvEditor({
       setError('Failed to sync to .env.local');
       onToast?.('Failed to sync to .env.local', 'error');
       logger.error('Failed to sync to .env.local', {
-        error: e instanceof Error ? e.message : String(e),
+        error: formatCommandError(asCommandError(e)),
       });
     }
   };

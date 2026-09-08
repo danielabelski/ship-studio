@@ -235,7 +235,7 @@ export function BuildTerminal({
       } catch (err) {
         if (!cancelled) {
           logger.error('[BuildTerminal] failed to start build session', {
-            error: err instanceof Error ? err.message : String(err),
+            error: formatCommandError(asCommandError(err)),
           });
           term.write(
             `\r\n\x1b[31mFailed to start build: ${formatCommandError(asCommandError(err))}\x1b[0m\r\n`

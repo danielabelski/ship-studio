@@ -58,7 +58,7 @@ async function resolveDevServerCwd(projectPath: string): Promise<string> {
   } catch (err) {
     logger.error('[DevServer] getWorkspaceSubpath failed; using repo root as cwd', {
       projectPath,
-      error: err instanceof Error ? err.message : String(err),
+      error: formatCommandError(asCommandError(err)),
     });
     return projectPath;
   }
@@ -84,6 +84,7 @@ import { getWindowLabel } from '../lib/window';
 import type { HealthTabPanelRef } from '../components/code/HealthTabPanel';
 import { stripAnsi } from '../lib/ansi';
 import { extractAnnouncedPort } from '../lib/ports';
+import { asCommandError, formatCommandError } from '../lib/errors';
 
 /** Record of a dev-server process that died without Ship Studio stopping it. */
 export interface DevServerUnexpectedExit {
@@ -658,7 +659,7 @@ export function useDevServer(currentProjectPath: string | null) {
           const packageManager = await detectPackageManager(projectPath).catch((err) => {
             logger.warn(
               '[OpenProject] detectPackageManager failed; falling back to npm. This will be wrong for pnpm/yarn projects.',
-              { error: err instanceof Error ? err.message : String(err) }
+              { error: formatCommandError(asCommandError(err)) }
             );
             return 'npm';
           });
@@ -673,7 +674,7 @@ export function useDevServer(currentProjectPath: string | null) {
         }
       } catch (err) {
         logger.warn('[OpenProject] Dependency check failed; attempting dev server anyway', {
-          error: err instanceof Error ? err.message : String(err),
+          error: formatCommandError(asCommandError(err)),
         });
       }
       s.needsInstall = null;

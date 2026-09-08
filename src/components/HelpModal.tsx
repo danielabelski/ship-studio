@@ -16,6 +16,7 @@ import { isMac } from '../lib/setup';
 import { ModalFrame } from './primitives/ModalFrame';
 import { Tabs, TabsList, TabsPanel, TabsTab } from './primitives/Tabs';
 import { useModal } from '../contexts/ModalContext';
+import { asCommandError, formatCommandError } from '../lib/errors';
 
 interface HelpModalProps {
   /** Optional project path to include project-level skills */
@@ -232,7 +233,7 @@ export function HelpModal({ projectPath }: HelpModalProps) {
       })
       .catch((err) => {
         logger.error('Failed to load skills', {
-          error: err instanceof Error ? err.message : String(err),
+          error: formatCommandError(asCommandError(err)),
         });
         if (!cancelled) setSkills([]);
       })

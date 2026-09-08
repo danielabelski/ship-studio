@@ -13,6 +13,7 @@ import { Spinner } from '../primitives/Spinner';
 import { CheckIcon } from '@/components/icons';
 import { listAccounts, type Account } from '../../lib/accounts';
 import { logger } from '../../lib/logger';
+import { asCommandError, formatCommandError } from '../../lib/errors';
 
 interface MoveWorkspaceModalProps {
   isOpen: boolean;
@@ -46,7 +47,7 @@ export function MoveWorkspaceModal({
       .then(setAccounts)
       .catch((err) =>
         logger.error('Failed to load workspaces', {
-          error: err instanceof Error ? err.message : String(err),
+          error: formatCommandError(asCommandError(err)),
         })
       )
       .finally(() => setLoading(false));
@@ -62,7 +63,7 @@ export function MoveWorkspaceModal({
       onClose();
     } catch (err) {
       logger.error('Failed to move project to workspace', {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
       });
     } finally {
       setSelecting(false);

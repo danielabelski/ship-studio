@@ -115,11 +115,21 @@ export function usePreviewCapture({
 
       setIsCapturing(true);
       try {
-        if (!iframeWrapperRef.current) return null;
+        // Hold the element, don't re-read the ref after the await. Taking the
+        // window screenshot is a dynamic import plus a native round trip, and
+        // the preview can unmount inside that gap — a project switch, leaving
+        // crop mode, a breakpoint change. The ref is null by the time we come
+        // back and the second dereference throws (issue #914).
+        const wrapper = iframeWrapperRef.current;
+        if (!wrapper) return null;
 
         const tempPath = await captureWindowScreenshot();
 
-        const rect = iframeWrapperRef.current.getBoundingClientRect();
+        // Still the live element? A detached node's rect is all zeros, which
+        // would crop an empty image and save it as if it were the preview.
+        if (!wrapper.isConnected) return null;
+
+        const rect = wrapper.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
         // Account for the macOS overlay title bar in the window screenshot. Only
         // macOS uses an overlay title bar (`TitleBarStyle::Overlay`); Windows/Linux
@@ -186,7 +196,7 @@ export function usePreviewCapture({
       return filePath;
     } catch (error) {
       logger.error('[Preview] Full page capture failed', {
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(asCommandError(error)),
       });
       // Don't fall back silently — the user asked for a full-page capture and
       // is about to receive a viewport-only image instead.
@@ -215,15 +225,22 @@ export function usePreviewCapture({
       regionWidth: number,
       regionHeight: number
     ): Promise<string | null> => {
-      if (!iframeWrapperRef.current) {
+      // Held rather than re-read after the await, for the reason in
+      // `captureForClaude` — and this path is the more exposed of the two,
+      // because `handleCropMouseUp` flips the crop overlay off immediately
+      // before awaiting this (issue #914).
+      const wrapper = iframeWrapperRef.current;
+      if (!wrapper) {
         return null;
       }
 
       try {
         const tempPath = await captureWindowScreenshot();
 
+        if (!wrapper.isConnected) return null;
+
         // Get the iframe's position relative to the window
-        const iframeRect = iframeWrapperRef.current.getBoundingClientRect();
+        const iframeRect = wrapper.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
         // Account for the macOS overlay title bar in the window screenshot. Only
         // macOS uses an overlay title bar (`TitleBarStyle::Overlay`); Windows/Linux
@@ -351,6 +368,10 @@ export function usePreviewCapture({
     isCapturing,
     captureForClaude,
     captureFullPage,
+    // Exposed alongside the other two capture entry points: the crop overlay
+    // drives it through `handleCropMouseUp`, but it is the same kind of
+    // operation and is the one whose unmount-mid-capture behaviour is tested.
+    captureRegion,
     selectionStart,
     selectionEnd,
     isSelecting,

@@ -13,6 +13,7 @@ import { getScreenshotBase64 } from '../../lib/ide';
 import { CameraIcon, CloseIcon } from '@/components/icons';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { logger } from '../../lib/logger';
+import { asCommandError, formatCommandError } from '../../lib/errors';
 
 /** Duration to show the toast before auto-dismiss (ms) */
 const TOAST_DURATION_MS = 5000;
@@ -40,7 +41,7 @@ export function ScreenshotToast({ filePath, onDismiss, onViewFull }: ScreenshotT
       .then(setImageSrc)
       .catch((err) =>
         logger.error('Failed to load screenshot', {
-          error: err instanceof Error ? err.message : String(err),
+          error: formatCommandError(asCommandError(err)),
         })
       );
   }, [filePath]);
@@ -117,7 +118,7 @@ export function ScreenshotPreviewModal({ filePath, onClose }: ScreenshotPreviewM
       .then(setImageSrc)
       .catch((err) =>
         logger.error('Failed to load screenshot', {
-          error: err instanceof Error ? err.message : String(err),
+          error: formatCommandError(asCommandError(err)),
         })
       );
   }, [filePath]);

@@ -20,6 +20,7 @@ import { CheckIcon, WarningIcon, ChevronIcon, ClaudeIcon, GitHubIcon } from '@/c
 import { Spinner } from '../primitives/Spinner';
 import { getFullSetupStatus, SetupItem, SETUP_ITEM_ORDER, MACHINE_ITEM_IDS } from '../../lib/setup';
 import { logger } from '../../lib/logger';
+import { asCommandError, formatCommandError } from '../../lib/errors';
 
 export function MachineToolsPanel() {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -37,7 +38,7 @@ export function MachineToolsPanel() {
         setSetupItems(machineItems);
       } catch (error) {
         logger.error('Failed to load setup status', {
-          error: error instanceof Error ? error.message : String(error),
+          error: formatCommandError(asCommandError(error)),
         });
       } finally {
         setIsLoading(false);

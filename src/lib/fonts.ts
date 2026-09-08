@@ -13,6 +13,7 @@
 
 import { readFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { logger } from './logger';
+import { asCommandError, formatCommandError } from './errors';
 
 /** Track if fonts have been loaded */
 let fontsLoaded = false;
@@ -80,7 +81,7 @@ export async function loadNerdFonts(): Promise<void> {
       fontsLoaded = true;
     } catch (err) {
       logger.error('[Fonts] Failed to load Nerd Fonts', {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
       });
       // Don't throw - let the terminal use fallback fonts
     }

@@ -13,6 +13,7 @@ import { logger } from '../../lib/logger';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { Button } from '../primitives/Button';
 import { Spinner } from '../primitives/Spinner';
+import { asCommandError, formatCommandError } from '../../lib/errors';
 
 /** Props for the MoveFolderModal component */
 interface MoveFolderModalProps {
@@ -52,7 +53,7 @@ export function MoveFolderModal({
         .then(setFolders)
         .catch((err) =>
           logger.error('Failed to load folders', {
-            error: err instanceof Error ? err.message : String(err),
+            error: formatCommandError(asCommandError(err)),
           })
         )
         .finally(() => setLoading(false));
@@ -78,7 +79,7 @@ export function MoveFolderModal({
       await handleSelect(folder.id);
     } catch (err) {
       logger.error('Failed to create folder', {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
       });
     }
   };
@@ -92,7 +93,7 @@ export function MoveFolderModal({
       onClose();
     } catch (err) {
       logger.error('Failed to move project', {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
       });
     } finally {
       setSelecting(false);

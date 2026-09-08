@@ -138,7 +138,7 @@ export function useProjectListData(activeAccountId: string | null | undefined) {
       setFiledPaths(new Set(paths));
     } catch (error) {
       logger.error('Failed to load folders', {
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(asCommandError(error)),
       });
     }
   };

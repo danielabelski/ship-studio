@@ -28,6 +28,7 @@
 import { addTeamComment } from './teamApi';
 import { isCommentTarget, type CanvasComment, type CommentTarget } from './canvasComments';
 import { logger } from './logger';
+import { asCommandError, formatCommandError } from './errors';
 
 const LEGACY_PREFIX = 'shipstudio.canvas-comments.v1:';
 const DONE_PREFIX = 'shipstudio.team.migrated:';
@@ -144,7 +145,7 @@ export async function migrateLegacyComments(projectPath: string): Promise<number
       // untouched, so nothing is lost by carrying on.
       logger.warn('could not migrate a canvas comment', {
         projectPath,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(asCommandError(error)),
       });
     }
   }

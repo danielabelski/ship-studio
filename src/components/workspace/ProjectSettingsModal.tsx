@@ -12,6 +12,7 @@ import { TextField } from '../primitives/TextField';
 import { useModal, type ModalId } from '../../contexts/ModalContext';
 import { getForceStaticServe, setForceStaticServe } from '../../lib/project';
 import { logger } from '../../lib/logger';
+import { asCommandError, formatCommandError } from '../../lib/errors';
 
 interface ProjectSettingsModalProps {
   currentPort: number;
@@ -63,7 +64,7 @@ export function ProjectSettingsModal({
       })
       .catch((err) => {
         logger.warn('[ProjectSettings] Failed to load force_static_serve', {
-          error: err instanceof Error ? err.message : String(err),
+          error: formatCommandError(asCommandError(err)),
         });
       });
     return () => {
@@ -90,7 +91,7 @@ export function ProjectSettingsModal({
       ) {
         void setForceStaticServe(projectPath, forceStatic).catch((err) => {
           logger.error('[ProjectSettings] Failed to save force_static_serve', {
-            error: err instanceof Error ? err.message : String(err),
+            error: formatCommandError(asCommandError(err)),
           });
         });
       }
