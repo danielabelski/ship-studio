@@ -10,18 +10,12 @@
  * Usage: node scripts/site-fidelity-recompare.mjs harness/migration-demo
  */
 
-import { spawn } from 'node:child_process';
 import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { CHROME, launchChrome } from './headless-chrome.mjs';
 
-const CDP_PORT = 9337;
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/usr/bin/google-chrome',
-].find((p) => existsSync(p));
-
+let CDP_PORT = 9337;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Every directory under `root` holding a reference/rebuild pair. */
@@ -53,27 +47,10 @@ async function main() {
     process.exit(1);
   }
 
-  const chrome = spawn(
-    CHROME,
-    [
-      '--headless=new',
-      `--remote-debugging-port=${CDP_PORT}`,
-      '--no-first-run',
-      `--user-data-dir=${path.join(process.env.TMPDIR ?? '/tmp', 'shipstudio-recompare-chrome')}`,
-    ],
-    { stdio: 'ignore' }
-  );
+  const chrome = await launchChrome({ tool: 'recompare', basePort: CDP_PORT });
+  CDP_PORT = chrome.port;
 
   try {
-    for (let i = 0; i < 60; i += 1) {
-      try {
-        await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
-        break;
-      } catch {
-        await sleep(250);
-      }
-    }
-
     const target = await (
       await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?about:blank`, { method: 'PUT' })
     ).json();
@@ -121,7 +98,7 @@ async function main() {
       console.log(`  ${path.relative(process.cwd(), dir)} → ${result.score}%`);
     }
   } finally {
-    chrome.kill();
+    chrome.close();
   }
 }
 

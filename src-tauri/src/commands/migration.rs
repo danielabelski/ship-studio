@@ -47,6 +47,16 @@ const FIDELITY_COMPARE: &str = include_str!("../../../scripts/site-fidelity-comp
 /// which type size, which colour.
 const STRUCTURE: &str = include_str!("../../../scripts/site-structure.mjs");
 
+/// The browser both tools drive.
+///
+/// Split out because all three were launching Chrome themselves, on a fixed
+/// port and a shared profile, and killing it only from a `finally`. An
+/// interrupted run — which is the normal case, since a run outlives an
+/// agent's shell call — left the browser parented to init, and the next run
+/// found the port answering and drove that orphan instead of its own. They
+/// accumulated for as long as the machine stayed up.
+const CHROME_LAUNCHER: &str = include_str!("../../../scripts/headless-chrome.mjs");
+
 /// Where a project keeps its migration state, relative to the project root.
 const MIGRATION_DIR: &str = ".shipstudio";
 const FIDELITY_DIR: &str = ".shipstudio/fidelity";
@@ -331,6 +341,7 @@ fn scaffold_migration(root: &Path, source_url: &str) -> Result<(), CommandError>
         FIDELITY_COMPARE,
     )?;
     write_file(&fidelity.join("site-structure.mjs"), STRUCTURE)?;
+    write_file(&fidelity.join("headless-chrome.mjs"), CHROME_LAUNCHER)?;
 
     let status_path = root.join(MIGRATION_DIR).join("migration.json");
     if !status_path.exists() {
