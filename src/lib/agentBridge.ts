@@ -25,7 +25,11 @@ import {
   isExpectedCommandError,
 } from './errors';
 import { isResourcePressureError } from './errorReporting';
-import { execPreviewAction, type PreviewActionResult } from './previewActions';
+import {
+  execPreviewAction,
+  type PreviewActionResult,
+  type PreviewActionRect,
+} from './previewActions';
 import { agentCursorAt } from './agentActivityStore';
 import { logger } from './logger';
 
@@ -65,8 +69,19 @@ export interface BridgeToolContext {
   reload: () => void;
   /** Resize the preview viewport (device preset or exact px width). */
   setViewport: (value: number | ViewportPreset) => void;
-  /** Current custom viewport width in px, or null = full pane width. */
+  /** Current custom viewport width in px, or null = full pane width. On the
+   *  breakpoint canvas this is the ACTIVE frame's width — the one the agent's
+   *  actions and screenshots go to. */
   getViewportWidth: () => number | null;
+  /** True while the breakpoint canvas is showing every breakpoint at once.
+   *  The agent has to be told: it changes what a viewport request does (it
+   *  closes the canvas) and which frame it is acting in. */
+  canvasMode: boolean;
+  /** Size, in the frame's own CSS pixels, of the box the activity overlay is
+   *  drawn over — or null to trust the fractions the page reported. Only the
+   *  host knows this on the breakpoint canvas: there the page's own viewport
+   *  is a device-sized fiction while the frame renders the whole document. */
+  getOverlayFrameSize: () => { w: number; h: number } | null;
 }
 
 export const PREVIEW_MCP_SERVER_NAME = 'shipstudio-preview';
@@ -334,16 +349,42 @@ function freshDomSnapshot(
 }
 
 /**
+ * Where to fly the agent cursor, as fractions of the box the overlay covers.
+ *
+ * The page reports fractions of its OWN viewport, which is the right answer in
+ * focus mode and a wrong one on the breakpoint canvas: there the canvas script
+ * redefines the page's viewport to the device height while the frame renders
+ * the whole document, so anything below the device fold came back clamped to
+ * the bottom edge. The raw pixel rect is honest in both, so when the host knows
+ * the frame's real size it re-derives the fractions from that.
+ */
+export function overlayFraction(
+  rect: PreviewActionRect,
+  frame: { w: number; h: number } | null
+): { fx: number; fy: number } {
+  if (!frame || frame.w <= 0 || frame.h <= 0) return { fx: rect.fx, fy: rect.fy };
+  const clamp = (n: number) => Math.min(Math.max(n, 0), 1);
+  return {
+    fx: clamp((rect.x + rect.w / 2) / frame.w),
+    fy: clamp((rect.y + rect.h / 2) / frame.h),
+  };
+}
+
+/**
  * Convert a shim action result into an MCP result. On success, fly the agent
  * cursor to the real element position so the user sees exactly where the
  * agent acted.
  */
 function actionToolResult(
   result: PreviewActionResult,
+  ctx: BridgeToolContext,
   describe: (data: Record<string, unknown>) => string
 ): McpToolResult {
   if (!result.ok) return errorResult(result.error ?? 'The action failed for an unknown reason.');
-  if (result.rect) agentCursorAt(result.rect.fx, result.rect.fy);
+  if (result.rect) {
+    const { fx, fy } = overlayFraction(result.rect, ctx.getOverlayFrameSize());
+    agentCursorAt(fx, fy);
+  }
   return text(describe(result.data ?? {}));
 }
 
@@ -358,11 +399,17 @@ function buildStatusReport(ctx: BridgeToolContext): string {
     lines.push('Dev server: running, preview connected.');
     lines.push(`Current page: ${ctx.currentPath || '/'} (${ctx.getCurrentUrl() ?? 'URL unknown'})`);
     const width = ctx.getViewportWidth();
-    lines.push(
-      width === null
-        ? 'Viewport: full pane width (use preview_set_viewport to test breakpoints).'
-        : `Viewport: ${width}px (custom — preview_set_viewport preset 'full' resets it).`
-    );
+    if (ctx.canvasMode) {
+      lines.push(
+        `Viewport: the breakpoint canvas is open — the user is looking at every breakpoint side by side, with the ${width ?? '?'}px frame active. Reads, clicks and screenshots all go to that active frame. preview_set_viewport CLOSES the canvas and returns to a single frame, so only call it if you actually need one width.`
+      );
+    } else {
+      lines.push(
+        width === null
+          ? 'Viewport: full pane width (use preview_set_viewport to test breakpoints).'
+          : `Viewport: ${width}px (custom — preview_set_viewport preset 'full' resets it).`
+      );
+    }
   }
   if (ctx.pages.length > 0) {
     lines.push(`Available pages (${ctx.pages.length}): ${ctx.pages.join(', ')}`);
@@ -509,19 +556,24 @@ export async function executeBridgeTool(
         return await captureScreenshot(ctx, args.full_page === true);
       }
       case 'preview_set_viewport': {
+        // Read before the call: setting a viewport closes the canvas, and the
+        // user deserves to be told in the transcript why their view collapsed.
+        const leftCanvas = ctx.canvasMode
+          ? ' This also closed the breakpoint canvas the user had open — the preview is a single frame again.'
+          : '';
         if (typeof args.width === 'number' && Number.isFinite(args.width)) {
           const width = Math.round(Math.min(Math.max(args.width, 200), 3000));
           ctx.setViewport(width);
           return text(
-            `Preview viewport set to ${width}px — the page re-laid-out at that true width. Screenshots now capture at ${width}px too.`
+            `Preview viewport set to ${width}px — the page re-laid-out at that true width. Screenshots now capture at ${width}px too.${leftCanvas}`
           );
         }
         if (VIEWPORT_PRESETS.includes(args.preset as ViewportPreset)) {
           ctx.setViewport(args.preset as ViewportPreset);
           return text(
-            args.preset === 'full'
+            (args.preset === 'full'
               ? 'Preview viewport reset to full pane width.'
-              : `Preview viewport set to the ${String(args.preset)} preset.`
+              : `Preview viewport set to the ${String(args.preset)} preset.`) + leftCanvas
           );
         }
         return errorResult(
@@ -541,7 +593,7 @@ export async function executeBridgeTool(
           text: typeof args.text === 'string' ? args.text : undefined,
           index: typeof args.index === 'number' ? args.index : undefined,
         });
-        return actionToolResult(result, (data) => {
+        return actionToolResult(result, ctx, (data) => {
           const matches =
             typeof data.matches === 'number' && data.matches > 1
               ? ` (${data.matches} elements matched — clicked the first; pass 'index' or narrow the selector to target another)`
@@ -566,6 +618,7 @@ export async function executeBridgeTool(
         });
         return actionToolResult(
           result,
+          ctx,
           (data) =>
             `Entered ${String(data.valueLength)} characters into ${String(data.typedInto)}${args.submit === true ? ' and submitted' : ''}.`
         );
@@ -578,7 +631,7 @@ export async function executeBridgeTool(
           to: args.to === 'top' || args.to === 'bottom' ? args.to : undefined,
           y: typeof args.y === 'number' ? args.y : undefined,
         });
-        return actionToolResult(result, (data) => `Scrolled to ${String(data.scrolledTo)}.`);
+        return actionToolResult(result, ctx, (data) => `Scrolled to ${String(data.scrolledTo)}.`);
       }
       case 'preview_query': {
         if (typeof args.selector !== 'string' || !args.selector) {

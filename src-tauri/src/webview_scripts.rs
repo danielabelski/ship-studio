@@ -396,6 +396,12 @@ pub const INSPECTOR_SHIM: &str = r#"
         (t ? ' "' + t.slice(0, 80) + '"' : '');
     };
 
+    // These fractions are only meaningful when the frame's own viewport is the
+    // thing the host draws over. On the breakpoint canvas it is not: the canvas
+    // script redefines `innerHeight` to the device height (and pins the root to
+    // it) while the frame renders the whole page, so both denominators here are
+    // a device viewport, not the frame. The host re-derives fx/fy from the raw
+    // px below whenever it knows better — see `getOverlayFrameSize`.
     var rectOf = function (el) {
       var r = el.getBoundingClientRect();
       var vw = window.innerWidth || 1;

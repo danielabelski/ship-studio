@@ -501,7 +501,16 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
       if (typeof value === 'number') resize.previewAtWidth(value);
       else resize.handleBreakpointClick(value);
     },
-    getViewportWidth: () => resize.customWidth,
+    // On the canvas the width that matters is the ACTIVE frame's — it is the
+    // frame the agent reads, clicks in, and screenshots. `resize.customWidth`
+    // there is the stale focus-mode width from before the canvas was opened.
+    getViewportWidth: () => (canvasMode ? canvasFrameWidth : resize.customWidth),
+    canvasMode,
+    // The activity overlay is drawn over the active frame's whole stage; on the
+    // canvas only the host knows that box, because the page in there has been
+    // told its viewport is a device.
+    getOverlayFrameSize: () =>
+      canvasMode ? { w: canvasFrameWidth, h: canvasFrameStageHeight } : null,
   });
 
   // Fullscreen: the container goes position:fixed over the window below the
@@ -1925,6 +1934,10 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               onBackgroundClick={deselectOnCanvas}
               activeFrameOverlay={(scale) => (
                 <>
+                  {/* Agent activity layer. On the canvas it belongs to the
+                    ACTIVE frame — that is the only frame the agent acts in,
+                    and a glow around the whole canvas would claim otherwise. */}
+                  <AgentActivityOverlay />
                   {comments.pins(scale, {
                     w: canvasFrameWidth * scale,
                     h: canvasFrameStageHeight * scale,
