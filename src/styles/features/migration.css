@@ -143,6 +143,11 @@
   text-decoration: underline;
 }
 
+.mig-panel__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
 .mig-panel__hint {
   color: var(--text-muted);
   font-size: var(--font-size-body-lg);
@@ -539,8 +544,42 @@
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
   gap: var(--spacing-sm);
+}
+
+/* Five columns of prose need the panel's width. */
+.mig-rail--full {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+/*
+ * Names only, wrapping to as many columns as fit. Forcing five across the
+ * create modal's width would set each phase in a two-character-wide column,
+ * and the rail is there to be read at a glance or not at all.
+ */
+.mig-rail--compact {
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+}
+
+/* No border or fill: these are a sequence being described, not controls, and
+   a bordered box directly under a grid of selectable cards reads as one. */
+.mig-rail--compact .mig-rail__item {
+  padding: var(--spacing-xs) 0;
+  align-items: baseline;
+  border: none;
+  background: none;
+  opacity: 1;
+}
+
+.mig-rail--compact .mig-rail__marker {
+  margin-top: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.mig-rail--compact .mig-rail__label {
+  color: var(--text-secondary);
 }
 
 .mig-rail__item {
@@ -744,91 +783,22 @@
 
 /* ── URL entry ────────────────────────────────────────────────────────── */
 
-.mig-url-modal {
-  width: min(34rem, 92vw);
-}
-
+/*
+ * Almost nothing here on purpose. The field is the `<label>` + `<input>` pair
+ * `.create-modal-content` already styles, the headings are `.stack-group-title`
+ * from the stack picker beside it, and the phases are the shared rail. What is
+ * left is the spacing between those and the one line of copy that belongs to
+ * this tab alone.
+ */
 .mig-url {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
 }
 
-.mig-url__field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-}
-
-.mig-url__label {
-  font-size: var(--font-size-label);
-  color: var(--text-secondary);
-}
-
-.mig-url__error {
-  margin: 0;
-  font-size: var(--font-size-label);
-  color: var(--mig-band-broken);
-}
-
-.mig-url__plan-title {
-  margin: 0 0 var(--spacing-sm);
-  font-size: var(--font-size-label);
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.mig-url__steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  counter-reset: mig-step;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-}
-
-.mig-url__steps li {
-  counter-increment: mig-step;
-  display: grid;
-  grid-template-columns: 1.25rem 1fr;
-  gap: var(--spacing-xs);
-  align-items: baseline;
-}
-
-.mig-url__steps li::before {
-  content: counter(mig-step);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-label);
-  color: var(--text-muted);
-}
-
-.mig-url__step-label {
-  grid-column: 2;
-  font-size: var(--font-size-body-lg);
-  color: var(--text-primary);
-}
-
-.mig-url__step-detail {
-  grid-column: 2;
-  font-size: var(--font-size-label);
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
 .mig-url__promise {
   margin: var(--spacing-md) 0 0;
-  padding-top: var(--spacing-md);
-  border-top: 1px solid var(--border);
   font-size: var(--font-size-label);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   line-height: 1.55;
-}
-
-.mig-url__footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-sm);
 }

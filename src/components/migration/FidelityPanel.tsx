@@ -23,6 +23,7 @@ import { FidelityMatrix } from './FidelityMatrix';
 import { MigrationStatusView } from './MigrationStatusView';
 import { useAsyncState } from '@/hooks/useAsyncState';
 import {
+  buildResumePrompt,
   fidelityBand,
   FIDELITY_BAND_LABEL,
   loadFidelityRun,
@@ -31,6 +32,8 @@ import {
   type FidelityRun,
   type MigrationStatus,
 } from '@/lib/migration';
+import { queueHandoff } from '@/lib/workflowHandoff';
+import { useOptionalToast } from '../../contexts/ToastContext';
 
 interface FidelityPanelProps {
   /** The open project. Everything shown is read out of its `.shipstudio/`. */
@@ -51,6 +54,21 @@ export function FidelityPanel({ projectPath }: FidelityPanelProps) {
     loadMigrationStatus
   );
   const [selected, setSelected] = useState<{ template: string; breakpoint: number } | null>(null);
+  const toast = useOptionalToast();
+
+  /**
+   * Hand the migration back to an agent in a new terminal.
+   *
+   * The state is already on disk, so this carries no summary of it — only the
+   * instruction to go and read it. A prompt that restated the progress would
+   * be a second source of truth, and the stale one would win whenever the
+   * panel was open before the agent's last write.
+   */
+  const resume = () => {
+    if (!status) return;
+    queueHandoff(projectPath, buildResumePrompt(status.sourceUrl));
+    toast?.showToast('Picking the migration back up in a new terminal', 'info');
+  };
 
   useEffect(() => {
     void loadStatus(projectPath);
@@ -68,8 +86,8 @@ export function FidelityPanel({ projectPath }: FidelityPanelProps) {
     });
   }, [execute, loadStatus, projectPath]);
 
-  // Widest first — the order Webflow lists its own breakpoints in, so the
-  // column headings read the way the person authoring the site is used to.
+  // Widest first, which is the order breakpoints are usually written in, so
+  // the column headings read the way the person who built the site is used to.
   const breakpoints = useMemo(() => {
     const all = new Set<number>();
     run?.templates.forEach((t) => {
@@ -93,21 +111,25 @@ export function FidelityPanel({ projectPath }: FidelityPanelProps) {
     );
   }
 
-  if (error || !run) {
+  // Neither half depends on the other, and the status is the more important
+  // one: a migration that has surveyed a site and planned ten templates but
+  // not yet measured anything is a migration in good order. Gating the whole
+  // panel on a comparison existing showed that as "nothing here", which is the
+  // opposite of what the user needs to see when they come back to it.
+  if (!status && !run) {
     return (
       <div className="mig-panel mig-panel--centred">
         <p className="mig-panel__empty">
-          No comparison has been run yet.
+          {error ? 'This project has no migration.' : 'Nothing here yet.'}
           <br />
-          <span className="mig-panel__empty-detail">
-            Run <code>scripts/site-fidelity.mjs</code> against the original and this project.
-          </span>
+          <span className="mig-panel__empty-detail">Start one from New Project → From a URL.</span>
         </p>
       </div>
     );
   }
 
-  const overall = runScore(run);
+  const sourceUrl = status?.sourceUrl ?? run?.reference ?? '';
+  const overall = run ? runScore(run) : null;
   const band = overall === null ? null : fidelityBand(overall);
 
   return (
@@ -115,7 +137,7 @@ export function FidelityPanel({ projectPath }: FidelityPanelProps) {
       <header className="mig-panel__header">
         <div className="mig-panel__score-block">
           {overall === null ? (
-            <span className="mig-panel__no-score">Not compared</span>
+            <span className="mig-panel__no-score">Not measured yet</span>
           ) : (
             <>
               <span className={`mig-panel__score mig-panel__score--${band}`}>
@@ -127,50 +149,72 @@ export function FidelityPanel({ projectPath }: FidelityPanelProps) {
           )}
           {/* Worst, not mean. An average across breakpoints is exactly the
               statistic that hides a broken phone layout behind a good desktop
-              one, which is the failure this panel exists to catch. */}
-          <span className="mig-panel__score-note">worst breakpoint</span>
+              one, which is the failure this panel exists to catch. It captions
+              a number, so it is absent when there is none to caption. */}
+          {overall !== null && <span className="mig-panel__score-note">worst breakpoint</span>}
         </div>
 
         <dl className="mig-panel__sources">
           <div>
             <dt>Original</dt>
             <dd>
-              <a href={run.reference} target="_blank" rel="noreferrer">
-                {run.reference.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+              {/* Known from the status alone, so it is still shown before any
+                  comparison has been run. */}
+              <a href={sourceUrl} target="_blank" rel="noreferrer">
+                {sourceUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}
               </a>
             </dd>
           </div>
-          <div>
-            <dt>Rebuild</dt>
-            <dd>
-              {run.rebuild.replace(/^https?:\/\//, '').replace(/\/$/, '')}
-              {run.rebuildOverlay && (
-                <span className="mig-panel__overlay-note"> + {run.rebuildOverlay}</span>
-              )}
-            </dd>
-          </div>
+          {run && (
+            <div>
+              <dt>Rebuild</dt>
+              <dd>
+                {run.rebuild.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                {run.rebuildOverlay && (
+                  <span className="mig-panel__overlay-note"> + {run.rebuildOverlay}</span>
+                )}
+              </dd>
+            </div>
+          )}
         </dl>
 
-        <Button variant="secondary" onClick={() => void execute(projectPath)}>
-          Compare again
-        </Button>
+        <div className="mig-panel__actions">
+          {status && (
+            <Button variant="primary" onClick={resume}>
+              Resume
+            </Button>
+          )}
+          {run && (
+            <Button variant="secondary" onClick={() => void execute(projectPath)}>
+              Compare again
+            </Button>
+          )}
+        </div>
       </header>
 
       {status && <MigrationStatusView status={status} />}
 
-      {run.history.length > 1 && <FidelityHistory history={run.history} />}
+      {run ? (
+        <>
+          {run.history.length > 1 && <FidelityHistory history={run.history} />}
 
-      <FidelityMatrix
-        templates={run.templates}
-        breakpoints={breakpoints}
-        selected={selected}
-        onSelect={(template, breakpoint) => setSelected({ template, breakpoint })}
-      />
+          <FidelityMatrix
+            templates={run.templates}
+            breakpoints={breakpoints}
+            selected={selected}
+            onSelect={(template, breakpoint) => setSelected({ template, breakpoint })}
+          />
 
-      {comparison && selected ? (
-        <ComparisonViewer comparison={comparison} templateLabel={selected.template} />
+          {comparison && selected ? (
+            <ComparisonViewer comparison={comparison} templateLabel={selected.template} />
+          ) : (
+            <p className="mig-panel__hint">Pick a score to see what produced it.</p>
+          )}
+        </>
       ) : (
-        <p className="mig-panel__hint">Pick a score to see what produced it.</p>
+        // Stated rather than left blank: nothing has been measured, which is
+        // an ordinary state early on and not a fault.
+        <p className="mig-panel__hint">Nothing has been compared against the original yet.</p>
       )}
     </div>
   );

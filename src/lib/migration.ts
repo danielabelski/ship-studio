@@ -14,7 +14,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
  * `scripts/site-fidelity.mjs`. In the shipped version they become Tauri
  * commands; the shapes are the contract either way.
  *
- * @module lib/webflow
+ * @module lib/migration
  */
 
 /**
@@ -91,7 +91,7 @@ export interface MigrationStatus {
   /** Decisions waiting on the user. A migration with one of these is stalled. */
   needsYou: OpenQuestion[];
 }
-/** One breakpoint's comparison. Webflow authors at 1440/991/767/479. */
+/** One breakpoint's comparison, at a width the original's own CSS cares about. */
 export interface BreakpointComparison {
   breakpoint: number;
   /** Percentage of pixels that match. The worst breakpoint is the template's score. */
@@ -310,15 +310,71 @@ export function buildMigrationPrompt(sourceUrl: string): string {
     '  node .shipstudio/fidelity/site-fidelity.mjs \\',
     `    --reference ${sourceUrl} \\`,
     '    --rebuild http://localhost:3000/ \\',
+    '    --breakpoints <widths from the survey> \\',
     '    --label home --out .shipstudio/fidelity/<pass-name>',
     '',
-    'It screenshots both sides at 1440/991/767/479 and scores the pixel match.',
+    'It screenshots both sides at those widths and scores the pixel match.',
+    'Pass the breakpoints you found in the original\u2019s own media queries —',
+    'the tool has defaults, but they are a fallback, not a fact about this site.',
     'Use the dev server URL this project actually runs on. A page is not done',
     'below 99.5% at its worst breakpoint.',
     '',
-    'Keep .shipstudio/migration.json current as you go — phases, what you are',
-    'doing, what is done, what is not, what cannot come across, and anything',
-    'you need me to decide. That file is what I read to see where things are,',
-    'so update it at the end of every phase and whenever you get stuck.',
+    'Keep .shipstudio/migration.json current as you go. That file is what I',
+    'read to see where things are, so update it at the end of every phase and',
+    'whenever you get stuck. Keep exactly this shape:',
+    '',
+    '  {',
+    `    "sourceUrl": "${sourceUrl}",`,
+    '    "startedAt": "<ISO 8601>",',
+    '    "phases": [ { "id": "survey" | "design-system" | "homepage" |',
+    '                        "templates" | "remainder",',
+    '                  "label": "<name>",',
+    '                  "status": "not-started" | "active" | "blocked" | "done",',
+    '                  "detail": "<one line on where this phase got to>" } ],',
+    '    "doing": "<one line, or null when nothing is in flight>",',
+    '    "done": ["<finished and verified>"],',
+    '    "notDone": ["<known remaining work>"],',
+    '    "cannotCarry": [ { "item": "<what>", "reason": "<why never>" } ],',
+    '    "needsYou": [ { "id": "<slug>", "question": "<what you need decided>",',
+    '                    "why": "<why it matters now>",',
+    '                    "recommendation": "<what you would do>" } ]',
+    '  }',
+    '',
+    'All five phases stay in the array the whole time — their status changes,',
+    'they are not added as you reach them. "needsYou" entries are objects, not',
+    'strings, and every one carries a recommendation: bringing me a decision',
+    'without one is just handing the work back.',
+  ].join('\n');
+}
+
+/**
+ * Picking a migration back up after the agent stopped.
+ *
+ * A long migration will outlive the session that started it — a context window
+ * runs out, a window gets closed, a machine sleeps. The work is not lost when
+ * that happens, because `MIGRATION.md` and `migration.json` are on disk and
+ * the skill requires them to be current. What was missing was any way to say
+ * so: from the user's side an interrupted migration and an abandoned one look
+ * identical.
+ *
+ * Deliberately short, and deliberately not a summary of the state. Repeating
+ * what the files say would give the agent two sources that can disagree, and
+ * the files are the one that is actually true.
+ */
+export function buildResumePrompt(sourceUrl: string): string {
+  return [
+    `Resume the rebuild of ${sourceUrl} in this project. It was interrupted.`,
+    '',
+    'Before doing anything else, read `.shipstudio/migration.json` and',
+    '`MIGRATION.md`. Between them they hold the survey, the plan, what is done,',
+    'what is not, and what is waiting on me. Trust those over any assumption',
+    'about where things got to.',
+    '',
+    'Then tell me, briefly, where the work actually stands and what you are',
+    'about to do next — before you start doing it. If anything in "needsYou" is',
+    'still unanswered, ask me again rather than picking for me.',
+    '',
+    'Carry on from there under the shipstudio-site-to-code skill, and keep',
+    '`.shipstudio/migration.json` current in the shape it already uses.',
   ].join('\n');
 }

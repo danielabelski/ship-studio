@@ -16,7 +16,7 @@ import { fidelityBand, FIDELITY_BAND_LABEL, type TemplateFidelity } from '@/lib/
 
 interface FidelityMatrixProps {
   templates: TemplateFidelity[];
-  /** Column order. Widest first, matching how Webflow itself lists breakpoints. */
+  /** Column order, widest first — the way breakpoints are usually written. */
   breakpoints: number[];
   selected: { template: string; breakpoint: number } | null;
   onSelect: (template: string, breakpoint: number) => void;
@@ -31,7 +31,7 @@ export function FidelityMatrix({
   return (
     <table className="mig-matrix">
       <caption className="mig-matrix__caption">
-        Pixel match against the Webflow original, per breakpoint
+        Pixel match against the original, per breakpoint
       </caption>
       <thead>
         <tr>

@@ -2,20 +2,19 @@
 /**
  * Measure how close a rebuild is to the site it was rebuilt from.
  *
- * A Webflow migration is judged on one thing — does it still look like the
- * site — and that is the one thing nothing in the old `webflow-to-code`
- * pipeline ever checked. It analysed an export, wrote a markdown brief, and
- * stopped. Whether the result resembled the original was left to whoever
- * happened to scroll past it.
- *
- * This turns that into a number the agent can close a loop on:
+ * A migration is judged on one thing — does it still look like the site — and
+ * that is the thing most easily left to whoever happens to scroll past it.
+ * This turns it into a number a loop can close on:
  *
  *     build → compare → fix → compare → …
  *
- * Both sides are screenshotted at Webflow's own breakpoints, because a
- * migration that matches at 1440 and collapses at 767 is the normal failure,
- * not an exotic one. Webflow authors against 1440/991/767/479, so those are
- * the widths where its media queries actually change hands.
+ * Works against any site. Nothing here assumes what the original was built
+ * with, and the one place that knows about a specific builder says so.
+ *
+ * Both sides are screenshotted at several widths, because a migration that
+ * matches at 1440 and collapses at 767 is the normal failure, not an exotic
+ * one. Pass `--breakpoints` with the widths the original's own media queries
+ * change at; the defaults are only a starting point.
  *
  * Dependency-free on purpose, matching `harness-capture.mjs`: it speaks the
  * Chrome DevTools Protocol over Node's built-in WebSocket and fetch. The pixel
@@ -24,7 +23,7 @@
  * whole image pipeline is a `Runtime.evaluate` away.
  *
  * Usage:
- *   node scripts/site-fidelity.mjs --reference https://x.webflow.io/ \
+ *   node scripts/site-fidelity.mjs --reference https://example.com/ \
  *                                     --rebuild http://127.0.0.1:4321/ \
  *                                     --out prototypes/site-migration/run
  *
@@ -44,7 +43,14 @@ import { COMPARE_IN_PAGE, PIXEL_THRESHOLD_SQ } from './site-fidelity-compare.mjs
 
 const CDP_PORT = Number(process.env.SHIPSTUDIO_FIDELITY_CDP_PORT ?? 9334);
 
-/** Webflow's authoring breakpoints. Its media queries change hands here. */
+/**
+ * Widths to compare at when the caller does not say.
+ *
+ * A fallback, not a claim about the site. Real breakpoints belong to the
+ * original and should be read out of its own media queries and passed with
+ * `--breakpoints` — comparing at widths the site does not care about measures
+ * the space between its breakpoints rather than its breakpoints.
+ */
 const DEFAULT_BREAKPOINTS = [1440, 991, 767, 479];
 
 
@@ -161,16 +167,27 @@ const FREEZE_CSS = `
 `;
 
 /**
- * Stop the parts of a Webflow page that keep moving on their own.
+ * Stop the parts of a page that keep moving on their own.
  *
- * Two of them, and neither is CSS. Sliders autoplay on a timer, so which slide
- * is on screen depends on when the shutter opened. IX2 — Webflow's interaction
- * runtime — writes inline transforms as you scroll, and leaves them behind.
- * `Webflow.destroy()` tears both down; resetting each slider to its first
- * slide afterwards makes "which slide" a fixed answer rather than a race.
+ * The freeze stylesheet handles CSS. What it cannot reach is JavaScript that
+ * moves things on a timer — a carousel advancing, a scroll runtime writing
+ * inline transforms — so which frame the shutter catches becomes a race, and
+ * the comparison starts measuring timing instead of layout.
+ *
+ * Two parts. The first is generic: pause every media element. The second is a
+ * small set of known builder runtimes, each guarded so it is a no-op on a site
+ * that does not use it. This is the *only* place in this file that knows what
+ * anything was built with, and it is additive — a site built with none of them
+ * is unaffected, and one built with something not listed here simply gets less
+ * help settling.
  */
-const SETTLE_WEBFLOW = `
+const SETTLE_PAGE = `
 (() => {
+  document.querySelectorAll('video, audio').forEach((el) => {
+    try { el.pause(); el.currentTime = 0; } catch {}
+  });
+
+  // Webflow: IX2 leaves inline transforms behind, and sliders autoplay.
   try { window.Webflow && window.Webflow.destroy && window.Webflow.destroy(); } catch {}
   document.querySelectorAll('.w-slider').forEach((slider) => {
     const dots = slider.querySelectorAll('.w-slider-dot');
@@ -181,9 +198,11 @@ const SETTLE_WEBFLOW = `
       slide.style.transform = 'translateX(' + i * 100 + '%)';
     });
   });
-  document.querySelectorAll('video').forEach((v) => {
-    try { v.pause(); v.currentTime = 0; } catch {}
-  });
+
+  // Common carousel libraries, each absent on most sites.
+  try { document.querySelectorAll('.swiper').forEach((el) => el.swiper && el.swiper.autoplay && el.swiper.autoplay.stop()); } catch {}
+  try { document.querySelectorAll('.slick-slider').forEach((el) => window.jQuery && window.jQuery(el).slick('slickPause')); } catch {}
+
   return true;
 })()
 `;
@@ -247,7 +266,7 @@ async function capture(url, width, settleMs, extraCss) {
       })()
     `);
     await sleep(settleMs);
-    await page.eval(SETTLE_WEBFLOW);
+    await page.eval(SETTLE_PAGE);
 
     // Stand-in for generated code (see prototypes/site-migration/README.md):
     // overlaying CSS on the live page produces a rendering that differs from

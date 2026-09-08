@@ -150,6 +150,45 @@ export const migrationScenarios: Scenario[] = [
     },
   },
   {
+    id: 'migration-interrupted',
+    command: 'migration.fidelity',
+    requires: '.mig-report',
+    title: 'Migration — surveyed and planned, nothing measured yet',
+    looksRightWhen:
+      'The state renders in full with no comparison at all, because the two halves are independent: this is what a migration looks like when the agent has surveyed the site and got cut off. Resume is offered, Compare again is not, and the score reads “Not measured yet” rather than a number nobody produced. A question written as a bare sentence shows the sentence and no empty Suggestion label.',
+    project: WORKSPACE_PROJECT,
+    commands: {
+      ...workspaceCommands,
+      // The shape a real agent wrote: a status word outside the vocabulary and
+      // questions as sentences. Both are normalised by the backend, and this
+      // is where that stays true.
+      read_migration_status: {
+        ...MIGRATION_STATUS,
+        // Exactly one phase is current — the state a real interrupted run is
+        // in, and the state the rail is drawn for.
+        phases: MIGRATION_STATUS.phases.map((p) => {
+          if (p.id === 'design-system') {
+            return { ...p, status: 'active', detail: '31 tokens read; not yet ported.' };
+          }
+          if (p.id === 'homepage') {
+            return { ...p, status: 'not-started', detail: 'Not started.' };
+          }
+          return p;
+        }),
+        needsYou: [
+          {
+            id: 'q0',
+            question: 'Fonts: self-host the same files, or substitute?',
+            why: '',
+            recommendation: '',
+          },
+        ],
+      },
+      read_fidelity_runs: [],
+      get_element_breadcrumb_enabled: false,
+    },
+  },
+  {
     id: 'migration-start',
     // Driven by clicks rather than by a command: the harness runs a scenario's
     // `steps` before its `command`, so a step can never reach a control inside
@@ -157,10 +196,10 @@ export const migrationScenarios: Scenario[] = [
     // the dashboard without one.
     openSelector: '[data-education-id="new-project-button"]',
     steps: [{ click: '.create-tabs .tabs__tab:nth-child(3)' }],
-    requires: '.mig-url__steps',
+    requires: '.mig-rail--compact',
     title: 'Migration — starting from a URL',
     looksRightWhen:
-      'One field and a stack to build it in. The five phases are stated before the user commits, in the order the skill runs them, and the two promises — nothing called done unmeasured, nothing dropped silently — are on screen rather than implied.',
+      'One field and a stack to build it in, both wearing the create modal\u2019s own furniture rather than this tab\u2019s inventions. The five phases appear as the same rail the Migration panel fills in later, so they are recognisable when the user meets them again.',
     commands: {},
   },
 ];

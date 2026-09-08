@@ -59,6 +59,21 @@ describe('buildMigrationPrompt', () => {
   it('states the bar for done', () => {
     expect(prompt).toContain('99.5%');
   });
+
+  it('carries the status file’s shape', () => {
+    // A live run wrote `needsYou` as bare sentences and used "in-progress" for
+    // a status, because the prompt named the concepts and never the schema.
+    // The backend now tolerates both, but the prompt is where it stops
+    // happening.
+    expect(prompt).toContain('"needsYou"');
+    expect(prompt).toContain('"not-started" | "active" | "blocked" | "done"');
+    expect(prompt).toContain('objects, not');
+  });
+
+  it('asks for the site’s own breakpoints rather than the tool’s defaults', () => {
+    expect(prompt).toContain('--breakpoints');
+    expect(prompt).toContain('media queries');
+  });
 });
 
 describe('fidelityImageUrl', () => {

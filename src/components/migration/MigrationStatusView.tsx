@@ -13,7 +13,8 @@
  */
 
 import { AlertIcon, CheckIcon, CloseIcon, PendingCircleIcon } from '@/components/icons';
-import { PHASE_LABEL, type MigrationStatus, type PhaseStatus } from '@/lib/migration';
+import { PhaseRail } from './PhaseRail';
+import type { MigrationStatus } from '@/lib/migration';
 
 interface MigrationStatusViewProps {
   status: MigrationStatus;
@@ -22,7 +23,7 @@ interface MigrationStatusViewProps {
 export function MigrationStatusView({ status }: MigrationStatusViewProps) {
   return (
     <div className="mig-status">
-      <PhaseRail status={status} />
+      <PhaseRail phases={status.phases} />
 
       {status.needsYou.length > 0 && (
         <section className="mig-needs" aria-label="Waiting on you">
@@ -32,13 +33,17 @@ export function MigrationStatusView({ status }: MigrationStatusViewProps) {
                 <AlertIcon size={14} />
                 <h4 className="mig-needs__question">{q.question}</h4>
               </header>
-              <p className="mig-needs__why">{q.why}</p>
+              {q.why && <p className="mig-needs__why">{q.why}</p>}
               {/* A decision handed over without a recommendation is just the
-                  work being handed back, so the skill requires one. */}
-              <p className="mig-needs__rec">
-                <span className="mig-needs__rec-label">Suggestion</span>
-                {q.recommendation}
-              </p>
+                  work being handed back, so the skill asks for one — but an
+                  agent that wrote only the question gets an empty label rather
+                  than a suggestion, and an empty label is worse than none. */}
+              {q.recommendation && (
+                <p className="mig-needs__rec">
+                  <span className="mig-needs__rec-label">Suggestion</span>
+                  {q.recommendation}
+                </p>
+              )}
             </article>
           ))}
         </section>
@@ -66,44 +71,6 @@ export function MigrationStatusView({ status }: MigrationStatusViewProps) {
         />
       </div>
     </div>
-  );
-}
-
-const PHASE_ICON: Record<PhaseStatus, typeof CheckIcon> = {
-  done: CheckIcon,
-  active: PendingCircleIcon,
-  blocked: AlertIcon,
-  'not-started': PendingCircleIcon,
-};
-
-/**
- * The method, as a rail.
- *
- * Each phase carries its own one-line account rather than only a tick, because
- * "Survey ✓" and "Survey — 18 URLs across 4 templates" are different amounts of
- * trust, and the second one is checkable.
- */
-function PhaseRail({ status }: { status: MigrationStatus }) {
-  return (
-    <ol className="mig-rail" aria-label="Migration phases">
-      {status.phases.map((phase) => {
-        const Icon = PHASE_ICON[phase.status];
-        return (
-          <li key={phase.id} className={`mig-rail__item mig-rail__item--${phase.status}`}>
-            <span className="mig-rail__marker" aria-hidden="true">
-              <Icon size={12} />
-            </span>
-            <div className="mig-rail__body">
-              <span className="mig-rail__label">
-                {PHASE_LABEL[phase.id]}
-                {phase.status === 'active' && <span className="mig-rail__now">now</span>}
-              </span>
-              <span className="mig-rail__detail">{phase.detail}</span>
-            </div>
-          </li>
-        );
-      })}
-    </ol>
   );
 }
 

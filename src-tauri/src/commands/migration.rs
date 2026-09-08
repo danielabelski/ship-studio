@@ -43,17 +43,54 @@ const FIDELITY_COMPARE: &str = include_str!("../../../scripts/site-fidelity-comp
 const MIGRATION_DIR: &str = ".shipstudio";
 const FIDELITY_DIR: &str = ".shipstudio/fidelity";
 
+// ── Reading what an agent wrote ────────────────────────────────────────────
+//
+// This file's author is a language model, and it will not reproduce a schema
+// exactly. A real run wrote "in-progress" where the vocabulary says "active",
+// and wrote `needsYou` as a list of sentences rather than a list of objects.
+// Both are reasonable readings of an instruction; both would have taken the
+// panel down — one to a missing icon, the other to a failed parse that
+// reported the whole migration as broken.
+//
+// So the reader is deliberately forgiving in one direction only: it accepts
+// the shapes an agent plausibly writes and normalises them into the one shape
+// the UI renders. It does not invent content, and anything it cannot read at
+// all is still an error rather than an empty panel.
+
 /// One phase of the method, mirroring `src/lib/migration.ts`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationPhase {
     pub id: String,
     pub label: String,
+    #[serde(deserialize_with = "normalised_phase_status")]
     pub status: String,
+    #[serde(default)]
     pub detail: String,
 }
 
+/// Map what an agent writes onto the four states the UI knows how to draw.
+///
+/// Anything unrecognised becomes `not-started` rather than passing through: an
+/// unknown status reaches the frontend as a missing icon and a class nothing
+/// styles, which is a blank row where a phase should be.
+fn normalised_phase_status<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(
+        match raw.trim().to_lowercase().replace([' ', '_'], "-").as_str() {
+            "done" | "complete" | "completed" | "finished" => "done",
+            "active" | "in-progress" | "doing" | "current" | "running" | "started" => "active",
+            "blocked" | "waiting" | "needs-you" | "stalled" | "paused" => "blocked",
+            _ => "not-started",
+        }
+        .to_string(),
+    )
+}
+
 /// Something only the user can settle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OpenQuestion {
     pub id: String,
     pub question: String,
@@ -61,15 +98,90 @@ pub struct OpenQuestion {
     pub recommendation: String,
 }
 
+/// A question as written: either the full shape, or just the sentence.
+///
+/// A bare string is the common miss, and it is not a useless one — the
+/// question itself is the part that matters. It is promoted rather than
+/// dropped, with the fields the agent did not supply left empty so the panel
+/// can omit them instead of inventing a rationale nobody wrote.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawQuestion {
+    Text(String),
+    Full {
+        #[serde(default)]
+        id: String,
+        #[serde(default, alias = "title", alias = "summary")]
+        question: String,
+        #[serde(default, alias = "reason", alias = "context")]
+        why: String,
+        #[serde(default, alias = "suggestion", alias = "recommended")]
+        recommendation: String,
+    },
+}
+
+impl RawQuestion {
+    fn into_question(self, index: usize) -> OpenQuestion {
+        match self {
+            RawQuestion::Text(question) => OpenQuestion {
+                id: format!("q{index}"),
+                question,
+                why: String::new(),
+                recommendation: String::new(),
+            },
+            RawQuestion::Full {
+                id,
+                question,
+                why,
+                recommendation,
+            } => OpenQuestion {
+                id: if id.is_empty() {
+                    format!("q{index}")
+                } else {
+                    id
+                },
+                question,
+                why,
+                recommendation,
+            },
+        }
+    }
+}
+
 /// Work that will never happen, and why.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CannotCarry {
     pub item: String,
     pub reason: String,
 }
 
+/// The same latitude, for the same reason.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawCannotCarry {
+    Text(String),
+    Full {
+        #[serde(default, alias = "name", alias = "thing")]
+        item: String,
+        #[serde(default, alias = "why", alias = "detail")]
+        reason: String,
+    },
+}
+
+impl From<RawCannotCarry> for CannotCarry {
+    fn from(raw: RawCannotCarry) -> Self {
+        match raw {
+            RawCannotCarry::Text(item) => CannotCarry {
+                item,
+                reason: String::new(),
+            },
+            RawCannotCarry::Full { item, reason } => CannotCarry { item, reason },
+        }
+    }
+}
+
 /// The agent's four-part account of where the migration is.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MigrationStatus {
     pub source_url: String,
@@ -80,6 +192,54 @@ pub struct MigrationStatus {
     pub not_done: Vec<String>,
     pub cannot_carry: Vec<CannotCarry>,
     pub needs_you: Vec<OpenQuestion>,
+}
+
+/// The file as found, before normalisation.
+///
+/// Every list defaults to empty: an agent that has not reached a section yet
+/// omits it, and refusing to read the file over a missing key would hide the
+/// progress it *has* written.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawStatus {
+    #[serde(default)]
+    source_url: String,
+    #[serde(default)]
+    started_at: String,
+    #[serde(default)]
+    phases: Vec<MigrationPhase>,
+    #[serde(default)]
+    doing: Option<String>,
+    #[serde(default)]
+    done: Vec<String>,
+    #[serde(default)]
+    not_done: Vec<String>,
+    #[serde(default)]
+    cannot_carry: Vec<RawCannotCarry>,
+    #[serde(default)]
+    needs_you: Vec<RawQuestion>,
+}
+
+impl From<RawStatus> for MigrationStatus {
+    fn from(raw: RawStatus) -> Self {
+        MigrationStatus {
+            source_url: raw.source_url,
+            started_at: raw.started_at,
+            phases: raw.phases,
+            // An agent that finished a step often leaves the old sentence in
+            // place; an empty string is the same as nothing in flight.
+            doing: raw.doing.filter(|d| !d.trim().is_empty()),
+            done: raw.done,
+            not_done: raw.not_done,
+            cannot_carry: raw.cannot_carry.into_iter().map(Into::into).collect(),
+            needs_you: raw
+                .needs_you
+                .into_iter()
+                .enumerate()
+                .map(|(i, q)| q.into_question(i))
+                .collect(),
+        }
+    }
 }
 
 fn phase(id: &str, label: &str, detail: &str) -> MigrationPhase {
@@ -193,8 +353,8 @@ fn status_at(root: &Path) -> Result<Option<MigrationStatus>, CommandError> {
     // A status the agent wrote badly is reported as a parse failure rather than
     // as "no migration". Silently showing an empty panel over a malformed file
     // would hide the one thing that needs fixing.
-    serde_json::from_str(&raw)
-        .map(Some)
+    serde_json::from_str::<RawStatus>(&raw)
+        .map(|s| Some(MigrationStatus::from(s)))
         .map_err(|e| CommandError::Validation {
             field: "migration.json".into(),
             reason: format!("Could not read the migration status: {e}"),
@@ -393,7 +553,9 @@ mod tests {
         // error anyone could act on.
         let original = initial_status("https://example.com/");
         let encoded = serde_json::to_string(&original).expect("serialises");
-        let decoded: MigrationStatus = serde_json::from_str(&encoded).expect("parses back");
+        let decoded: MigrationStatus = serde_json::from_str::<RawStatus>(&encoded)
+            .expect("parses back")
+            .into();
 
         assert_eq!(decoded.source_url, "https://example.com/");
         assert_eq!(decoded.phases.len(), 5);
@@ -510,6 +672,88 @@ mod tests {
         std::fs::create_dir_all(&path).unwrap();
         std::fs::write(path.join("migration.json"), "{ not json").unwrap();
         assert!(status_at(dir.path()).is_err());
+    }
+
+    /// The exact file a real run produced, reduced to the parts that broke.
+    ///
+    /// Kept verbatim rather than tidied: the value of a regression test written
+    /// from a live failure is that it preserves what actually happened, not a
+    /// cleaner version of it.
+    const AS_AN_AGENT_WROTE_IT: &str = r#"{
+      "sourceUrl": "https://arist.com/",
+      "startedAt": "2026-09-08T02:30:08Z",
+      "phases": [
+        { "id": "survey", "label": "Survey", "status": "done", "detail": "18 URLs." },
+        { "id": "design-system", "label": "Design system", "status": "in-progress", "detail": "25 tokens." }
+      ],
+      "doing": "Porting the design system.",
+      "done": ["Survey"],
+      "notDone": ["Everything else"],
+      "cannotCarry": ["The heading typeface"],
+      "needsYou": ["Fonts: self-host the same files, or substitute?"]
+    }"#;
+
+    #[test]
+    fn a_status_an_agent_actually_wrote_is_readable() {
+        // Every assertion here corresponds to a way the panel broke on a live
+        // run: an unknown status left a phase with no icon, and questions as
+        // bare sentences failed the parse outright — reporting the whole
+        // migration as broken while it was in fact going fine.
+        let status: MigrationStatus = serde_json::from_str::<RawStatus>(AS_AN_AGENT_WROTE_IT)
+            .expect("an agent's own file must parse")
+            .into();
+
+        assert_eq!(status.phases[0].status, "done");
+        assert_eq!(
+            status.phases[1].status, "active",
+            "\"in-progress\" is what an agent writes for active"
+        );
+
+        assert_eq!(status.needs_you.len(), 1);
+        assert_eq!(
+            status.needs_you[0].question,
+            "Fonts: self-host the same files, or substitute?"
+        );
+        // Not invented. The agent wrote a sentence, so the sentence is all
+        // there is, and the panel omits the rest rather than filling it in.
+        assert!(status.needs_you[0].why.is_empty());
+        assert!(status.needs_you[0].recommendation.is_empty());
+        assert!(
+            !status.needs_you[0].id.is_empty(),
+            "needs a key to render by"
+        );
+
+        assert_eq!(status.cannot_carry.len(), 1);
+        assert_eq!(status.cannot_carry[0].item, "The heading typeface");
+    }
+
+    #[test]
+    fn unknown_phase_words_land_somewhere_drawable() {
+        // Passing an unrecognised status through reaches the frontend as a
+        // missing icon and a class nothing styles — a blank row where a phase
+        // should be.
+        let raw =
+            r#"{"phases":[{"id":"survey","label":"Survey","status":"whenever","detail":""}]}"#;
+        let status: MigrationStatus = serde_json::from_str::<RawStatus>(raw).unwrap().into();
+        assert_eq!(status.phases[0].status, "not-started");
+    }
+
+    #[test]
+    fn a_half_written_status_still_reports_what_is_there() {
+        // An agent that has not reached a section yet omits it. Refusing the
+        // file over a missing key would hide the progress it has written.
+        let raw = r#"{"sourceUrl":"https://example.com/","done":["Survey"]}"#;
+        let status: MigrationStatus = serde_json::from_str::<RawStatus>(raw).unwrap().into();
+        assert_eq!(status.done, vec!["Survey".to_string()]);
+        assert!(status.phases.is_empty());
+        assert!(status.doing.is_none());
+    }
+
+    #[test]
+    fn an_emptied_doing_line_means_nothing_is_in_flight() {
+        let raw = r#"{"doing":"   "}"#;
+        let status: MigrationStatus = serde_json::from_str::<RawStatus>(raw).unwrap().into();
+        assert!(status.doing.is_none());
     }
 
     #[test]

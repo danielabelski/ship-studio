@@ -392,15 +392,16 @@ pub fn install_bundled_skills() -> Vec<BundledSkillStatus> {
     for skill in BUNDLED_SKILLS {
         let body = (skill.body)();
         for (agent_id, dir) in skill_dirs(skill.dir_name) {
-            let installed = write_skill_if_agent_present(&dir, &body).unwrap_or_else(|err| {
-                warn!(
-                    agent = agent_id,
-                    skill = skill.dir_name,
-                    error = %err,
-                    "could not install a bundled skill"
-                );
-                false
-            });
+            let installed = write_skill_if_agent_present(&dir, &body, skill.version)
+                .unwrap_or_else(|err| {
+                    warn!(
+                        agent = agent_id,
+                        skill = skill.dir_name,
+                        error = %err,
+                        "could not install a bundled skill"
+                    );
+                    false
+                });
             statuses.push(BundledSkillStatus {
                 skill: skill.dir_name.to_string(),
                 agent_id: agent_id.to_string(),
@@ -413,7 +414,56 @@ pub fn install_bundled_skills() -> Vec<BundledSkillStatus> {
     statuses
 }
 
-fn write_skill_if_agent_present(dir: &std::path::Path, body: &str) -> std::io::Result<bool> {
+/// Records which build's copy of a skill is on disk.
+///
+/// A sidecar rather than a key in the skill's own front matter: an unknown
+/// field there is read by someone else's parser, and a bundled skill that
+/// fails to load because of a version stamp would be a worse bug than the one
+/// this fixes.
+const VERSION_STAMP: &str = ".shipstudio-version";
+
+/// Whether this build should write its copy of a skill over what is there.
+///
+/// Every running copy of the app installs these on launch, so two builds of
+/// different vintage overwrite each other's skills all day — a real session
+/// lost the rewritten `site-to-code` skill twice to an older build starting up
+/// beside it, silently, and the agent then ran against instructions nobody
+/// thought were installed.
+///
+/// The stamp makes that decidable. An older build leaves a newer one alone; a
+/// newer build upgrades; and a build whose own version is already stamped
+/// restores its content, which is what undoes an older build's clobber on the
+/// next launch.
+fn should_write(dir: &std::path::Path, body: &str, version: &str) -> bool {
+    let Ok(existing) = std::fs::read_to_string(dir.join("SKILL.md")) else {
+        return true; // nothing there
+    };
+    if existing == body {
+        return false; // already exactly ours
+    }
+
+    let stamped = std::fs::read_to_string(dir.join(VERSION_STAMP))
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok());
+    let ours = version.parse::<u32>().unwrap_or(0);
+
+    match stamped {
+        // A newer build owns this file. Leave it be.
+        Some(installed) if installed > ours => false,
+        // Ours, or older. Either way this build's copy is the right one — and
+        // when the stamp already reads our version, the difference means
+        // something overwrote us after we wrote it.
+        Some(_) => true,
+        // Never stamped: written by a build that predates this scheme.
+        None => true,
+    }
+}
+
+fn write_skill_if_agent_present(
+    dir: &std::path::Path,
+    body: &str,
+    version: &str,
+) -> std::io::Result<bool> {
     // dir is <home>/<config>/skills/<name> — the agent's own config dir is two
     // levels up and must already exist.
     match dir.parent().and_then(|p| p.parent()) {
@@ -424,18 +474,81 @@ fn write_skill_if_agent_present(dir: &std::path::Path, body: &str) -> std::io::R
         }
     }
 
-    let file = dir.join("SKILL.md");
-    if std::fs::read_to_string(&file).is_ok_and(|existing| existing == body) {
+    if !should_write(dir, body, version) {
         return Ok(true);
     }
+
     std::fs::create_dir_all(dir)?;
-    std::fs::write(&file, body)?;
+    std::fs::write(dir.join("SKILL.md"), body)?;
+    // Stamped after the write, so a failed write never claims a version it did
+    // not install.
+    std::fs::write(dir.join(VERSION_STAMP), format!("{version}\n"))?;
     Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_older_build_does_not_clobber_a_newer_skill() {
+        // Two copies of the app install these on launch. Without this, whichever
+        // started last won — and a rewritten skill was silently replaced by an
+        // older build's copy while its own session was still running.
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("agent/skills/shipstudio-test");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "new body").unwrap();
+        std::fs::write(skill.join(VERSION_STAMP), "3\n").unwrap();
+
+        assert!(
+            !should_write(&skill, "old body", "2"),
+            "version 2 must leave version 3 alone"
+        );
+        assert!(
+            should_write(&skill, "newer body", "4"),
+            "version 4 must upgrade version 3"
+        );
+    }
+
+    #[test]
+    fn a_build_restores_its_own_version_after_something_overwrote_it() {
+        // The other half of the same problem: once an older build has clobbered
+        // the file, the newer one has to put it back on next launch rather than
+        // seeing a matching stamp and leaving the wrong content in place.
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("agent/skills/shipstudio-test");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "clobbered by an older build").unwrap();
+        std::fs::write(skill.join(VERSION_STAMP), "2\n").unwrap();
+
+        assert!(should_write(&skill, "our body", "2"));
+    }
+
+    #[test]
+    fn an_unchanged_skill_is_not_rewritten() {
+        // Installation runs on every launch, so the common case must not churn
+        // file mtimes.
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("agent/skills/shipstudio-test");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "same body").unwrap();
+        std::fs::write(skill.join(VERSION_STAMP), "2\n").unwrap();
+
+        assert!(!should_write(&skill, "same body", "2"));
+    }
+
+    #[test]
+    fn an_unstamped_skill_is_adopted() {
+        // Written by a build that predates the stamp. Taking ownership is what
+        // lets the scheme start working at all.
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("agent/skills/shipstudio-test");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "an older copy").unwrap();
+
+        assert!(should_write(&skill, "our body", "2"));
+    }
 
     #[test]
     fn every_bundled_skill_has_the_front_matter_an_agent_needs() {
