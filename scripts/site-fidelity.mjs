@@ -61,7 +61,30 @@ const CHROME = [
   '/usr/bin/google-chrome',
 ].find((p) => existsSync(p));
 
+/** How long to wait for images already in flight before taking the shot. */
+const IMAGE_WAIT_MS = 6000;
+
+/**
+ * Ceiling on a single capture.
+ *
+ * Every stage below is bounded individually, but a watchdog over the whole
+ * thing is what guarantees the tool always terminates and says something. An
+ * agent can recover from "this page could not be captured"; it cannot recover
+ * from a command that never returns.
+ */
+const CAPTURE_TIMEOUT_MS = 90_000;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Reject rather than hang, so a stuck stage surfaces as a failure. */
+function withTimeout(promise, ms, what) {
+  return Promise.race([
+    promise,
+    sleep(ms).then(() => {
+      throw new Error(`${what} did not finish within ${Math.round(ms / 1000)}s`);
+    }),
+  ]);
+}
 
 // ─── CDP plumbing ──────────────────────────────────────────────────────────
 
@@ -253,16 +276,42 @@ async function capture(url, width, settleMs, extraCss) {
       if (ready || Date.now() > deadline) break;
       await sleep(200);
     }
+    /*
+     * Scroll the page to trigger lazy loading, then give the images that
+     * started a bounded chance to finish.
+     *
+     * Bounded is the whole point. An earlier version awaited every incomplete
+     * image's `onload`/`onerror` with no deadline, which is only correct if
+     * every image eventually does one or the other — and on a real site they
+     * do not. An `<img>` whose observer never fires, one pointed at a host
+     * that black-holes the request, one behind consent: any single such image
+     * left the promise pending forever, and because the call is made with
+     * `awaitPromise`, the whole tool hung with no output and no error. That is
+     * exactly what a migration looks like when it "gets stuck on the parity
+     * check", and it took the agent down with it.
+     *
+     * A slightly-early shutter costs a few pixels of difference. A hang costs
+     * the run.
+     */
     await page.eval(`
       (async () => {
-        window.scrollTo(0, document.body.scrollHeight);
-        await new Promise((r) => setTimeout(r, 400));
+        const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+        const step = Math.max(400, Math.round(window.innerHeight * 0.9));
+        for (let y = 0; y < document.body.scrollHeight; y += step) {
+          window.scrollTo(0, y);
+          await settle(80);
+        }
         window.scrollTo(0, 0);
-        await Promise.all(
-          [...document.images].filter((i) => !i.complete).map((i) =>
-            new Promise((r) => { i.onload = i.onerror = r; })
-          )
-        );
+        await settle(200);
+
+        const pending = [...document.images].filter((i) => !i.complete);
+        await Promise.race([
+          Promise.all(
+            pending.map((i) => new Promise((r) => { i.onload = i.onerror = r; }))
+          ),
+          settle(${IMAGE_WAIT_MS}),
+        ]);
+        return pending.length;
       })()
     `);
     await sleep(settleMs);
@@ -377,9 +426,21 @@ async function main() {
     const results = [];
     for (const width of breakpoints) {
       process.stdout.write(`  ${label} @ ${width}px … `);
-      const ref = await capture(reference, width, settleMs);
-      const reb = await capture(rebuild, width, settleMs, rebuildCss);
-      const cmp = await compare(ref.data, reb.data, width);
+      const ref = await withTimeout(
+        capture(reference, width, settleMs),
+        CAPTURE_TIMEOUT_MS,
+        `capturing ${reference} at ${width}px`
+      );
+      const reb = await withTimeout(
+        capture(rebuild, width, settleMs, rebuildCss),
+        CAPTURE_TIMEOUT_MS,
+        `capturing ${rebuild} at ${width}px`
+      );
+      const cmp = await withTimeout(
+        compare(ref.data, reb.data, width),
+        CAPTURE_TIMEOUT_MS,
+        `comparing at ${width}px`
+      );
 
       const dir = path.join(outDir, label, String(width));
       await mkdir(dir, { recursive: true });

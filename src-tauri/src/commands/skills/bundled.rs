@@ -293,9 +293,18 @@ build → capture both sides → score → diagnose → fix one thing → re-mea
    change to it.
 5. **Re-measure.**
 
+**Iterate at one width, confirm at all of them.** A comparison costs about a
+minute per breakpoint. Fix against a single width while you are working, and
+run the full set only when you think the page is finished — that is also the
+run that catches a desktop fix which did nothing for mobile.
+
 **Stop conditions.** If the score has not improved after three passes, stop
 looping and tell the user what you tried and what you think is in the way.
 Grinding silently is worse than asking.
+
+**If the tool errors or times out, that is not a score.** Say so, say which
+page and width, and move on or ask — never record a failed measurement as a
+result, and never keep re-running the same failing command hoping it settles.
 
 ### What "done" means
 
