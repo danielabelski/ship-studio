@@ -42,7 +42,9 @@ export type ModalId =
   | 'commandPalette'
   | 'shopifyStore'
   | 'deployments'
-  | 'worktreeCreate';
+  | 'worktreeCreate'
+  | 'webflowImport'
+  | 'webflowFidelity';
 
 interface ModalContextValue {
   isOpen: (id: ModalId) => boolean;

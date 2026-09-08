@@ -1,0 +1,94 @@
+/**
+ * Every template against every breakpoint, as one grid.
+ *
+ * A migration's real failure mode is not "the site is wrong" — it is "the site
+ * is right at 1440 and falls apart at 767, and nobody looked". A row per
+ * template and a column per breakpoint puts that where it cannot be missed:
+ * a bad column reads as a vertical stripe.
+ *
+ * Cells for templates nobody has compared show no number at all. There is a
+ * strong temptation to render those as 0% or "—" with a score colour, and both
+ * are lies: one says the rebuild is broken, the other implies a measurement
+ * happened. They get their own state and their own reason.
+ */
+
+import { fidelityBand, FIDELITY_BAND_LABEL, type TemplateFidelity } from '@/lib/webflow';
+
+interface FidelityMatrixProps {
+  templates: TemplateFidelity[];
+  /** Column order. Widest first, matching how Webflow itself lists breakpoints. */
+  breakpoints: number[];
+  selected: { template: string; breakpoint: number } | null;
+  onSelect: (template: string, breakpoint: number) => void;
+}
+
+export function FidelityMatrix({
+  templates,
+  breakpoints,
+  selected,
+  onSelect,
+}: FidelityMatrixProps) {
+  return (
+    <table className="wf-matrix">
+      <caption className="wf-matrix__caption">
+        Pixel match against the Webflow original, per breakpoint
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col" className="wf-matrix__corner">
+            Template
+          </th>
+          {breakpoints.map((bp) => (
+            <th scope="col" key={bp} className="wf-matrix__head">
+              {bp}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {templates.map((template) => (
+          <tr key={template.template}>
+            <th scope="row" className="wf-matrix__row-head">
+              <span className="wf-matrix__name">{template.template}</span>
+              <span className="wf-matrix__route">{template.route}</span>
+            </th>
+
+            {template.status === 'not-compared' ? (
+              <td className="wf-matrix__pending" colSpan={breakpoints.length}>
+                {template.reason}
+              </td>
+            ) : (
+              breakpoints.map((bp) => {
+                const cell = template.breakpoints.find((b) => b.breakpoint === bp);
+                if (!cell) {
+                  return (
+                    <td key={bp} className="wf-matrix__cell wf-matrix__cell--empty">
+                      <span className="wf-matrix__none">not run</span>
+                    </td>
+                  );
+                }
+                const band = fidelityBand(cell.score);
+                const isSelected =
+                  selected?.template === template.template && selected.breakpoint === bp;
+                return (
+                  <td key={bp} className="wf-matrix__cell">
+                    <button
+                      type="button"
+                      className={`wf-score wf-score--${band}${isSelected ? ' wf-score--selected' : ''}`}
+                      aria-pressed={isSelected}
+                      title={`${FIDELITY_BAND_LABEL[band]} — ${cell.differingPixels.toLocaleString()} pixels differ`}
+                      onClick={() => onSelect(template.template, bp)}
+                    >
+                      <span className="wf-score__value">{cell.score.toFixed(1)}</span>
+                      <span className="wf-score__unit">%</span>
+                    </button>
+                  </td>
+                );
+              })
+            )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}

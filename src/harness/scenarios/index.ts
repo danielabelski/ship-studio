@@ -5,12 +5,14 @@ import { appScenarios } from './app';
 import { featureScenarios } from './features';
 import { hostingScenarios } from './hosting';
 import { hostingConnectScenarios } from './hostingConnect';
+import { webflowScenarios } from './webflow';
 
 export const scenarios: Scenario[] = [
   ...appScenarios,
   ...featureScenarios,
   ...hostingScenarios,
   ...hostingConnectScenarios,
+  ...webflowScenarios,
 ];
 
 export const DEFAULT_SCENARIO = 'dashboard';

@@ -1,0 +1,625 @@
+/*
+ * Webflow migration — the Fidelity panel and the source picker.
+ *
+ * The panel's whole job is to make a number legible next to the picture that
+ * produced it, so most of what follows is about keeping two tall page
+ * screenshots comparable on screen: fixed pane heights, synchronised scroll
+ * areas, and a diff that stays readable when it is twelve thousand pixels tall.
+ */
+
+:root {
+  /*
+   * Score bands. These are feature-specific accents rather than app status:
+   * "close" is not a warning and "off" is not an error — nothing is wrong with
+   * the app, a measurement is simply not where you want it yet. Naming them
+   * after the status roles would make the panel shout.
+   */
+  --wf-band-match: var(--accent-success);
+  --wf-band-close: #7cc4a4;
+  --wf-band-off: #d9a441;
+  --wf-band-broken: #d4736b;
+  /* The diff's magenta, matching what the capture script paints. */
+  --wf-diff-mark: #ff00c8;
+}
+
+/*
+ * The panel holds two full-page screenshots side by side. At the default modal
+ * width each pane is narrower than a phone, which makes the comparison — the
+ * only reason the panel exists — the thing there is least room for.
+ */
+.wf-modal {
+  width: min(72rem, 92vw);
+  max-width: none;
+}
+
+/* ── Panel ────────────────────────────────────────────────────────────── */
+
+.wf-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  overflow-y: auto;
+  height: 100%;
+}
+
+.wf-panel--centred {
+  align-items: center;
+  justify-content: center;
+}
+
+.wf-panel__empty {
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: var(--font-size-body-lg);
+  line-height: 1.6;
+}
+
+.wf-panel__empty-detail {
+  color: var(--text-muted);
+  font-size: var(--font-size-label);
+}
+
+.wf-panel__header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.wf-panel__score-block {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+}
+
+.wf-panel__score {
+  font-size: var(--font-size-3xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.wf-panel__score--match {
+  color: var(--wf-band-match);
+}
+.wf-panel__score--close {
+  color: var(--wf-band-close);
+}
+.wf-panel__score--off {
+  color: var(--wf-band-off);
+}
+.wf-panel__score--broken {
+  color: var(--wf-band-broken);
+}
+
+.wf-panel__score-unit {
+  font-size: var(--font-size-h4);
+  margin-left: 2px;
+}
+
+.wf-panel__band {
+  font-size: var(--font-size-body-lg);
+  color: var(--text-secondary);
+}
+
+.wf-panel__score-note,
+.wf-panel__no-score {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.wf-panel__sources {
+  display: flex;
+  gap: var(--spacing-lg);
+  margin: 0;
+  margin-left: auto;
+}
+
+.wf-panel__sources dt {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.wf-panel__sources dd {
+  margin: 0;
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* Names the stand-in stylesheet, so two identical URLs do not read as a bug. */
+.wf-panel__overlay-note {
+  color: var(--wf-band-off);
+}
+
+.wf-panel__sources a {
+  color: var(--accent-active);
+  text-decoration: none;
+}
+
+.wf-panel__sources a:hover {
+  text-decoration: underline;
+}
+
+.wf-panel__hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-body-lg);
+  text-align: center;
+  padding: var(--spacing-xl) 0;
+}
+
+/* ── History ──────────────────────────────────────────────────────────── */
+
+.wf-history {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--spacing-md);
+  background: var(--surface-panel);
+}
+
+.wf-history__summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.wf-history__from {
+  color: var(--wf-band-off);
+  font-weight: 600;
+}
+
+.wf-history__arrow {
+  color: var(--text-muted);
+}
+
+.wf-history__to {
+  color: var(--wf-band-match);
+  font-weight: 600;
+}
+
+.wf-history__passes {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.wf-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.wf-history__item {
+  display: grid;
+  grid-template-columns: 1fr auto minmax(0, 16rem);
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.wf-history__track {
+  height: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  overflow: hidden;
+}
+
+.wf-history__bar {
+  height: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.wf-history__bar--match {
+  background: var(--wf-band-match);
+}
+.wf-history__bar--close {
+  background: var(--wf-band-close);
+}
+.wf-history__bar--off {
+  background: var(--wf-band-off);
+}
+.wf-history__bar--broken {
+  background: var(--wf-band-broken);
+}
+
+.wf-history__value {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.wf-history__note {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Matrix ───────────────────────────────────────────────────────────── */
+
+.wf-matrix {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.wf-matrix__caption {
+  caption-side: top;
+  text-align: left;
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  padding-bottom: var(--spacing-sm);
+}
+
+.wf-matrix__corner,
+.wf-matrix__head {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  font-weight: 500;
+  text-align: center;
+  padding: var(--spacing-xs);
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-matrix__corner {
+  text-align: left;
+}
+
+.wf-matrix__row-head {
+  text-align: left;
+  padding: var(--spacing-sm) var(--spacing-xs);
+  font-weight: 400;
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-matrix__name {
+  display: block;
+  font-size: var(--font-size-body-lg);
+  color: var(--text-primary);
+}
+
+.wf-matrix__route {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.wf-matrix__cell {
+  text-align: center;
+  padding: var(--spacing-xs);
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+ * A template nobody has compared gets words, not a number and not a colour.
+ * Rendering it as 0% would say the rebuild is broken; rendering a grey "—" in
+ * a score cell still reads as a measurement that came back empty. Neither is
+ * true, and both are the kind of invented state the project forbids.
+ */
+.wf-matrix__pending {
+  text-align: left;
+  padding: var(--spacing-sm);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  font-style: italic;
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-matrix__none {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.wf-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  min-width: 4.25rem;
+  justify-content: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color var(--transition-interaction);
+}
+
+.wf-score:hover {
+  border-color: var(--border);
+}
+
+.wf-score--selected {
+  border-color: var(--accent-active);
+}
+
+.wf-score__value {
+  font-size: var(--font-size-body-lg);
+}
+
+.wf-score__unit {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.wf-score--match .wf-score__value {
+  color: var(--wf-band-match);
+}
+.wf-score--close .wf-score__value {
+  color: var(--wf-band-close);
+}
+.wf-score--off .wf-score__value {
+  color: var(--wf-band-off);
+}
+.wf-score--broken .wf-score__value {
+  color: var(--wf-band-broken);
+}
+
+/* ── Comparison viewer ────────────────────────────────────────────────── */
+
+.wf-comparison {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.wf-comparison__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
+.wf-comparison__meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+}
+
+.wf-comparison__template {
+  font-size: var(--font-size-body-lg);
+  color: var(--text-primary);
+}
+
+.wf-comparison__width,
+.wf-comparison__delta {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+/* A height difference is a layout fault the pixel score understates, so it is
+   called out rather than left for someone to notice in the two images. */
+.wf-comparison__delta {
+  color: var(--wf-band-off);
+}
+
+.wf-comparison__panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+}
+
+.wf-comparison__pane {
+  margin: 0;
+  background: var(--surface-app);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wf-comparison__caption {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+ * A fixed height is the point: these are full-page screenshots, often ten
+ * thousand pixels tall, and the panes have to be a window onto them rather
+ * than something the page grows to contain.
+ */
+.wf-comparison__scroll {
+  height: 26rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--surface-app);
+}
+
+.wf-comparison__scroll--wide {
+  height: 32rem;
+}
+
+.wf-comparison__scroll img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.wf-comparison__single {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Overlay wipe ─────────────────────────────────────────────────────── */
+
+.wf-overlay {
+  position: relative;
+}
+
+.wf-overlay__base {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.wf-overlay__clip {
+  position: absolute;
+  inset: 0 auto 0 0;
+  overflow: hidden;
+}
+
+/* The clipped copy must be as wide as the container, not as wide as its own
+   clip, or the rebuild rescales as the wipe moves and nothing lines up. */
+.wf-overlay__clip img {
+  display: block;
+  height: auto;
+  max-width: none;
+}
+
+.wf-overlay__seam {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent-active);
+}
+
+.wf-comparison__wipe {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
+.wf-comparison__wipe input {
+  flex: 1;
+}
+
+.wf-comparison__wipe-label {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.wf-comparison__legend {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--border);
+  background: var(--surface-panel);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.wf-comparison__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--wf-diff-mark);
+}
+
+/* ── Import modal ─────────────────────────────────────────────────────── */
+
+.wf-import {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.wf-import__tiers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--spacing-sm);
+}
+
+.wf-tier {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--spacing-md);
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-control);
+  cursor: pointer;
+  transition: border-color var(--transition-interaction);
+}
+
+.wf-tier:hover {
+  border-color: var(--text-muted);
+}
+
+.wf-tier--chosen {
+  border-color: var(--accent-active);
+}
+
+.wf-tier__label {
+  font-size: var(--font-size-body-lg);
+  color: var(--text-primary);
+}
+
+.wf-tier__detail {
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+}
+
+.wf-tier__requirement {
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+}
+
+.wf-import__consequences {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-lg);
+}
+
+.wf-import__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.wf-import__list li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-label);
+  line-height: 1.5;
+}
+
+.wf-import__list--brings li {
+  color: var(--text-secondary);
+}
+
+.wf-import__list--brings svg {
+  color: var(--wf-band-match);
+  flex-shrink: 0;
+}
+
+.wf-import__list--misses li {
+  color: var(--text-muted);
+}
+
+.wf-import__list--misses svg {
+  color: var(--wf-band-broken);
+  flex-shrink: 0;
+}
+
+.wf-import__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
