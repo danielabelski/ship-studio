@@ -58,7 +58,7 @@ async function resolveDevServerCwd(projectPath: string): Promise<string> {
   } catch (err) {
     logger.error('[DevServer] getWorkspaceSubpath failed; using repo root as cwd', {
       projectPath,
-      error: err instanceof Error ? err.message : String(err),
+      error: formatCommandError(asCommandError(err)),
     });
     return projectPath;
   }
@@ -84,6 +84,22 @@ import { getWindowLabel } from '../lib/window';
 import type { HealthTabPanelRef } from '../components/code/HealthTabPanel';
 import { stripAnsi } from '../lib/ansi';
 import { extractAnnouncedPort } from '../lib/ports';
+import { asCommandError, formatCommandError } from '../lib/errors';
+import { useOptionalToast } from '../contexts/ToastContext';
+
+/**
+ * How long a restart waits for the dev-server PTY to come back.
+ *
+ * The budget exists so the restart button can't hang forever, not to police
+ * how fast a machine is. 10s was too tight for what it was actually measuring:
+ * by the time this window opens, the restart has already spent up to 5s on
+ * `kill_port`, half a second of settle, and up to 10s clearing the project
+ * cache — and the spawn itself has to resolve the package manager and get a
+ * pseudo-terminal from an OS that is, by hypothesis, busy. Restarts on loaded
+ * machines were timing out and leaving a stopped preview behind (issue #906).
+ * The initial start path deliberately has no ceiling at all.
+ */
+const RESTART_SPAWN_TIMEOUT_MS = 30_000;
 
 /** Record of a dev-server process that died without Ship Studio stopping it. */
 export interface DevServerUnexpectedExit {
@@ -249,6 +265,9 @@ export function filterProbeChunk(
 }
 
 export function useDevServer(currentProjectPath: string | null) {
+  // Optional so the hook still works in tests and isolated renders; inside the
+  // app it always resolves to the app-root provider.
+  const { showToast } = useOptionalToast();
   const statesRef = useRef<Map<string, ProjectServerState>>(new Map());
   // Last-known capability info per project path. `stopServer` drops a
   // project's live state entirely (by design), but the Preview tab must stay
@@ -658,7 +677,7 @@ export function useDevServer(currentProjectPath: string | null) {
           const packageManager = await detectPackageManager(projectPath).catch((err) => {
             logger.warn(
               '[OpenProject] detectPackageManager failed; falling back to npm. This will be wrong for pnpm/yarn projects.',
-              { error: err instanceof Error ? err.message : String(err) }
+              { error: formatCommandError(asCommandError(err)) }
             );
             return 'npm';
           });
@@ -673,7 +692,7 @@ export function useDevServer(currentProjectPath: string | null) {
         }
       } catch (err) {
         logger.warn('[OpenProject] Dependency check failed; attempting dev server anyway', {
-          error: err instanceof Error ? err.message : String(err),
+          error: formatCommandError(asCommandError(err)),
         });
       }
       s.needsInstall = null;
@@ -971,11 +990,24 @@ export function useDevServer(currentProjectPath: string | null) {
             createOutputHandler(projectPath),
             customCmd
           ),
-          10000,
+          RESTART_SPAWN_TIMEOUT_MS,
           null as unknown as DevServerHandle
         );
         if (!s.handle) {
-          logger.error('Failed to start dev server: spawn timed out');
+          // Say so. The only trace this left was a context-free log line, so
+          // the restart button finished, the preview stayed dark, and nothing
+          // told the user why (issue #906).
+          logger.error('[DevServer] Restart failed: the dev server did not start in time', {
+            projectPath,
+            port: effectivePort,
+            timeoutMs: RESTART_SPAWN_TIMEOUT_MS,
+          });
+          showToast(
+            `The dev server didn't come back within ${Math.round(
+              RESTART_SPAWN_TIMEOUT_MS / 1000
+            )}s. Try restarting it again, or check the dev-server logs.`,
+            'error'
+          );
         } else {
           s.port = effectivePort;
           s.portKnown = true;
@@ -1055,12 +1087,14 @@ export function useDevServer(currentProjectPath: string | null) {
           $screen_name: 'Workspace',
         });
       } catch (error) {
-        logger.error('Failed to restart dev server', { error });
+        logger.error('Failed to restart dev server', {
+          error: formatCommandError(asCommandError(error)),
+        });
       } finally {
         setIsRestartingDevServer(false);
       }
     },
-    [bump, createOutputHandler, getOrCreateState, wireExitWatcher]
+    [bump, createOutputHandler, getOrCreateState, wireExitWatcher, showToast]
   );
 
   /** Type into the current project's dev-server PTY — lets the user answer

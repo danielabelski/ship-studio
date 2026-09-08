@@ -138,9 +138,24 @@ mod tests {
             "http://localhost:{port}"
         )));
         drop(listener);
-        assert!(!super::dev_server_listening(&format!(
-            "http://localhost:{port}"
-        )));
+
+        // The negative half has an unavoidable race: the moment an ephemeral
+        // port is released the OS may hand it straight to something else —
+        // another test in this binary, a dev server, anything on the machine —
+        // and this asserted on the first one it tried. That failed a full-suite
+        // run roughly never, which is the worst frequency for a test to fail
+        // at. Several distinct freed ports instead: all of them being re-bound
+        // inside the same instant is not a thing that happens.
+        let freed_reads_as_closed = (0..5).any(|_| {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let p = l.local_addr().unwrap().port();
+            drop(l);
+            !super::dev_server_listening(&format!("http://localhost:{p}"))
+        });
+        assert!(
+            freed_reads_as_closed,
+            "every freed port still read as listening — the check is not detecting a closed port"
+        );
     }
 
     /// Issue #711/#614: a dev server that's still starting up can miss the

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logger } from '../lib/logger';
+import { asCommandError, formatCommandError } from '../lib/errors';
 
 export interface UseCopyToClipboardReturn {
   copy: (text: string) => Promise<boolean>;
@@ -97,7 +98,7 @@ export function useCopyToClipboard({
         timerRef.current = setTimeout(() => setIsCopied(false), resetMs);
         return true;
       } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
+        const err = e instanceof Error ? e : new Error(formatCommandError(asCommandError(e)));
         setError(err);
         setIsCopied(false);
         logger.warn('copy-to-clipboard failed', { error: err.message });

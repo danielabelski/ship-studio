@@ -13,9 +13,13 @@ use super::run_git_net;
 use super::git_has_uncommitted_changes;
 
 /// Cap git stderr carried inside an error message so a pathological failure
-/// (e.g. a hook dumping its whole log) can't flood the toast/telemetry, while
-/// keeping enough text to diagnose the actual cause (issue #547).
-pub(super) fn truncate_stderr(stderr: &str) -> String {
+/// (e.g. a hook dumping its whole log, or `git diff` printing its entire
+/// `--no-index` usage text) can't flood the toast/telemetry, while keeping
+/// enough text to diagnose the actual cause (issues #547, #912).
+///
+/// `pub(crate)` rather than `pub(super)`: the conflict commands run git from
+/// outside this module and have exactly the same problem.
+pub(crate) fn truncate_stderr(stderr: &str) -> String {
     const MAX: usize = 500;
     if stderr.len() <= MAX {
         return stderr.to_string();

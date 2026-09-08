@@ -22,6 +22,7 @@ import { useCommands } from '../commands/useCommands';
 import { useOptionalToast } from '../contexts/ToastContext';
 import { useLocalStorageFlag } from './useLocalStorageFlag';
 import { usePolling } from './usePolling';
+import { useWindowFocused } from './useWindowFocused';
 import { migrateLegacyComments } from '../lib/commentMigration';
 import { TeamPanel } from '../components/team/TeamPanel';
 import { TeamPresence } from '../components/team/TeamPresence';
@@ -114,6 +115,15 @@ export function useTeamWorkspace(
     })();
   }, [projectPath, showToast]);
 
+  // Every timer below is gated on this window being the one in front of the
+  // user. Ship Studio opens a window per project and people leave them open
+  // for days; ungated, each of those windows walked git history, ran
+  // `gh pr list` and called the GitHub API once a minute, for the whole time
+  // nobody was looking at it. `usePolling` fires immediately on start, so
+  // coming back to a window refreshes it there and then rather than showing
+  // what it held when it lost focus.
+  const focused = useWindowFocused();
+
   // Re-read on a timer. `usePolling` rather than a raw interval, per the repo's
   // own rule — it owns teardown and backs off when a read fails, which matters
   // here because the read shells out to git and `gh`.
@@ -121,6 +131,7 @@ export function useTeamWorkspace(
     useCallback(() => refresh(projectPath), [projectPath]),
     {
       intervalMs: TEAM_SYNC_INTERVAL_MS,
+      enabled: focused,
       name: 'team-snapshot',
     }
   );
@@ -128,10 +139,13 @@ export function useTeamWorkspace(
   // The backstop under the event triggers. `sync` enforces its own ten-minute
   // floor, so this tick is cheap and mostly a no-op — it exists for the session
   // where somebody leaves a workspace open all afternoon and touches nothing.
+  // Which is also the session where the window is not in front of them, so the
+  // gate does not weaken it: the tick that matters is the one on the way back.
   usePolling(
     useCallback(() => sync(), []),
     {
       intervalMs: TEAM_SYNC_FLOOR_MS,
+      enabled: focused,
       name: 'team-remote-sync',
     }
   );
@@ -215,7 +229,7 @@ export function useTeamWorkspace(
       setNow(Date.now());
       return Promise.resolve();
     }, []),
-    { intervalMs: CLOCK_TICK_MS, name: 'team-clock' }
+    { intervalMs: CLOCK_TICK_MS, enabled: focused, name: 'team-clock' }
   );
 
   const close = useCallback(() => setOpenPersisted(false), [setOpenPersisted]);

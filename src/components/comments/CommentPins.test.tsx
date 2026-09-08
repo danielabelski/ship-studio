@@ -14,6 +14,9 @@ import { CommentPins } from './CommentPins';
 import { CommentComposer } from './CommentComposer';
 import type { CanvasComment, CommentPlacement } from '../../lib/canvasComments';
 
+/** Plausible measured size for the composer form. */
+const FORM_HEIGHT = 260;
+const CARD_W = 260;
 const target = {
   page: '/',
   selector: '#hero',
@@ -128,7 +131,7 @@ describe('the composer and note use house inputs, not browser defaults', () => {
     expect(field).toHaveClass('ss-text-field--multiline');
   });
 
-  it('anchors the composer to the live rect it is given, not the frame corner', () => {
+  it('starts the composer from the live rect it is given, not the frame corner', () => {
     cleanup();
     render(
       <CommentPins
@@ -149,9 +152,107 @@ describe('the composer and note use house inputs, not browser defaults', () => {
       />
     );
     const bubble = document.querySelector<HTMLElement>('.canvas-comment-bubble--composing')!;
-    // Negative means its element scrolled up and the form went with it, rather
-    // than holding a fixed screen position and riding the viewport.
+    // The rect it is handed is where it starts from — the frame corner would be
+    // 0,0. Where it settles is the placement rule's business, covered below;
+    // jsdom reports no size, so nothing is measured and nothing is moved here.
     expect(parseFloat(bubble.style.top)).toBeLessThan(0);
     expect(parseFloat(bubble.style.left)).toBeGreaterThan(400);
+  });
+
+  it('takes focus without scrolling the frame wrapper out from under the user', () => {
+    // The wrapper is `overflow: hidden`, which still scrolls programmatically
+    // and offers no scrollbar back. focus() reveals what it focuses, so the
+    // composer used to drag the frame upward for good the moment it mounted.
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
+    render(<CommentComposer target={target} onSave={() => true} onCancel={vi.fn()} />);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
+  const composerProps = (at: { x: number; y: number }, forKey: string) => ({
+    comments: [],
+    placements: [],
+    missing: [],
+    scale: 1,
+    bounds: { w: 1200, h: 800 },
+    openId: null,
+    onOpen: vi.fn(),
+    selectedIds: [],
+    toggle: vi.fn(),
+    onEdit: vi.fn(),
+    onDelete: vi.fn(),
+    onHover: vi.fn(),
+    composer: <CommentComposer target={target} onSave={() => true} onCancel={vi.fn()} />,
+    composerAt: at,
+    composerFor: forKey,
+  });
+  // jsdom measures every box as 0, and a card of no size is trivially in view,
+  // so nothing is nudged unless the form is given a real one.
+  const measured = () => [
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(FORM_HEIGHT),
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(CARD_W),
+  ];
+  const box = () => {
+    const el = document.querySelector<HTMLElement>('.canvas-comment-bubble--composing')!;
+    return { top: parseFloat(el.style.top), left: parseFloat(el.style.left) };
+  };
+
+  it('opens fully inside the frame even when its element is at the bottom edge', () => {
+    const spies = measured();
+    render(<CommentPins {...composerProps({ x: 1180, y: 780 }, 'a')} />);
+    const { top, left } = box();
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(top + FORM_HEIGHT).toBeLessThanOrEqual(800);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(left + CARD_W).toBeLessThanOrEqual(1200);
+    spies.forEach((s) => s.mockRestore());
+  });
+
+  it('keeps its place on the page, moving pixel for pixel with a scroll', () => {
+    const spies = measured();
+    const { rerender } = render(<CommentPins {...composerProps({ x: 1180, y: 780 }, 'a')} />);
+    const opened = box();
+    // Scrolling 50px up means the frame reports the element 50px higher, and
+    // the form has to go with it — it belongs to the page, not the viewport.
+    rerender(<CommentPins {...composerProps({ x: 1180, y: 730 }, 'a')} />);
+    expect(box()).toEqual({ top: opened.top - 50, left: opened.left });
+    // Still true once its element has scrolled off the top entirely.
+    rerender(<CommentPins {...composerProps({ x: 1180, y: -400 }, 'a')} />);
+    expect(box().top).toBe(opened.top - 1180);
+    spies.forEach((s) => s.mockRestore());
+  });
+
+  it('nudges again when the draft is pointed at a different element', () => {
+    const spies = measured();
+    const { rerender } = render(<CommentPins {...composerProps({ x: 200, y: 100 }, 'a')} />);
+    const first = box();
+    rerender(<CommentPins {...composerProps({ x: 600, y: 790 }, 'b')} />);
+    const second = box();
+    expect(second).not.toEqual(first);
+    expect(second.top + FORM_HEIGHT).toBeLessThanOrEqual(800);
+    spies.forEach((s) => s.mockRestore());
+  });
+
+  it('still lets an open note leave with its element', () => {
+    // The nudge is the composer's alone, and only at the moment it opens. A
+    // note card is never repositioned: it is anchored to a place on the page.
+    render(
+      <CommentPins
+        comments={[note]}
+        placements={[{ id: 'one', x: 400, y: -300, width: 100, height: 40 }]}
+        missing={[]}
+        scale={1}
+        bounds={{ w: 1200, h: 800 }}
+        openId="one"
+        onOpen={vi.fn()}
+        selectedIds={[]}
+        toggle={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onHover={vi.fn()}
+      />
+    );
+    const card = document.querySelector<HTMLElement>('.canvas-comment-bubble')!;
+    expect(parseFloat(card.style.top)).toBeLessThan(0);
   });
 });

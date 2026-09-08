@@ -169,7 +169,7 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
       // Recognized user-environment failures (stale npm login, SSH auth, …)
       // log at warn — logger.error auto-files bug reports (issues #505/#531).
       const logContext = {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
         projectPath: importedProjectPath,
         packageManager: importedPackageManager,
       };
@@ -273,7 +273,7 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
         workspaces = await detectWorkspaces(projectPath);
       } catch (err) {
         logger.warn('[ImportProject] detectWorkspaces failed; falling back to root', {
-          error: err instanceof Error ? err.message : String(err),
+          error: formatCommandError(asCommandError(err)),
           projectPath,
         });
       }
@@ -297,7 +297,7 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
       // auth, …) log at warn — logger.error auto-files bug reports
       // (issue #531).
       const logContext = {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
         repo: selectedRepo.name,
         safeName,
       };
@@ -347,7 +347,7 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
       // tool, …) log at warn — logger.error auto-files bug reports
       // (issue #505).
       const logContext = {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
         phase,
         projectPath,
       };

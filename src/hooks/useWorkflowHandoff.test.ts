@@ -98,7 +98,13 @@ describe('useFindingHandoff', () => {
 
     expect(addTerminalTab).not.toHaveBeenCalled();
     expect(peekHandoff('/p/demo')).toBeNull();
-    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Copy prompt'), 'error');
+    // A handoff that genuinely failed is still reported as a fault.
+    expect(showToast).toHaveBeenCalledWith(
+      expect.stringContaining('Copy prompt'),
+      'error',
+      undefined,
+      { expected: false }
+    );
   });
 
   it('delivers once, not once per retry', () => {
@@ -118,6 +124,13 @@ describe('useFindingHandoff', () => {
 
     expect(addTerminalTab).not.toHaveBeenCalled();
     expect(peekHandoff('/p/demo')).toBeNull();
-    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('maximum number'), 'error');
+    // Shown like an error — it stays until read — but marked expected, so the
+    // app's own cap isn't filed as a malfunction (issue #920).
+    expect(showToast).toHaveBeenCalledWith(
+      expect.stringContaining('maximum number'),
+      'error',
+      undefined,
+      { expected: true }
+    );
   });
 });

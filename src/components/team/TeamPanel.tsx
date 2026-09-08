@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import {
+  BranchIcon,
   CheckIcon,
   CloseIcon,
   CollaboratorsIcon,
@@ -136,6 +137,15 @@ export function TeamPanel({
             <span className="team-float-title">
               Team
               {unseen.length > 0 && <span className="team-float-count">{unseen.length} new</span>}
+              {/* Said out loud, because the honest answer to "where does this
+                  live" is "your repository" — there is no service behind it,
+                  and nothing here was invented. Git rather than any one host:
+                  the same panel works on GitLab, a self-managed remote, and a
+                  repo with no remote at all. */}
+              <span className="team-float-origin">
+                <BranchIcon size={11} aria-hidden />
+                Powered by Git
+              </span>
             </span>
             <div className="team-float-header-actions">
               {/* The disclosure panel — what gets written into the repository and

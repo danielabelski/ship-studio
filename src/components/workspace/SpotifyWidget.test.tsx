@@ -21,6 +21,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { SpotifyWidget } from './SpotifyWidget';
+import { ToastContext } from '../../contexts/ToastContext';
 import type { SpotifyState } from '../../lib/spotify';
 
 function state(overrides: Partial<SpotifyState> = {}): SpotifyState {
@@ -202,5 +203,38 @@ describe('SpotifyWidget', () => {
       expect(controlCalls).toContainEqual({ action: 'playpause', value: undefined })
     );
     expect(controlCalls.some((call) => call.action === 'activate')).toBe(false);
+  });
+});
+
+/**
+ * Issue #930: the state poll spawns an `osascript` on a 2s leash, so a round
+ * trip that is merely slow fails here and succeeds on the next tick. The
+ * policy itself (how many failures before saying anything) is covered by
+ * `lib/pollFailureGate.test.ts`; what matters here is that the widget's poll
+ * is wired to it at all — a single failure must not toast.
+ */
+describe('SpotifyWidget transient poll failures', () => {
+  it('does not toast when a state poll fails', async () => {
+    let calls = 0;
+    mockIPC((cmd) => {
+      if (cmd === 'get_spotify_widget_enabled') return true;
+      if (cmd === 'get_spotify_state') {
+        calls += 1;
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- the CommandError shape under test
+        throw { type: 'Timeout', cmd: 'osascript (spotify state)', secs: 2 };
+      }
+      return undefined;
+    });
+
+    const showToast = vi.fn();
+    render(
+      <ToastContext.Provider value={{ toasts: [], showToast, dismissToast: vi.fn() }}>
+        <SpotifyWidget />
+      </ToastContext.Provider>
+    );
+
+    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(showToast).not.toHaveBeenCalled();
   });
 });

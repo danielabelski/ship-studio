@@ -594,6 +594,28 @@ pub fn git_environment_gap(stderr: &str) -> Option<crate::errors::CommandError> 
              the damage, or re-clone the repository into a fresh folder and reopen it here.",
         ));
     }
+    // Git reading the working tree and getting incomplete answers: short or
+    // timed-out reads while indexing ordinary tracked files, or a `.git` file
+    // that is simply absent rather than corrupt. That combination is the
+    // signature of a folder whose contents are not really on this disk yet —
+    // an iCloud/Dropbox/OneDrive placeholder, or a network mount — as much as
+    // it is of damage, so the guidance has to name both (issue #907).
+    //
+    // Kept below the packfile branch: a repository with genuinely corrupt
+    // objects should get the unambiguous "damaged history" wording rather than
+    // this one's "or it might just be syncing".
+    if lower.contains("short read while indexing")
+        || lower.contains("read error while indexing")
+        || (lower.contains("packed-refs") && lower.contains("couldn't read"))
+    {
+        return Some(crate::errors::CommandError::expected(
+            "Git couldn't fully read this project's files while checking its status. Either the \
+             folder is on a cloud-sync or network drive that hasn't finished downloading it, or \
+             the local git history is damaged. Wait for syncing to finish (or make the folder \
+             available offline) and try again — if it persists, run `git fsck` in the project \
+             folder to check for damage.",
+        ));
+    }
     if lower.contains("unable to read current working directory")
         && lower.contains("operation not permitted")
     {
@@ -2262,6 +2284,53 @@ mod tests {
             .is_some());
         }
 
+        /// Issue #907: git status hitting short and timed-out reads while
+        /// indexing ordinary source files, then failing to find `.git/packed-refs`
+        /// at all. Files that aren't really on the disk yet — a cloud-sync
+        /// placeholder or a network mount — not an app defect.
+        #[test]
+        fn classifies_unreadable_working_tree_as_expected() {
+            let stderr = "error: short read while indexing src/routes/admin/+layout.server.ts\n\
+                          error: read error while indexing svelte.config.js: Operation timed out\n\
+                          error: short read while indexing tsconfig.json\n\
+                          fatal: couldn't read .git/packed-refs: No such file or directory";
+            let err = git_environment_gap(stderr).expect("must classify");
+            assert!(matches!(err, crate::errors::CommandError::Expected { .. }));
+            let msg = err.to_string();
+            // Both plausible causes, because the signature genuinely doesn't
+            // distinguish them and guessing one would send people the wrong way.
+            assert!(msg.contains("cloud-sync"), "got: {msg}");
+            assert!(msg.contains("git fsck"), "got: {msg}");
+        }
+
+        #[test]
+        fn each_unreadable_working_tree_marker_classifies_on_its_own() {
+            for stderr in [
+                "error: short read while indexing package.json",
+                "error: read error while indexing a.ts: Operation timed out",
+                "fatal: couldn't read .git/packed-refs: No such file or directory",
+            ] {
+                assert!(
+                    git_environment_gap(stderr).is_some(),
+                    "must classify: {stderr}"
+                );
+            }
+        }
+
+        /// A genuinely corrupt object store keeps the unambiguous wording even
+        /// when the same run also produced read errors — "it might just be
+        /// syncing" is the wrong thing to tell someone whose pack is truncated.
+        #[test]
+        fn packfile_corruption_outranks_the_unreadable_working_tree_wording() {
+            let stderr = "error: short read while indexing a.ts\n\
+                          error: file .git/objects/pack/pack-3301f5a2.pack is far too short to \
+                          be a packfile";
+            let err = git_environment_gap(stderr).expect("must classify");
+            let msg = err.to_string();
+            assert!(msg.contains("looks damaged"), "got: {msg}");
+            assert!(!msg.contains("cloud-sync"), "got: {msg}");
+        }
+
         #[test]
         fn leaves_ordinary_git_failures_unclassified() {
             assert!(git_environment_gap("fatal: not a git repository").is_none());
@@ -2275,6 +2344,14 @@ mod tests {
             // "missing object" without a fatal is a warning git recovers from
             // (e.g. `fsck` output) — not the corrupted-repo abort (#842).
             assert!(git_environment_gap("warning: missing object 1234abcd").is_none());
+            // "couldn't read" about something that isn't packed-refs is some
+            // other failure and must keep reporting (#907's guard).
+            assert!(
+                git_environment_gap("error: couldn't read HEAD: No such file or directory")
+                    .is_none()
+            );
+            // And packed-refs merely being mentioned isn't the signature.
+            assert!(git_environment_gap("Updating .git/packed-refs").is_none());
         }
     }
 

@@ -36,14 +36,20 @@
  * `report.json` in the shape the Fidelity panel consumes.
  */
 
-import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { COMPARE_IN_PAGE, PIXEL_THRESHOLD_SQ } from './site-fidelity-compare.mjs';
+import { CHROME, launchChrome } from './headless-chrome.mjs';
 
-const CDP_PORT = Number(process.env.SHIPSTUDIO_FIDELITY_CDP_PORT ?? 9334);
+/**
+ * Preferred debugging port; the launcher moves off it if it is taken.
+ *
+ * `let`, because the port is only settled once Chrome is up: a fixed one
+ * meant a busy port was silently answered by whatever already held it.
+ */
+let CDP_PORT = Number(process.env.SHIPSTUDIO_FIDELITY_CDP_PORT ?? 9334);
 
 /**
  * Widths to compare at when the caller does not say.
@@ -56,12 +62,6 @@ const CDP_PORT = Number(process.env.SHIPSTUDIO_FIDELITY_CDP_PORT ?? 9334);
 const DEFAULT_BREAKPOINTS = [1440, 991, 767, 479];
 
 
-
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/usr/bin/google-chrome',
-].find((p) => existsSync(p));
 
 /** How long to wait for images already in flight before taking the shot. */
 const IMAGE_WAIT_MS = 6000;
@@ -94,12 +94,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Reject rather than hang, so a stuck stage surfaces as a failure. */
 function withTimeout(promise, ms, what) {
+  /*
+   * The timer is cleared when the work wins, and does not hold the loop open
+   * while it is pending.
+   *
+   * Racing a bare `sleep(ms)` leaks it both ways. Node will not exit while a
+   * referenced timer is outstanding, so a run whose work finished in eleven
+   * seconds sat for the remaining seventy-nine before the process ended — and
+   * a fidelity run is invoked once per page, so every page cost a flat extra
+   * ninety seconds of nothing. Measured cold and warm, the wall clock landed
+   * within a second of `(time the last timeout was armed) + 90s` every time,
+   * which is the signature of exactly this and of nothing else.
+   */
+  let timer;
   return Promise.race([
     promise,
-    sleep(ms).then(() => {
-      throw new Error(`${what} did not finish within ${Math.round(ms / 1000)}s`);
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${what} did not finish within ${Math.round(ms / 1000)}s`)),
+        ms
+      );
+      timer.unref?.();
     }),
-  ]);
+  ]).finally(() => clearTimeout(timer));
 }
 
 // ─── CDP plumbing ──────────────────────────────────────────────────────────
@@ -165,19 +182,6 @@ async function newPage(url) {
 }
 
 const closeTarget = (id) => fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${id}`).catch(() => {});
-
-async function waitForServer(url, timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    try {
-      if ((await fetch(url)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${url}`);
-    await sleep(250);
-  }
-}
 
 // ─── Capture ───────────────────────────────────────────────────────────────
 
@@ -535,23 +539,13 @@ async function main() {
     .map((n) => Number(n.trim()))
     .filter(Boolean);
 
-  const chrome = spawn(
-    CHROME,
-    [
-      '--headless=new',
-      `--remote-debugging-port=${CDP_PORT}`,
-      '--hide-scrollbars',
-      '--force-device-scale-factor=1',
-      '--disable-gpu',
-      '--no-first-run',
-      '--no-default-browser-check',
-      `--user-data-dir=${path.join(process.env.TMPDIR ?? '/tmp', 'shipstudio-fidelity-chrome')}`,
-    ],
-    { stdio: 'ignore' }
-  );
+  const chrome = await launchChrome({ tool: 'fidelity', basePort: CDP_PORT });
+  CDP_PORT = chrome.port;
+  if (chrome.swept) {
+    console.log(`  (reaped ${chrome.swept} leftover browser${chrome.swept > 1 ? 's' : ''})`);
+  }
 
   try {
-    await waitForServer(`http://127.0.0.1:${CDP_PORT}/json/version`);
 
     const results = [];
     for (const width of breakpoints) {
@@ -608,7 +602,7 @@ async function main() {
         `  →  ${path.relative(process.cwd(), outDir)}/report.json`
     );
   } finally {
-    chrome.kill();
+    chrome.close();
   }
 }
 

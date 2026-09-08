@@ -202,7 +202,7 @@ export function useProjectBulkActions<T extends DashboardProject>({
           logger.error('Failed bulk project action', {
             action: confirm.action,
             projectName: project.name,
-            error: error instanceof Error ? error.message : String(error),
+            error: formatCommandError(asCommandError(error)),
           });
           continue;
         }
@@ -215,7 +215,7 @@ export function useProjectBulkActions<T extends DashboardProject>({
             logger.error('Failed to unpin project after successful bulk action', {
               action: confirm.action,
               projectName: project.name,
-              error: error instanceof Error ? error.message : String(error),
+              error: formatCommandError(asCommandError(error)),
             });
           }
         }

@@ -814,6 +814,7 @@ pub fn run() {
             commands::pty_session::pty_session_kill,
             commands::pty_session::pty_session_attach,
             commands::pty_session::pty_session_detach,
+            commands::pty_session::pty_session_set_paused,
             // Community Templates
             commands::templates::fetch_community_templates,
             commands::templates::download_template_zip,

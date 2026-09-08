@@ -15,6 +15,7 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { Button } from './primitives/Button';
 import { Progress } from './primitives/Progress';
 import { logger } from '../lib/logger';
+import { asCommandError, formatCommandError } from '../lib/errors';
 
 /** How long the loading view may spin before we assume boot is wedged. */
 export const BOOT_WATCHDOG_MS = 25_000;
@@ -43,7 +44,7 @@ export function BootLoadingScreen({ progress = 0 }: BootLoadingScreenProps) {
     } catch (err) {
       // In dev mode relaunch might not work — fall back to a reload.
       logger.error('Relaunch failed, trying reload', {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
       });
       window.location.reload();
     }
