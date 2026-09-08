@@ -39,7 +39,6 @@ import {
   ImageIcon,
   PanelLeftIcon,
   VariablesIcon,
-  CommentIcon,
   ActivityIcon,
 } from '@/components/icons';
 import { Button } from '../primitives/Button';
@@ -81,11 +80,7 @@ export interface WorkspaceHeaderProps {
   elementTreeVisible: boolean;
   elementTreeAvailable: boolean;
   onToggleElementTree: () => void;
-  commentsVisible: boolean;
-  commentsAvailable: boolean;
   /** Pending notes in the backlog; badges the toggle when non-zero. */
-  commentsPendingCount: number;
-  onToggleComments: () => void;
   agentPanelVisible: boolean;
   onToggleAgentPanel: () => void;
   variablesPanelVisible: boolean;
@@ -300,10 +295,6 @@ export function WorkspaceHeader({
   elementTreeVisible,
   elementTreeAvailable,
   onToggleElementTree,
-  commentsVisible,
-  commentsAvailable,
-  commentsPendingCount,
-  onToggleComments,
   agentPanelVisible,
   onToggleAgentPanel,
   variablesPanelVisible,
@@ -512,25 +503,6 @@ export function WorkspaceHeader({
         aria-label="Variables"
         data-workspace-panel="variables"
       />
-      <span className="workspace-comments-toggle-wrap">
-        <ToggleButton
-          variant={commentsVisible ? 'secondary' : 'default'}
-          className="workspace-panel-toggle"
-          pressed={commentsVisible}
-          onClick={onToggleComments}
-          disabled={!commentsAvailable}
-          title={commentsAvailable ? 'Comments' : 'Comments are available for web projects'}
-          leftIcon={<CommentIcon size={16} />}
-          aria-label={
-            commentsPendingCount > 0 ? `Comments — ${commentsPendingCount} pending` : 'Comments'
-          }
-        />
-        {commentsPendingCount > 0 && (
-          <span className="workspace-comments-badge" aria-hidden>
-            {commentsPendingCount > 9 ? '9+' : commentsPendingCount}
-          </span>
-        )}
-      </span>
       <Button
         onClick={onOpenAssetsPanel}
         title="Assets"

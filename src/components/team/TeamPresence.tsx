@@ -29,10 +29,27 @@ import { activeTeammates, actorKey, type TeamMember } from '../../lib/team';
 /** Beyond this the rest collapse into a "+N". Four is what the header fits. */
 const MAX_FACES = 4;
 
+/** What the button says when there is nobody else on the repo. */
+function describeOpen(openComments: number): string {
+  if (openComments === 0) return 'no open comments';
+  return openComments === 1 ? '1 open comment' : `${openComments} open comments`;
+}
+
+function aloneTitle(openComments: number): string {
+  return openComments === 0
+    ? 'Team — comments, and who else is on this repository'
+    : `Team — ${describeOpen(openComments)}`;
+}
+
 interface TeamPresenceProps {
   members: TeamMember[];
   /** Updates that have arrived since the user last looked. */
   unseenCount: number;
+  /**
+   * Unresolved comment threads. What the button counts when you are the only
+   * person here, which is the whole state this feature used to hide in.
+   */
+  openComments: number;
   panelOpen: boolean;
   onTogglePanel: () => void;
   now: number;
@@ -41,15 +58,22 @@ interface TeamPresenceProps {
 export function TeamPresence({
   members,
   unseenCount,
+  openComments,
   panelOpen,
   onTogglePanel,
   now,
 }: TeamPresenceProps) {
   const teammates = activeTeammates(members);
-  if (teammates.length === 0) return null;
-
   const shown = teammates.slice(0, MAX_FACES);
   const overflow = teammates.length - shown.length;
+
+  // Alone is a state this button has, not a reason for it to disappear.
+  //
+  // It used to return null with no teammates, which quietly made the whole
+  // panel unreachable for the person working solo — and comments, which need
+  // no teammates and no repository, went with it. A count of open comments is
+  // what that person actually wants on the button anyway.
+  const alone = teammates.length === 0;
 
   const summary = teammates
     .map(
@@ -67,26 +91,34 @@ export function TeamPresence({
         className="workspace-panel-toggle team-presence"
         pressed={panelOpen}
         onClick={onTogglePanel}
-        title={summary}
+        title={alone ? aloneTitle(openComments) : summary}
         leftIcon={<CollaboratorsIcon size={16} />}
         aria-label={
-          unseenCount > 0
-            ? `Team: ${teammates.length} others, ${unseenCount} new`
-            : `Team: ${teammates.length} others`
+          alone
+            ? `Team: ${describeOpen(openComments)}`
+            : unseenCount > 0
+              ? `Team: ${teammates.length} others, ${unseenCount} new`
+              : `Team: ${teammates.length} others`
         }
       >
-        <span className="team-presence-faces">
-          {shown.map((member) => (
-            <TeamAvatar key={actorKey(member.actor)} actor={member.actor} size="sm" />
-          ))}
-          {overflow > 0 && (
-            <span className="team-avatar team-avatar--sm team-avatar--overflow">
-              <span className="team-avatar-initials" aria-hidden>
-                +{overflow}
+        {alone ? (
+          // No faces rather than your own: a stack of one is a picture of
+          // being alone, which the empty state already says in words.
+          openComments > 0 && <span className="team-presence-count">{openComments}</span>
+        ) : (
+          <span className="team-presence-faces">
+            {shown.map((member) => (
+              <TeamAvatar key={actorKey(member.actor)} actor={member.actor} size="sm" />
+            ))}
+            {overflow > 0 && (
+              <span className="team-avatar team-avatar--sm team-avatar--overflow">
+                <span className="team-avatar-initials" aria-hidden>
+                  +{overflow}
+                </span>
               </span>
-            </span>
-          )}
-        </span>
+            )}
+          </span>
+        )}
       </ToggleButton>
 
       {/* Outside the button so it can sit on the corner without the button's

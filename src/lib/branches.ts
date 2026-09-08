@@ -12,6 +12,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { syncAfterGitActivity } from './teamStore';
 
 /** Information about a git branch */
 export interface BranchInfo {
@@ -329,7 +330,13 @@ export async function publishBranch(
   projectPath: string,
   commitMessage?: string
 ): Promise<PublishResult> {
-  return invoke<PublishResult>('publish_branch', { projectPath, commitMessage });
+  const result = await invoke<PublishResult>('publish_branch', { projectPath, commitMessage });
+  // You have just proved you have network and credentials, and you are already
+  // waiting on the remote. Comments ride out on the back of that rather than
+  // waiting for a timer — this is the moment a teammate most expects to see
+  // what you said.
+  syncAfterGitActivity();
+  return result;
 }
 
 /**

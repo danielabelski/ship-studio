@@ -25,6 +25,7 @@
 @import './components/progress.css';
 @import './components/pixel-loader.css';
 @import './components/text-field.css';
+@import './components/checkbox.css';
 @import './components/modal.css';
 @import './components/command-palette.css';
 @import './components/code-overlay.css';

@@ -15,32 +15,63 @@
  * @module components/team/TeamThreadsPanel
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { BranchIcon, CheckIcon, CommentIcon, PendingCircleIcon } from '@/components/icons';
 import { Button } from '../primitives/Button';
+import { Checkbox } from '../primitives/Checkbox';
+import { TextButton } from '../primitives/TextButton';
 import { EmptyState } from '../primitives/EmptyState';
 import { SegmentedControl } from '../primitives/SegmentedControl';
 import { TeamAvatar, TeamAvatarStack } from './TeamAvatar';
 import { formatAgo } from '../../lib/workflows';
 import { lastMessageAt, threadParticipants, type TeamThread } from '../../lib/team';
-import { replyToThread, setThreadResolved } from '../../lib/teamStore';
+import {
+  clearThreadSelection,
+  getUiSnapshot,
+  replyToThread,
+  setThreadResolved,
+  subscribe,
+  toggleThreadSelected,
+} from '../../lib/teamStore';
 
 type ThreadFilter = 'open' | 'resolved' | 'all';
 
 interface TeamThreadsPanelProps {
   threads: TeamThread[];
-  showProject: boolean;
   now: number;
   /** Stacks the list over the reader for the 420px workspace panel. */
   compact?: boolean;
+  /**
+   * Hand the ticked threads to an agent.
+   *
+   * Absent on the home screen, which has no terminal to hand them to — the
+   * ticks and the button simply do not render there.
+   */
+  onSendToAgent?: (threads: TeamThread[]) => void;
+  /** Where they would go, for the button's label. */
+  agentLabel?: string | null;
+  sending?: boolean;
+  /**
+   * Why you cannot click an element to leave a comment right now, if you
+   * cannot.
+   *
+   * The floating comments panel used to say this, and deleting it took the
+   * explanation with it: opening the tab on a project with no preview running
+   * left a list that simply never grew, with nothing anywhere saying why.
+   */
+  pickerHint?: string | null;
 }
 
 export function TeamThreadsPanel({
   threads,
-  showProject,
   now,
   compact = false,
+  onSendToAgent,
+  agentLabel,
+  sending = false,
+  pickerHint,
 }: TeamThreadsPanelProps) {
+  const { selectedThreadIds } = useSyncExternalStore(subscribe, getUiSnapshot);
   const [filter, setFilter] = useState<ThreadFilter>('open');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -58,14 +89,24 @@ export function TeamThreadsPanel({
 
   const handleReply = useCallback(() => {
     if (!selected || !draft.trim()) return;
-    replyToThread(selected.id, draft);
+    void replyToThread(selected.id, draft);
     setDraft('');
   }, [selected, draft]);
 
   const openCount = threads.filter((thread) => !thread.resolved).length;
 
+  // Ticks only where there is somewhere to send them.
+  const selectable = Boolean(onSendToAgent);
+  const selectedIds = useMemo(() => new Set(selectedThreadIds), [selectedThreadIds]);
+  const chosen = useMemo(
+    () => threads.filter((thread) => selectedIds.has(thread.id)),
+    [threads, selectedIds]
+  );
+
   return (
     <div className={`team-threads${compact ? ' is-compact' : ''}`}>
+      {pickerHint && <p className="team-threads-picker-hint">{pickerHint}</p>}
+
       <div className="team-threads-controls">
         <SegmentedControl
           aria-label="Filter comments"
@@ -91,6 +132,32 @@ export function TeamThreadsPanel({
         />
       ) : (
         <div className="team-threads-body">
+          {selectable && chosen.length > 0 && (
+            /* Appears on the first tick rather than sitting there greyed out.
+               A permanently visible disabled button asks to be clicked and then
+               refuses; this way the control shows up exactly when it works. */
+            <div className="team-threads-send">
+              <span className="team-threads-send-count">
+                {chosen.length === 1 ? '1 comment selected' : `${chosen.length} comments selected`}
+              </span>
+              <div className="team-threads-send-actions">
+                <TextButton onClick={clearThreadSelection}>Clear</TextButton>
+                <Button
+                  variant="primary"
+                  size="compact"
+                  disabled={sending}
+                  onClick={() => onSendToAgent?.(chosen)}
+                  title={agentLabel ? `Send to ${agentLabel}` : 'Send to your agent'}
+                >
+                  {sending
+                    ? 'Sending…'
+                    : chosen.length === 1
+                      ? 'Send comment to agent'
+                      : 'Send comments to agent'}
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="team-thread-list" role="listbox" aria-label="Comment threads">
             {visible.map((thread) => {
               const last = thread.messages[thread.messages.length - 1];
@@ -109,6 +176,14 @@ export function TeamThreadsPanel({
                   }}
                 >
                   <span className="team-thread-item-top">
+                    {selectable && (
+                      <Checkbox
+                        checked={selectedIds.has(thread.id)}
+                        onChange={() => toggleThreadSelected(thread.id)}
+                        label={`Send comment ${thread.pin} to an agent`}
+                        stopPropagation
+                      />
+                    )}
                     <span className="team-thread-pin" data-resolved={thread.resolved}>
                       {thread.pin}
                     </span>
@@ -118,7 +193,6 @@ export function TeamThreadsPanel({
                   {last && <span className="team-thread-preview">{last.body}</span>}
                   <span className="team-thread-item-meta">
                     <TeamAvatarStack actors={threadParticipants(thread)} />
-                    {showProject && <span className="team-chip">{thread.projectName}</span>}
                     <span className="team-thread-route">{thread.route}</span>
                     {thread.messages.length > 1 && (
                       <span className="team-thread-count">{thread.messages.length} replies</span>
@@ -201,14 +275,14 @@ export function TeamThreadsPanel({
                   />
                   <div className="team-thread-composer-actions">
                     <span className="team-thread-hint">
-                      Enter to send · pushed to the repo on the next sync
+                      Enter to send · saved to this project, not pushed yet
                     </span>
                     <div className="team-thread-composer-buttons">
                       <Button
                         variant="secondary"
                         size="compact"
                         leftIcon={<CheckIcon size={12} />}
-                        onClick={() => setThreadResolved(selected.id, !selected.resolved)}
+                        onClick={() => void setThreadResolved(selected.id, !selected.resolved)}
                       >
                         {selected.resolved ? 'Reopen' : 'Resolve'}
                       </Button>

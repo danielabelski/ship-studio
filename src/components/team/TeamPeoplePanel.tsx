@@ -34,15 +34,35 @@ interface TeamPeoplePanelProps {
   now: number;
   /** Tighter rows for the in-workspace panel, which is 420px wide. */
   compact?: boolean;
+  /**
+   * Whether this project is on GitHub at all.
+   *
+   * An empty list means two completely different things, and the old copy said
+   * the wrong one to the person it mattered most to: "this repository has no
+   * other collaborators" reads as a fact about their repo when the truth is
+   * that there is no repo to have any.
+   */
+  hasRepo?: boolean;
 }
 
-export function TeamPeoplePanel({ members, now, compact = false }: TeamPeoplePanelProps) {
+export function TeamPeoplePanel({
+  members,
+  now,
+  compact = false,
+  hasRepo = true,
+}: TeamPeoplePanelProps) {
   if (members.length === 0) {
-    return (
+    return hasRepo ? (
       <EmptyState
         icon={<CollaboratorsIcon size={24} />}
         title="No collaborators"
         description="This repository has no other collaborators on GitHub."
+      />
+    ) : (
+      <EmptyState
+        icon={<CollaboratorsIcon size={24} />}
+        title="Just you, for now"
+        description="Anyone who pushes to this project on GitHub shows up here, with the branch they're on and what they're working on."
       />
     );
   }
@@ -74,7 +94,7 @@ export function TeamPeoplePanel({ members, now, compact = false }: TeamPeoplePan
                   {member.actor.name}
                   {member.isSelf && <span className="team-person-you">you</span>}
                 </span>
-                {!member.usesShipStudio && !member.isSelf && <TeamGitHubOnlyBadge />}
+                {!member.explainsWork && !member.isSelf && <TeamGitHubOnlyBadge />}
                 {!compact && <span className="team-person-role">{ROLE_LABEL[member.role]}</span>}
                 <span className="team-person-when">
                   {member.lastPushedAt !== null ? formatAgo(member.lastPushedAt, now) : '—'}

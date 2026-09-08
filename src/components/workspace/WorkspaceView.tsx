@@ -38,7 +38,6 @@ import { WorkspacePreviewPane } from './WorkspacePreviewPane';
 import { WorkspaceTerminalPane } from './WorkspaceTerminalPane';
 import { WorkspaceHeader } from './WorkspaceHeader';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
-import { useTeamWorkspace } from '../../hooks/useTeamWorkspace';
 import { trackEvent } from '../../lib/analytics';
 import { useWorkspaceCommands } from '../../commands/useWorkspaceCommands';
 import { useSnapshots } from '../../hooks/useSnapshots';
@@ -775,12 +774,6 @@ export const WorkspaceView = memo(function WorkspaceView({
     setWorkspaceTab,
     startDevServer: handleStartDevServer,
   });
-  const comments = useWorkspaceComments({
-    isWebProject,
-    setIsPreviewHidden,
-    setWorkspaceTab,
-    startDevServer: handleStartDevServer,
-  });
   const toggleAgentPanel = useCallback(() => {
     if (!isAgentPanelHidden) {
       setIsPreviewHidden(false);
@@ -926,6 +919,19 @@ export const WorkspaceView = memo(function WorkspaceView({
     return map;
   }, [currentProject.path, registryVersion]);
 
+  // One agent list for both the Team panel's handoff and the preview's pins.
+  const agentsForComments = commentAgents(currentProject.path, terminal, tabTitles, setIsAgentPanelHidden); // prettier-ignore
+  const team = useWorkspaceComments({
+    project: currentProject,
+    agents: agentsForComments,
+    activeAgentId: activeTerminalTab,
+    isWebProject,
+    previewRunning: knownDevServerPort !== null,
+    setIsPreviewHidden,
+    setWorkspaceTab,
+    startDevServer: handleStartDevServer,
+  });
+
   // Cmd/Ctrl+T to add a new tab and Cmd/Ctrl+W to close the active tab.
   // Control+1-9 switches terminal/agent tabs; the F1-F10 range remains
   // available to the operating system and existing app controls.
@@ -1037,8 +1043,6 @@ export const WorkspaceView = memo(function WorkspaceView({
     />
   );
 
-  const team = useTeamWorkspace(currentProject);
-
   const header = WorkspaceHeader({
     projectPath: currentProject.path,
     projectName: currentProject.name,
@@ -1059,7 +1063,6 @@ export const WorkspaceView = memo(function WorkspaceView({
     variablesPanelVisible: variables.open,
     variablesPanelAvailable: isWebProject,
     onToggleVariablesPanel: variables.toggle,
-    ...comments.header,
     teamPresence: team.presence,
     modes: modesNode,
     headerExtras: (
@@ -1125,7 +1128,6 @@ export const WorkspaceView = memo(function WorkspaceView({
         }`}
       >
         {!isCompact && header.titlebar}
-        {!isCompact && team.panel}
 
         {isCompact ? (
           <CompactWorkspace
@@ -1234,6 +1236,9 @@ export const WorkspaceView = memo(function WorkspaceView({
               )}
 
               <div className="workspace-content">
+                {/* In the row, so pinning gives it a column the preview
+                    reflows beside; floating, its placeholder is display:none. */}
+                {team.panel}
                 <SplitPane
                   defaultSplit={29}
                   minLeft={20}
@@ -1304,15 +1309,8 @@ export const WorkspaceView = memo(function WorkspaceView({
                   right={
                     <WorkspacePreviewPane
                       activeCommentAgentId={activeTerminalTab}
-                      commentsOpen={comments.open}
-                      onCommentsOpenChange={comments.setOpen}
-                      onCommentsPendingCountChange={comments.setPendingCount}
-                      commentAgents={commentAgents(
-                        currentProject.path,
-                        terminal,
-                        tabTitles,
-                        setIsAgentPanelHidden
-                      )}
+                      commentsOpen={team.commentsActive}
+                      commentAgents={agentsForComments}
                       currentProject={currentProject}
                       previewRef={previewRef}
                       workspaceTab={workspaceTab}
