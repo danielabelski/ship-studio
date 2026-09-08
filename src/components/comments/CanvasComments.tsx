@@ -183,6 +183,9 @@ export function useCanvasCommentsLayer(props: CanvasCommentsProps): {
           // The live rect while it is available; the rect captured at click
           // time only covers the first paint before the frame reports again.
           composerAt={draft ? (bridge.selectedAt ?? { x: draft.rect.x, y: draft.rect.y }) : null}
+          // Retargeting keeps the same composer and the same draft text, so
+          // the layer needs telling that this is a new opening to nudge for.
+          composerFor={draft ? `${draft.page}|${draft.selector}` : null}
         />
       ) : null,
   };

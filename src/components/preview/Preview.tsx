@@ -2029,8 +2029,14 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                     : undefined
                 }
               />
-              {/* Pinned comments, tracking their elements in the live frame */}
-              {!canvasMode && comments.pins(1, iframeSize)}
+              {/* Pinned comments, tracking their elements in the live frame.
+                  The frame reports rects in its OWN pixels while this layer is
+                  an unscaled sibling of it, so a shrunk-to-fit preview needs
+                  the same previewScale the iframe's transform uses — at 1 the
+                  pins and composer drift further from their elements the
+                  further down the page they are, and slide at their own rate
+                  when it scrolls. previewScale is 1 when nothing is scaled. */}
+              {!canvasMode && comments.pins(resize.previewScale, iframeSize)}
               {/* Structural-edit toolbar, tracking the canvas selection box */}
               {activeEditMode && (
                 <ElementToolbar
