@@ -669,10 +669,27 @@
   gap: var(--spacing-sm);
 }
 
+.mig-needs__title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin: 0;
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--mig-band-off);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mig-needs__count {
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}
+
 .mig-needs__item {
   border: 1px solid var(--mig-band-off);
   border-radius: var(--radius);
-  padding: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
   background: var(--surface-panel);
 }
 
@@ -681,6 +698,14 @@
   align-items: center;
   gap: var(--spacing-xs);
   color: var(--mig-band-off);
+  cursor: pointer;
+  /* The default triangle sits outside the flex row and breaks the alignment;
+     the icon already says this is a question. */
+  list-style: none;
+}
+
+.mig-needs__head::-webkit-details-marker {
+  display: none;
 }
 
 .mig-needs__question {

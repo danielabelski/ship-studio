@@ -27,12 +27,26 @@ export function MigrationStatusView({ status }: MigrationStatusViewProps) {
 
       {status.needsYou.length > 0 && (
         <section className="mig-needs" aria-label="Waiting on you">
+          <h4 className="mig-needs__title">
+            Waiting on you
+            <span className="mig-needs__count">{status.needsYou.length}</span>
+          </h4>
           {status.needsYou.map((q) => (
-            <article key={q.id} className="mig-needs__item">
-              <header className="mig-needs__head">
+            /*
+             * A disclosure rather than a stack of cards. The skill asks the
+             * agent to bring its decisions in one batch, and a real survey
+             * produced seven — as full cards that is a wall that pushes the
+             * rest of the report off screen, and the questions stop being read
+             * precisely because there are a lot of them.
+             *
+             * Open by default when there is one, because a single question is
+             * the whole message.
+             */
+            <details key={q.id} className="mig-needs__item" open={status.needsYou.length === 1}>
+              <summary className="mig-needs__head">
                 <AlertIcon size={14} />
-                <h4 className="mig-needs__question">{q.question}</h4>
-              </header>
+                <span className="mig-needs__question">{q.question}</span>
+              </summary>
               {q.why && <p className="mig-needs__why">{q.why}</p>}
               {/* A decision handed over without a recommendation is just the
                   work being handed back, so the skill asks for one — but an
@@ -44,7 +58,7 @@ export function MigrationStatusView({ status }: MigrationStatusViewProps) {
                   {q.recommendation}
                 </p>
               )}
-            </article>
+            </details>
           ))}
         </section>
       )}

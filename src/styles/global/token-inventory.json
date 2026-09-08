@@ -256,7 +256,7 @@
       "owner": "plugin-compatibility",
       "status": "compatibility",
       "pluginStable": true,
-      "consumerCount": 11
+      "consumerCount": 12
     },
     {
       "name": "--radius",
@@ -4511,7 +4511,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 37
+      "consumerCount": 38
     },
     {
       "name": "--font-size-button",
@@ -4817,7 +4817,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 287
+      "consumerCount": 288
     },
     {
       "name": "--spacing-sm",
@@ -4826,7 +4826,7 @@
       "owner": "global/semantic",
       "status": "canonical",
       "pluginStable": false,
-      "consumerCount": 377
+      "consumerCount": 378
     },
     {
       "name": "--spacing-md",

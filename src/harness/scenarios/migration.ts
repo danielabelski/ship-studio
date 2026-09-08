@@ -130,6 +130,101 @@ const MIGRATION_STATUS = {
   ],
 };
 
+/**
+ * A migration that finished, taken verbatim from one that did.
+ *
+ * The completed state is the one that most needs looking at, because it is the
+ * one a user trusts — and the temptation in a fixture is to write it as
+ * everything green and nothing outstanding. A real finished migration is not
+ * that. This one matched at 100% across every width and still ended with three
+ * things it could not carry and three questions it had raised and not had
+ * answered, which is what an honest "done" looks like.
+ */
+const COMPLETED_STATUS = {
+  sourceUrl: 'https://motherfuckingwebsite.com/',
+  startedAt: '2026-09-08T00:26:00.000Z',
+  phases: [
+    {
+      id: 'survey',
+      label: 'Survey',
+      status: 'done',
+      detail: 'One page, one template, zero CSS, zero media queries, no links.',
+    },
+    {
+      id: 'design-system',
+      label: 'Design system',
+      status: 'done',
+      detail: 'main.css written from the measured computed values, not sampled by eye.',
+    },
+    {
+      id: 'homepage',
+      label: 'Homepage',
+      status: 'done',
+      detail: '100% at 1440/991/767/479, page heights identical on both sides.',
+    },
+    {
+      id: 'templates',
+      label: 'Templates',
+      status: 'done',
+      detail: 'Only one template, and it is the homepage — the source has no links.',
+    },
+    {
+      id: 'remainder',
+      label: 'Remainder',
+      status: 'done',
+      detail: 'Production build succeeds and emits the single route.',
+    },
+  ],
+  doing: null,
+  done: [
+    'Homepage 100% at every width (1440/991/767/479), heights identical',
+    'Built output verified too — 100% against dist, not just the dev server',
+    'Design system taken from computed values: Times/16px, UA defaults measured',
+    'Established the source ships zero CSS and zero media queries',
+  ],
+  notDone: [],
+  cannotCarry: [
+    {
+      item: 'Google Analytics (classic analytics.js, UA-45956659-1)',
+      reason: 'Universal Analytics was shut down in 2023 and the property is not ours.',
+    },
+    {
+      item: 'The apex host as the fidelity reference',
+      reason:
+        'Its TLS endpoint rejects the handshake from every client on this machine, so the comparison runs against a local mirror of the same bytes.',
+    },
+    {
+      item: 'Author breakpoints',
+      reason:
+        'The source has no media queries at all — it argues in its own copy that it needs none.',
+    },
+  ],
+  needsYou: [
+    {
+      id: 'mirror',
+      question:
+        'Is it acceptable that fidelity is measured against a local mirror of the site’s own bytes rather than the live host?',
+      why: 'The live host will not complete a TLS handshake from here, so the alternative is not measuring at all.',
+      recommendation:
+        'Accept it. The mirror is the server’s own response bytes, so the comparison is against the same HTML the site serves.',
+    },
+    {
+      id: 'copy',
+      question: 'Should the rebuild keep the original’s body copy, or drop in placeholder text?',
+      why: 'The copy is the site’s entire content, and it is someone else’s writing.',
+      recommendation:
+        'Keep it for now and mark it in MIGRATION.md as text to replace before publishing.',
+    },
+    {
+      id: 'widths',
+      question: 'Which widths should count as the pass/fail set?',
+      why: 'The source has no media queries, so any set is a choice rather than something read off the site.',
+      recommendation:
+        'The four defaults. They span the range without asserting the source cares about them.',
+    },
+  ],
+};
+
 export const migrationScenarios: Scenario[] = [
   {
     id: 'migration-fidelity',
@@ -146,6 +241,40 @@ export const migrationScenarios: Scenario[] = [
       // Asked for by the preview toolbar the moment a workspace mounts. Not
       // this panel's concern, but an unanswered command fails the capture, and
       // a screenshot from a run with unmocked commands is not evidence.
+      get_element_breadcrumb_enabled: false,
+    },
+  },
+  {
+    id: 'migration-done',
+    command: 'migration.fidelity',
+    requires: '.mig-report',
+    title: 'Migration — finished, and still honest about the gaps',
+    looksRightWhen:
+      'Every phase is done and the score is 100%, and the panel still shows three things that could not come across and three questions that were never answered. A finished migration is not an empty right-hand column, and a panel that renders one is hiding the part the user most needs on handover.',
+    project: WORKSPACE_PROJECT,
+    commands: {
+      ...workspaceCommands,
+      read_migration_status: COMPLETED_STATUS,
+      read_fidelity_runs: [
+        {
+          dir: '/migration-demo/v1',
+          report: {
+            label: 'home',
+            reference: 'https://motherfuckingwebsite.com/',
+            rebuild: 'http://localhost:4321/',
+            rebuildCss: null,
+            capturedAt: '2026-09-08T00:50:00.000Z',
+            complete: true,
+            score: 100,
+            breakpoints: [
+              bp(1440, 100, 0, 18_083_520, 2_140, 2_140),
+              bp(991, 100, 0, 14_973_019, 2_640, 2_640),
+              bp(767, 100, 0, 15_570_100, 3_180, 3_180),
+              bp(479, 100, 0, 8_382_500, 4_620, 4_620),
+            ],
+          },
+        },
+      ],
       get_element_breadcrumb_enabled: false,
     },
   },
