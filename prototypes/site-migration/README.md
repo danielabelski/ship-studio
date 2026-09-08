@@ -1,136 +1,142 @@
 # Site migration — URL in, rebuilt site out
 
-One input: a URL. The agent surveys the site, extracts its design system,
-rebuilds it template by template, and **measures each one against the original**
-before calling it done.
+One input: a URL. The agent surveys the site, settles the decisions, extracts
+the design system, then rebuilds it template by template and **measures each
+one against the original** before calling it done.
 
-Three parts:
+Four parts:
 
-- `scripts/site-fidelity.mjs` — the comparison engine. Copied into every
-  migration project at `.shipstudio/fidelity/` so the agent can run it.
-- The `shipstudio-site-to-code` skill — the method, and the rules about how the
-  agent reports and when it must stop and ask.
-- New Project → **From a URL** — creates the project, scaffolds the tooling, and
-  hands the agent its brief.
+- **`scripts/site-fidelity.mjs`** — how close is it? Screenshots both sides at
+  chosen widths and scores the pixel match.
+- **`scripts/site-structure.mjs`** — what is different? Reads both pages'
+  computed styles and names the discrepancies.
+- **The `shipstudio-site-to-code` skill** — the method, and the rules about how
+  the agent reports, when it asks, and when it must stop.
+- **New Project → From a URL** — creates the project, installs both tools into
+  `.shipstudio/fidelity/`, and hands the agent its brief.
 
-## What was actually run
+## What the trials established
 
-Reference site: [`tempo-template.webflow.io`](https://tempo-template.webflow.io/)
-— a real Webflow template, 12,558px tall at 1440, with sliders, IX2 scroll
-interactions and lazy images.
+Five unattended runs against real sites, driven by `trial.sh` + `run-agent.sh`.
+Every fix below came from watching one fail, not from reasoning about it.
+
+### The method converges
+
+Two independent from-scratch rebuilds of `arist.com`'s homepage, each starting
+from an empty Astro starter:
 
 ```
-89.25%  →  95.45%  →  98.38%  →  100.00%
+trial 1   62.18%  →  77.72%  →  99.62%  →  99.87%
+trial 2   88.66%  →  88.66%  →  79.18%  →  76.30%  →  99.87%
 ```
 
-Four passes at 1440px, one fix each:
+Both reached the Matches band. Trial 2 is the more interesting one: it went
+backwards for two passes and recovered anyway — see "the score only goes up".
 
-| Pass | Score | Fix |
-|------|-------|-----|
-| 1 | 89.25% | — three mistakes in place |
-| 2 | 95.45% | `.container` max-width 1140 → 1200 |
-| 3 | 98.38% | type scale returned to the site's own 44/50 and 19/30 |
-| 4 | 100.00% | accent colour taken from the variable, not by eye |
+### Seven bugs the runs found
 
-### Why the score is the worst breakpoint, not an average
+| Symptom | Cause | Fix |
+|---|---|---|
+| Migration stalls forever, no output | The engine awaited every incomplete image's `onload` with no deadline. One lazy or blocked image hung it, and `awaitPromise` hung the tool with it. | Bounded image wait, stepped scroll, watchdog on every capture |
+| "It thinks my site is Webflow" | The engine copied into every project opened with "A Webflow migration is judged on…" — 12 mentions. The agent reads it to learn the tool. | Builder-agnostic; the one runtime-specific block is guarded and labelled |
+| Panel says the migration is broken | The agent wrote `needsYou` as sentences and `"in-progress"` as a status. The first failed the parse; the second killed an icon. | Prompt carries the schema; reader normalises what an agent plausibly writes |
+| "I have no idea what it did" | Status was only written *after* a phase. A 31-URL survey is minutes of silence. | Mark the phase active **before** the work. Measured: 5+ min silent → under 1 min |
+| Agent chases a meaningless number | A failed navigation still screenshots — Chrome's error page. A TLS failure scored "39.77%". | Navigation errors are named, not scored |
+| Half of every pass wasted | The original was re-captured every iteration, though it never changes. | Reference captures cached for an hour, keyed by URL and width |
+| Four passes walking downhill | Nothing said what to do when a change makes the score worse, so the agent built on top of the damage. | The score only goes up: worse means undo, and the best score is a floor |
 
-Passes 1 and 2 across all four widths:
+### The score cannot say what is wrong
 
-| Pass | 1440 | 991 | 767 | 479 | **Worst** |
-|------|------|-----|-----|-----|-----------|
-| 1 | 89.25% | 92.19% | 92.31% | 89.87% | **89.25%** |
-| 2 | 95.45% | 92.19% | 92.47% | 89.87% | **89.87%** |
+A container sixty pixels too narrow shifts every image on the page, so a tenth
+of it turns magenta and the finding reads "a lot is wrong here". An agent
+mid-migration noticed this and hand-rolled its own extractor, which settled it.
 
-Fixing the container moved 1440 by six points and left 479 **exactly where it
-was** — the rule never applied at mobile widths. The mean would have read as
-solid progress. The worst breakpoint says what actually happened, which is that
-the phone layout has not been touched.
+`site-structure.mjs` reports the design instead. Against a real half-built
+rebuild, in one pass:
 
-## Honesty about the rebuild side
+```
+widest block   original 3215px   rebuild 1240px   ← content is constrained differently
 
-There is no generated code yet. The "rebuild" is the **live page with a
-stylesheet of deliberate mistakes over it** (`rebuild-v1.css` … `v4.css`), so
-the loop has something real to measure before the ingest exists.
+container widths
+  original has   1072 (30 blocks)   1200 (10 blocks)
+  rebuild has     768 (14 blocks)    696 (6 blocks)
 
-That makes the *rendering differences* real and the *mistakes* real — they are
-the errors migrations actually make — but it is not a from-scratch rebuild. The
-panel says so rather than showing two identical URLs and letting you assume.
+type
+  original has   14px/21 400 Söhne   (565 chars)
+  rebuild has    14px/20 400 Söhne   (223 chars)
 
-## The engine is trustworthy
+text colour
+  rebuild has    rgb(255, 98, 71)    ← starter default, never replaced
 
-Determinism was the first thing that had to be true, and the first version was
-not:
+vertical rhythm
+  original has   96 (14 blocks)
+  rebuild has    64 (2 blocks)   32 (2 blocks)
+```
 
-- Comparing the page **against itself** scored **96.5%** — 3.5% of pure noise,
-  which would have swamped any real signal in the last few points.
-- Causes: animations pinned *after* the page had settled rather than before it
-  painted, Webflow sliders autoplaying on a timer, and the two captures running
-  in parallel and contending for CPU.
-- Fixed by injecting the freeze stylesheet via
-  `Page.addScriptToEvaluateOnNewDocument`, tearing down `Webflow` and resetting
-  every slider, and capturing sequentially.
-- Self-comparison is now **99.96%** at 1440 and **99.69%** at 479. That ~0.3%
-  is the noise floor, and it is where the "Matches" band threshold comes from.
+The pixel score for that same pair was 62%.
 
-Re-running the comparison from the saved PNGs reproduces every score exactly,
-which is the other half of the same claim.
+Aggregates, deliberately — not an element-by-element diff. Two DOMs written by
+different people cannot be aligned, and the attempt would be most fragile
+exactly when the rebuild differs most. "The widest content box is 1140 here and
+1200 there" needs no alignment and is the sentence that fixes the bug.
 
-## The limitation worth knowing before building this
+### The agent drives
 
-**A pixel diff is a good regression signal and a poor diagnostic.**
+Asked to migrate `arist.com`, the survey ended with seven decisions, each
+carrying its own recommendation — where content should live and whether that
+means a CMS, an unlicensable typeface, where a form submits, whether to copy 62
+image assets, verbatim content or marked placeholders, whether to reimplement
+scroll motion, and how a `?pillar=` filter survives a static build. Told "you
+pick", it took all seven and recorded which way it went in `MIGRATION.md`.
 
-Look at the Difference view: whole photographs are solid magenta. Nothing is
-wrong with them — the container is 60px narrower, so every image *shifted*, and
-a shifted image differs from the original at nearly every pixel. The score is
-right that something is off; the picture badly overstates how much, and it
-never names the cause.
-
-So the number is genuinely good for "did my fix help, and did fixing 1440 break
-767" — which is the loop. It is weak at "what is wrong", which is what the
-agent most needs on the first pass.
-
-The answer is not a better pixel diff. It is to compare **layout boxes** —
-element positions and sizes read from both DOMs — so the finding reads
-`.container is 1140px wide, expected 1200px` instead of ten percent of the page
-turning magenta. The pixel score stays as the acceptance check. That is the
-next thing I would build, and I would build it before the ingest.
+Asking at the end of the survey is the point: it is the first moment there is
+enough to ask well, and the last moment asking is cheap. An earlier run raised
+the CMS question only on reaching the templates, with two already built on an
+assumption.
 
 ## Running it
 
 ```bash
-# Measure a rebuild against the original
+# Measure how close
 node scripts/site-fidelity.mjs \
-  --reference https://tempo-template.webflow.io/ \
-  --rebuild http://127.0.0.1:3000/ \
-  --out public/migration-demo/v1
+  --reference https://example.com/ --rebuild http://localhost:4321/ \
+  --breakpoints 1240 --label home --out .shipstudio/fidelity/pass-1
 
-# Reproduce the four-pass demo
-bash prototypes/site-migration/run-demo.sh
+# Find out what is different
+node scripts/site-structure.mjs \
+  --reference https://example.com/ --rebuild http://localhost:4321/ --width 1240
 
-# Redraw diff images from captures already on disk (no network, seconds)
-node scripts/site-fidelity-recompare.mjs public/migration-demo
+# Run a whole migration unattended
+prototypes/site-migration/trial.sh https://example.com/ my-trial
+prototypes/site-migration/run-agent.sh ~/ShipStudio/my-trial
+
+# Watch trials without touching them
+node prototypes/site-migration/trial-status.mjs ~/ShipStudio/my-trial
+node prototypes/site-migration/watch-trials.mjs ~/ShipStudio/my-trial …
 ```
 
-## Seeing the UI
+`print-prompt.mjs` reads the brief out of `src/lib/migration.ts` rather than
+copying it, so a trial can never exercise a prompt the product does not send.
 
-```bash
-pnpm harness --port 1426
-```
+## The measurement is trustworthy
 
-Then <http://127.0.0.1:1426/harness.html?scenario=migration-fidelity&command=migration.fidelity>,
-or open any scenario and press `⌘K` → "Migration status and fidelity".
+Determinism came first, and the first version did not have it: comparing a page
+**against itself** scored 96.5%. Animations were pinned after settling rather
+than before paint, sliders autoplayed, and the two captures raced for CPU.
+Freezing on new document, tearing down known runtimes, and capturing
+sequentially puts self-comparison at **99.96%** at 1440 and **99.69%** at 479.
 
-Two scenarios are registered: `migration-fidelity` and `migration-import`. The
-Overlay and Difference views have no scenario because the harness runs a
-scenario's `steps` before its `command`, so a step cannot reach a control
-inside a modal the command is what opens — worth fixing in the harness, but not
-here.
+That ~0.3% is the noise floor, and it is where the 99.5% "Matches" threshold
+comes from — a stricter bar would be unreachable and would keep every migration
+permanently unfinished.
 
-## What is not built
+## Known limits
 
-- Any ingest. The URL panel's Start button says so instead of pretending.
-- Any Rust. The panel reads JSON and PNGs written by the script and served
-  statically; `src/lib/migration.ts` is shaped so those reads become `invoke`
-  calls without the components changing.
-- Template discovery. Three of the four rows in the matrix are honestly marked
-  "not compared" rather than given invented scores.
+- A comparison costs about a minute per width. The method says to iterate at
+  one width and confirm at the full set, because otherwise most of the time
+  goes on re-confirming what already matched.
+- The score cannot see interactive states, sizes between breakpoints, keyboard
+  order, or behaviour with content of a different length. The skill lists these
+  as separate checks rather than letting a percentage imply them.
+- Licensed fonts, third-party embeds and anything behind auth cannot come
+  across. These are declared in `MIGRATION.md`, never absorbed into a score.

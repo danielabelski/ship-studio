@@ -382,6 +382,10 @@ export function buildMigrationPrompt(sourceUrl: string): string {
     'they are not added as you reach them. "needsYou" entries are objects, not',
     'strings, and every one carries a recommendation: bringing me a decision',
     'without one is just handing the work back.',
+    '',
+    'A "done" entry carries what makes it checkable — "Homepage 99.7% at its',
+    'worst breakpoint (479px)" rather than "Homepage done", which is a claim',
+    'rather than a result.',
   ].join('\n');
 }
 
