@@ -27,6 +27,7 @@ import SpotifyLogoGraphic from '@/assets/graphics/spotify-logo.svg?react';
 import { Button } from '../primitives/Button';
 import { IconButton } from '../primitives/IconButton';
 import { usePolling } from '../../hooks/usePolling';
+import { useWindowFocused } from '../../hooks/useWindowFocused';
 import { useOptionalToast } from '../../contexts/ToastContext';
 import { useCommands } from '../../commands/useCommands';
 import { isMac } from '../../lib/setup';
@@ -59,10 +60,6 @@ interface SpotifyWidgetProps {
   isSidebarHidden?: boolean;
 }
 
-function isWindowActive(): boolean {
-  return document.visibilityState === 'visible' && document.hasFocus();
-}
-
 function trackTitle(trackName: string | null, artist: string | null): string | undefined {
   if (!trackName) return undefined;
   return artist ? `${trackName} — ${artist}` : trackName;
@@ -83,7 +80,7 @@ export function SpotifyWidget({ isSidebarHidden }: SpotifyWidgetProps) {
   const mac = isMac();
 
   const [enabled, setEnabled] = useState(false);
-  const [isWindowFocused, setIsWindowFocused] = useState(isWindowActive);
+  const isWindowFocused = useWindowFocused();
   const [state, setState] = useState<SpotifyState | null>(null);
   // Decides when a run of failed state polls is worth interrupting over.
   const pollFailuresRef = useRef(createPollFailureGate(POLL_FAILURES_BEFORE_TOAST));
@@ -110,20 +107,6 @@ export function SpotifyWidget({ isSidebarHidden }: SpotifyWidgetProps) {
       window.removeEventListener(SPOTIFY_WIDGET_ENABLED_CHANGED_EVENT, onChanged);
     };
   }, [mac]);
-
-  // Track whether this window is the one the user is looking at, so polling
-  // can stop entirely rather than just backing off.
-  useEffect(() => {
-    const update = () => setIsWindowFocused(isWindowActive());
-    document.addEventListener('visibilitychange', update);
-    window.addEventListener('focus', update);
-    window.addEventListener('blur', update);
-    return () => {
-      document.removeEventListener('visibilitychange', update);
-      window.removeEventListener('focus', update);
-      window.removeEventListener('blur', update);
-    };
-  }, []);
 
   const poll = useCallback(async () => {
     try {
