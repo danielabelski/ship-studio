@@ -350,3 +350,58 @@
   align-items: center;
   gap: var(--spacing-xs);
 }
+
+/* Both buttons in this pair keep the compact height, icon or not.
+ *
+ * `.button--size-compact.button--has-icon` drops to `height: auto` with
+ * symmetric padding app-wide, so a compact button carrying a leading icon comes
+ * out taller than a label-only one beside it. Here that is Resolve overhanging
+ * Reply. The global rule is the actual bug and is worth fixing on its own, but
+ * it is shared by nineteen call sites, so the pair that has to line up says so
+ * locally rather than that change riding along with this one. */
+.team-thread-composer-buttons .button--size-compact.button--has-icon {
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
+  padding: 0 var(--space-06);
+}
+
+/* The handoff bar. Sits above the list rather than below it: it is about the
+   ticks you just made, and a control that appears under a scrolling list can
+   land off-screen at the moment it becomes relevant.
+ *
+ * Deliberately quiet. An accent border around a bar that already contains an
+ * accent button draws the same attention twice and fights the row beneath it —
+ * the button is the thing to look at, so the container gets a recessed surface
+ * and a hairline instead, and enough space beneath that it reads as its own
+ * band rather than as a lid on the first row. */
+.team-threads-send {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-xs) var(--spacing-xs) var(--spacing-sm);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-recessed);
+}
+
+.team-threads-send-count {
+  font-size: var(--font-size-body-sm);
+  color: var(--text-secondary);
+}
+
+.team-threads-send-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+/* Why you cannot place a comment, said where you would go looking for it. */
+.team-threads-picker-hint {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-reading);
+}

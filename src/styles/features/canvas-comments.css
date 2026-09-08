@@ -1,14 +1,3 @@
-.canvas-comments-panel {
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-panel);
-  color: var(--text-primary);
-  border: var(--border-width-default) solid var(--border-default);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-  font-size: var(--font-size-body-md);
-}
 .canvas-comments-header,
 .canvas-comments-row,
 .canvas-comments-actions {
@@ -59,32 +48,17 @@
   gap: var(--spacing-sm);
   border-top: var(--border-width-default) solid var(--border-default);
 }
-.canvas-comments-panel label,
 .canvas-comment-bubble label {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs);
   color: var(--text-secondary);
 }
-.canvas-comments-panel select,
-.canvas-comments-panel textarea {
-  width: 100%;
-  box-sizing: border-box;
-  color: var(--text-primary);
-  background: var(--surface-control);
-  border: var(--border-width-default) solid var(--border-default);
-  border-radius: var(--radius-control);
-  padding: var(--spacing-sm);
-  font: inherit;
-}
-.canvas-comments-panel textarea {
-  resize: vertical;
-}
-:is(.canvas-comments-panel, .canvas-comment-bubble) :is(select, textarea, input):focus-visible {
+.canvas-comment-bubble :is(select, textarea, input):focus-visible {
   outline: var(--border-width-default) solid var(--accent-active);
   outline-offset: var(--spacing-xs);
 }
-:is(.canvas-comments-panel, .canvas-comment-bubble) input[type='checkbox'] {
+.canvas-comment-bubble input[type='checkbox'] {
   accent-color: var(--accent-active);
   width: var(--spacing-md);
   height: var(--spacing-md);
@@ -238,16 +212,6 @@
 }
 
 /* DockablePanel's default child fills the surface; these three rows share it. */
-.canvas-comments-panel > .canvas-comments-header,
-.canvas-comments-panel > .canvas-comments-footer {
-  height: auto;
-  flex-shrink: 0;
-  box-sizing: border-box;
-}
-.canvas-comments-panel > .canvas-comments-scroll {
-  height: auto;
-  box-sizing: border-box;
-}
 
 .canvas-comments-context .canvas-comments-tag {
   color: var(--accent-active);

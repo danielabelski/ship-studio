@@ -1,5 +1,14 @@
-/** Backlog composer: adding a note never invokes an agent. */
-import { useState } from 'react';
+/**
+ * Backlog composer: adding a note never invokes an agent.
+ *
+ * Saving is asynchronous — it writes a record — so the button has to be dead
+ * while that is in flight. It was not, and the gap was long enough to click
+ * through: three clicks left three identical comments on the same element,
+ * because each click started its own write and each write got its own id.
+ * A guard on the button alone is not enough either, since Cmd+Enter goes down
+ * the same path, so the in-flight flag is checked at the one place both reach.
+ */
+import { useRef, useState } from 'react';
 import { Button } from '../primitives/Button';
 import { TextArea } from '../primitives/TextField';
 import {
@@ -11,17 +20,36 @@ import {
 interface Props {
   target: CommentTarget;
   existing?: CanvasComment;
-  onSave: (body: string) => boolean;
+  onSave: (body: string) => boolean | Promise<boolean>;
   onCancel: () => void;
 }
 export function CommentComposer({ target, existing, onSave, onCancel }: Props) {
   const [body, setBody] = useState(existing?.body ?? '');
+  const [saving, setSaving] = useState(false);
+  // A ref as well as the state: two clicks in the same tick both read the old
+  // state, and the second one would still get through.
+  const inFlight = useRef(false);
+
+  const save = async () => {
+    if (inFlight.current || !body.trim()) return;
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      await onSave(body);
+    } finally {
+      // The composer usually unmounts on success, so this only matters on the
+      // failure path — where the button must come back, not stay dead.
+      inFlight.current = false;
+      setSaving(false);
+    }
+  };
+
   return (
     <form
       className="canvas-comment-composer"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave(body);
+        void save();
       }}
     >
       <div className="canvas-comments-context" aria-label="Selected element">
@@ -48,7 +76,7 @@ export function CommentComposer({ target, existing, onSave, onCancel }: Props) {
         onKeyDown={(e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
             e.preventDefault();
-            if (body.trim()) onSave(body);
+            void save();
           }
         }}
       />
@@ -56,11 +84,11 @@ export function CommentComposer({ target, existing, onSave, onCancel }: Props) {
         <p className="canvas-comments-hint">Changes will be ready to send again.</p>
       )}
       <div className="canvas-comments-row">
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="ghost" onClick={onCancel} disabled={saving}>
           Cancel
         </Button>
-        <Button type="submit" variant="primary" disabled={!body.trim()}>
-          Save comment
+        <Button type="submit" variant="primary" disabled={!body.trim() || saving}>
+          {saving ? 'Saving…' : 'Save comment'}
         </Button>
       </div>
     </form>
