@@ -9,6 +9,8 @@
 # unattended, so the skill can be exercised repeatedly and the places it gets
 # stuck can be found rather than guessed at.
 #
+# Design and results: docs/site-migration.md
+#
 # Usage:
 #   prototypes/site-migration/trial.sh <url> <trial-name> [starter-repo]
 #

@@ -125,6 +125,22 @@ node prototypes/site-migration/watch-trials.mjs ~/ShipStudio/my-trial …
 `print-prompt.mjs` reads the brief out of `src/lib/migration.ts` rather than
 copying it, so a trial can never exercise a prompt the product does not send.
 
+## Reviewing the UI
+
+```bash
+pnpm harness
+```
+
+Four scenarios: `migration-start` (the URL tab), `migration-fidelity` (a
+migration mid-flight), `migration-interrupted` (state with no comparison yet),
+`migration-done` (finished, and still honest about its gaps).
+
+Their captures live in `harness/migration-demo/` and are served by the harness
+config, deliberately **not** from `public/` — anything there is copied into the
+shipped app, and these are megabytes of full-page screenshots a user has no use
+for. They are downscaled fixtures for looking at a UI; the measurements they
+came from are in the trial projects.
+
 ## The measurement is trustworthy
 
 Determinism came first, and the first version did not have it: comparing a page

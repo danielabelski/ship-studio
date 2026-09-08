@@ -7,7 +7,7 @@
 set -euo pipefail
 
 REF="https://tempo-template.webflow.io/"
-OUT="public/migration-demo"
+OUT="harness/migration-demo"
 
 # The state the panel opens on: iteration 1, every breakpoint.
 node scripts/site-fidelity.mjs \

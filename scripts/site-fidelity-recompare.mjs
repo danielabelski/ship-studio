@@ -7,7 +7,7 @@
  * directory, re-runs the comparison against the reference.png/rebuild.png
  * already there, and rewrites diff.png and the scores.
  *
- * Usage: node scripts/site-fidelity-recompare.mjs public/migration-demo
+ * Usage: node scripts/site-fidelity-recompare.mjs harness/migration-demo
  */
 
 import { spawn } from 'node:child_process';
@@ -40,7 +40,7 @@ async function findPairs(root) {
 }
 
 async function main() {
-  const root = path.resolve(process.argv[2] ?? 'public/migration-demo');
+  const root = path.resolve(process.argv[2] ?? 'harness/migration-demo');
   if (!CHROME) {
     console.error('No Chrome or Chromium found.');
     process.exit(2);

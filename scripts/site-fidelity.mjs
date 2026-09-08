@@ -361,7 +361,7 @@ async function capture(url, width, settleMs, extraCss) {
     await sleep(settleMs);
     await page.eval(SETTLE_PAGE);
 
-    // Stand-in for generated code (see prototypes/site-migration/README.md):
+    // Stand-in for generated code (see docs/site-migration.md):
     // overlaying CSS on the live page produces a rendering that differs from
     // the reference in specific, nameable ways, which is what the loop needs
     // to be exercised against before any real migration output exists.

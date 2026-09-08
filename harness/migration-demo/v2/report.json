@@ -1,0 +1,54 @@
+{
+  "label": "home",
+  "reference": "https://tempo-template.webflow.io/",
+  "rebuild": "https://tempo-template.webflow.io/",
+  "rebuildCss": "rebuild-v2.css",
+  "capturedAt": "2026-09-08T02:22:55.710Z",
+  "score": 89.87,
+  "breakpoints": [
+    {
+      "breakpoint": 1440,
+      "score": 95.45,
+      "differingPixels": 822641,
+      "totalPixels": 18083520,
+      "width": 1440,
+      "height": 12558,
+      "referenceHeight": 12558,
+      "rebuildHeight": 12548,
+      "dir": "public/migration-demo/v2/home/1440"
+    },
+    {
+      "breakpoint": 991,
+      "score": 92.19,
+      "differingPixels": 1169461,
+      "totalPixels": 14973019,
+      "width": 991,
+      "height": 15109,
+      "referenceHeight": 15085,
+      "rebuildHeight": 15109,
+      "dir": "public/migration-demo/v2/home/991"
+    },
+    {
+      "breakpoint": 767,
+      "score": 92.47,
+      "differingPixels": 1171918,
+      "totalPixels": 15570100,
+      "width": 767,
+      "height": 20300,
+      "referenceHeight": 20268,
+      "rebuildHeight": 20300,
+      "dir": "public/migration-demo/v2/home/767"
+    },
+    {
+      "breakpoint": 479,
+      "score": 89.87,
+      "differingPixels": 849066,
+      "totalPixels": 8382500,
+      "width": 479,
+      "height": 17500,
+      "referenceHeight": 17464,
+      "rebuildHeight": 17500,
+      "dir": "public/migration-demo/v2/home/479"
+    }
+  ]
+}

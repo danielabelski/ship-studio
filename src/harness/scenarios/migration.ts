@@ -3,7 +3,7 @@
  *
  * The Migration panel reads its captures out of the open project, so the
  * fixtures below stand in for that read — but the *images* they point at are
- * real, served from `public/migration-demo`: real screenshots of a real site
+ * real, served from `harness/migration-demo`: real screenshots of a real site
  * against a rebuild with real mistakes in it. Faking those would defeat the
  * review, since what the panel is for is looking at them.
  */
