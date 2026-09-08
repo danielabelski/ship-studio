@@ -354,13 +354,39 @@ minute per breakpoint. Fix against a single width while you are working, and
 run the full set only when you think the page is finished — that is also the
 run that catches a desktop fix which did nothing for mobile.
 
-**Stop conditions.** If the score has not improved after three passes, stop
-looping and tell the user what you tried and what you think is in the way.
-Grinding silently is worse than asking.
+### The score only goes up
+
+Write down the score before each pass, and compare it after. Then:
+
+- **Better** — keep the change, and continue.
+- **Worse — undo the change.** Not "note it and move on", not "keep it and try
+  something else on top". Revert it, then look at what happened before choosing
+  the next thing. A pass that lowers the score has told you something specific
+  and useful, and its value is entirely lost if you build on top of it.
+- **Unchanged** — the thing you fixed was not what was wrong. Undo it anyway
+  unless it is right on its own merits, and go and find out what is, rather
+  than guessing again at the same page.
+
+The best score you have seen is a floor. If the current state is below it, get
+back to it before doing anything else. Without this rule the loop is a random
+walk that happens to be measured — a real run went 88.7 → 88.7 → 79.2 → 76.3
+across four passes, each one building on the damage of the last, because
+nothing said to go back.
+
+**When a pass makes it worse, that is when the structural comparison is worth
+running** — it will name what moved, which is usually a single value applied in
+one more place than intended.
+
+**Stop conditions.** Three passes with no improvement over the best score: stop
+looping, say what you tried and what you think is in the way, and ask. Grinding
+silently is worse than asking, and so is grinding loudly.
 
 **If the tool errors or times out, that is not a score.** Say so, say which
 page and width, and move on or ask — never record a failed measurement as a
 result, and never keep re-running the same failing command hoping it settles.
+A tool that cannot load one side reports that; a number that appeared anyway
+was measured against something you did not intend, most likely the browser's
+own error page.
 
 ### What "done" means
 
