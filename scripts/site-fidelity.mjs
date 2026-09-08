@@ -64,6 +64,9 @@ const CHROME = [
 /** How long to wait for images already in flight before taking the shot. */
 const IMAGE_WAIT_MS = 6000;
 
+/** How long to wait for webfonts to swap in before giving up on them. */
+const FONT_WAIT_MS = 5000;
+
 /**
  * Ceiling on a single capture.
  *
@@ -267,14 +270,27 @@ async function capture(url, width, settleMs, extraCss) {
     });
     await page.send('Page.navigate', { url });
 
-    // Settle: document ready, webfonts swapped in, lazy images decoded.
-    const deadline = Date.now() + 20000;
+    /*
+     * Settle: document ready first, then webfonts, on separate budgets.
+     *
+     * They were one condition on one 20s budget, which meant a site whose
+     * `document.fonts.status` never reaches `loaded` — common enough, a single
+     * face requested and never used is sufficient — paid the full twenty
+     * seconds on both sides of every comparison. Forty seconds a breakpoint,
+     * for a signal that is nice to have. Ready is worth waiting for; fonts are
+     * worth a few seconds and then a shrug.
+     */
+    const readyBy = Date.now() + 20000;
     for (;;) {
-      const ready = await page
-        .eval(`document.readyState === 'complete' && document.fonts.status === 'loaded'`)
-        .catch(() => false);
-      if (ready || Date.now() > deadline) break;
+      const ready = await page.eval(`document.readyState === 'complete'`).catch(() => false);
+      if (ready || Date.now() > readyBy) break;
       await sleep(200);
+    }
+    const fontsBy = Date.now() + FONT_WAIT_MS;
+    for (;;) {
+      const swapped = await page.eval(`document.fonts.status === 'loaded'`).catch(() => true);
+      if (swapped || Date.now() > fontsBy) break;
+      await sleep(150);
     }
     /*
      * Scroll the page to trigger lazy loading, then give the images that
