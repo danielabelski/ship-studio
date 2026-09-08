@@ -24,6 +24,9 @@ vi.mock('../../lib/github', () => ({
   pushToGitHub: vi.fn(() => Promise.resolve()),
   getGitHubOrgs: vi.fn(() => Promise.resolve(['acme-co'])),
   getGitHubUsername: vi.fn(() => Promise.resolve('martin')),
+  // The menu names the remote in its copy. This is the real implementation's
+  // answer for a project with no remote: nothing to name.
+  remoteLabel: vi.fn(() => null),
 }));
 
 /** Mirrors the app: the menu's open state is owned by its parent. */
@@ -35,8 +38,15 @@ function Harness() {
         cliStatus: { installed: true, authenticated: true },
         username: 'martin',
       }}
-      // Not connected — the setup pane with "Create Repo" renders.
-      projectStatus={{ status: 'no-remote', github_repo: null, github_url: null }}
+      // Not connected — the setup pane with "Create Repo" renders. A project
+      // with no remote at all has no host or forge to report either.
+      projectStatus={{
+        status: 'no-remote',
+        github_repo: null,
+        github_url: null,
+        remote_host: null,
+        remote_forge: null,
+      }}
       projectPath="/test/project"
       projectName="ship-studio"
       currentBranch="main"
