@@ -47,7 +47,7 @@
 @import './features/create-project.css';
 @import './features/import-project.css';
 @import './features/import-picker.css';
-@import './features/webflow.css';
+@import './features/migration.css';
 @import './features/workspace/main.css';
 @import './features/workspace/split-pane.css';
 @import './features/workspace/tabs.css';

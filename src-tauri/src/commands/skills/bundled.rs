@@ -53,7 +53,7 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
     },
     BundledSkill {
         dir_name: "shipstudio-site-to-code",
-        version: "1",
+        version: "2",
         body: site_to_code_skill,
     },
 ];
@@ -126,70 +126,232 @@ it will then apply wrongly.
 /// `wordpress-to-code` plugins. Each was a local extraction pipeline that
 /// terminated in a prompt on the clipboard; the differences between them were
 /// the parser, not the workflow.
+/// Rebuilding a live site in this project, starting from nothing but its URL.
+///
+/// Replaces a skill that offered four ingest paths and a two-phase plan, and
+/// was therefore vague about all of them. One input makes the methodology
+/// concrete enough to be prescriptive — and prescriptive is the point, because
+/// the failure this addresses is not an agent that cannot rebuild a page, it
+/// is an agent that rebuilds twelve pages against a design system it never
+/// established, declares victory, and hands over something nobody checked.
+///
+/// The ordering here is not arbitrary and the skill says so twice: tokens
+/// before pages is what makes the work converge instead of drift, and one
+/// verified page before the rest is what stops a bad decision being made
+/// twelve times.
 fn site_to_code_skill() -> String {
     r#"---
 name: shipstudio-site-to-code
 description: >-
-  Turn an existing site — a live URL, or an export from Webflow, WeWeb, Framer
-  or WordPress — into a migration plan and then into code in this project. Use
-  when the user wants to rebuild, port, recreate or migrate a site, says "make
-  this in Next.js/Astro", points at a URL and asks to copy its structure, or
-  has a .zip export from a site builder.
+  Rebuild a live website in this project from nothing but its URL — survey it,
+  extract its design system, then rebuild it template by template and verify
+  each one against the original before moving on. Use when the user points at a
+  URL and wants it rebuilt, ported, migrated, cloned or "made in Next.js/Astro",
+  says they are moving off Webflow, Framer, Squarespace, WordPress or Wix, asks
+  to get their site "into code", or drops a link and asks you to recreate it.
 ---
 
-# Rebuild an existing site in this project
+# Rebuild a live site from its URL
 
-Two phases, and the first one is not optional. Migrations fail by starting to
-write components before anyone has established what the site actually contains.
+You are given a URL. You will not be given anything else — no export, no design
+file, no content dump, no style guide. Everything you need is on that site.
+Go and get it.
 
-## Phase 1 — survey, then agree a plan
+## How you are expected to behave
 
-Do not write application code in this phase.
+This is the part that matters most, so it comes first.
 
-**From a live URL**, fetch the pages themselves. Establish: how many distinct
-page templates there really are (usually far fewer than there are pages), the
-navigation structure, which sections repeat across templates, the breakpoints,
-and where content is dynamic rather than authored once.
+1. **You lead.** Do not ask the user what to do next. You know the order — it
+   is written below. Propose, then proceed. Ask only about things that are
+   genuinely theirs to decide.
+2. **Nothing is done until it is verified**, and verified means *measured*, not
+   glanced at. A page you have not compared against the original is not
+   finished, however good it looks to you.
+3. **Never say "done" when you mean "I stopped".** If a page is at 94% and you
+   cannot get it further, that is a page at 94% that needs help — say that.
+   Reporting it as complete is the single worst thing you can do here, because
+   it transfers your uncertainty to someone who has no way to see it.
+4. **Report in four parts, every time**: what is done, what you are doing, what
+   is not done, and what needs them. Never make the user ask what state things
+   are in.
+5. **Ask rather than substitute.** A font you cannot license, an interaction
+   with no equivalent, an ambiguous layout — these are decisions, not
+   obstacles. Bring them to the user with a recommendation.
+6. **Never invent content.** Placeholder text must look like placeholder text.
 
-**From an export**, read the archive. Webflow and Framer exports carry their
-pages as HTML with a stylesheet; WeWeb exports carry a JSON project; WordPress
-backups carry SQL, sometimes with PHP-serialized fields inside it. In every
-case what you want is the same: templates, components, content model.
+## The order
 
-Then write a plan to `MIGRATION.md` in the project root:
+Do not reorder these. Each one exists to stop a specific failure in the next.
 
-- A page inventory, grouped by template rather than listed one by one.
-- The components each template needs, named as they will be named in code.
-- The content model: what is authored, and where it will live.
-- Anything that cannot come across — a builder interaction with no equivalent,
-  a font that isn't licensed for self-hosting, a third-party embed.
-- What you are unsure about.
+```
+0. Survey            — what is actually here?
+1. Design system     — tokens first, or everything after this drifts
+2. Homepage          — one page, verified, agreed
+3. Everything else   — template by template, same loop
+4. The remainder     — what cannot come across, named
+```
 
-Show the plan and get agreement before building. A migration is mostly
-judgement calls about what to keep, and those are the user's to make.
+---
 
-## Phase 2 — build against the plan
+## Phase 0 — Survey
 
-Work template by template, not page by page. Build the shared components first,
-then compose pages from them. Check each template in the preview before moving
-on: the point of a migration is fidelity, and fidelity is a visual property.
+**Write no application code in this phase.**
 
-Keep `MIGRATION.md` updated as you go — it is the record of what is done and
-what is left, and it survives the conversation ending.
+Fetch the URL, then follow its internal links far enough to see the shape of
+the site. What you are establishing:
 
-## What not to do
+- **Templates, not pages.** Forty URLs are usually five templates. Group them.
+  A migration is priced and executed in templates.
+- **The real breakpoints.** Read them out of the site's own media queries.
+  Do not assume a framework's defaults — you will verify against the site's
+  widths later, and guessing here poisons every comparison downstream.
+- **Navigation and shared regions** — header, footer, anything repeated.
+- **Where content is dynamic** rather than authored once: listings, detail
+  pages, anything that looks like a collection.
+- **Fonts** — which are webfonts, which are licensed, which you can self-host.
+- **Everything you cannot rebuild**: third-party embeds, forms with a backend
+  you cannot see, anything behind a login, video you do not have the source of.
 
-- **Do not copy the markup.** A builder's export is machine-generated: wrapper
-  divs many levels deep, generated class names, absolute positioning where a
-  layout should be. Rebuild it in this project's idiom.
-- **Do not recreate the CSS wholesale.** Read it to learn the visual language,
-  then express that in whatever this project already uses. If the project has a
-  design system, use it — see the `shipstudio-brand-guidelines` skill for
-  capturing one first.
-- **Do not invent content.** Placeholder text is fine and should be visibly
-  placeholder. Do not write plausible-looking copy that reads as real.
-- **Do not silently drop a page.** If something cannot be migrated, it belongs
-  in the plan's "cannot come across" list where the user can see it.
+Write this to `MIGRATION.md` in the project root, grouped by template, with an
+explicit "cannot come across" section. Show it to the user. This is also the
+moment to confirm the target stack if the project does not already have one.
+
+`MIGRATION.md` is not a document you write once. It is the state of the work,
+and you keep it current — it is what survives the conversation ending.
+
+---
+
+## Phase 1 — The design system, before any page
+
+This is the step people skip, and skipping it is why migrations drift. Every
+page you build before you have tokens is a page that invented its own values,
+and you will pay for each one twice.
+
+**Read computed values, not appearances.** Open the site and read what the
+browser actually resolved — `getComputedStyle` on real elements, the CSS
+custom properties on `:root`, the stylesheet itself. Do not sample colours off
+a screenshot and do not estimate spacing by eye. The values are *right there*
+and they are exact.
+
+Collect:
+
+- **Colour**, grouped by role rather than by hex. Two greys used for different
+  jobs are two tokens; the same grey used twice is one.
+- **Type**: family, size, weight, line-height and letter-spacing for every
+  level that actually appears, plus how each changes per breakpoint.
+- **Spacing**: the rhythm the site actually uses. Most sites have one, even
+  when the people who built it could not have told you what it was.
+- **Radii, borders, shadows, and motion** — durations and easings.
+- **Breakpoints**, from the media queries.
+
+Then:
+
+1. Write them into whatever this project uses for tokens — CSS custom
+   properties, a Tailwind theme, whatever is already here. Match the project's
+   idiom, not the source site's.
+2. Build a `/style-guide` route that renders every token: the palette, the type
+   scale, spacing, the components you know are coming. This is how you and the
+   user can both see the system before anything depends on it, and it is where
+   you will catch a wrong value while it is still cheap.
+3. Record the system where this project's agents will read it — its `CLAUDE.md`
+   or `AGENTS.md`. The `shipstudio-brand-guidelines` skill covers this properly;
+   use it. Tokens that live only in your context window drift the moment the
+   conversation resets.
+
+Show the user the style guide and the token list before moving on.
+
+---
+
+## Phase 2 — The homepage, and only the homepage
+
+Build it out of the tokens and components from Phase 1. Then run the loop until
+it passes. Then stop and get the user's agreement.
+
+The reason this page stands alone: every structural decision you make here —
+how sections are composed, how the grid works, how images are handled, how the
+nav behaves — is a decision you are about to repeat on every other template.
+Making it twelve times and then being told it was wrong is the expensive
+outcome this ordering exists to prevent.
+
+### The loop
+
+```
+build → capture both sides → score → diagnose → fix one thing → re-measure
+```
+
+1. **Capture** the original and your rebuild at *every* breakpoint from Phase 0.
+2. **Score** the match at each. The score for the page is the **worst**
+   breakpoint, never the average — an average is exactly the number that hides
+   a broken phone layout behind a good desktop one.
+3. **Diagnose from structure, not from the picture.** Compare element positions
+   and sizes, and computed styles, between the two. A pixel diff tells you
+   *that* something is wrong and roughly where; it is bad at telling you *what*,
+   because one wrong container width shifts every image on the page and lights
+   up a third of it. The finding you want is "the container is 1140px and should
+   be 1200px", not "there is a lot of red here".
+4. **Fix one named thing per pass**, so the next measurement attributes the
+   change to it.
+5. **Re-measure.**
+
+**Stop conditions.** If the score has not improved after three passes, stop
+looping and tell the user what you tried and what you think is in the way.
+Grinding silently is worse than asking.
+
+### What "done" means
+
+Operationally: the page matches at every breakpoint, to the limit of what the
+measurement can resolve. Small residual differences from font rasterisation and
+image re-encoding are expected and are not defects.
+
+What is *not* covered by a score, and must be checked separately because a
+screenshot cannot see it:
+
+- The page works at sizes between the breakpoints, not only at them.
+- Interactive states — hover, focus, open menus, form validation.
+- Keyboard navigation and heading order.
+- It still behaves with real content of a different length.
+
+And what can never match, which you declare rather than quietly absorb:
+licensed fonts you cannot self-host, third-party embeds, anything you had to
+substitute. These belong in `MIGRATION.md`, not hidden inside a percentage.
+
+---
+
+## Phase 3 — Every other template
+
+Same loop, one template at a time, hardest first if you have a choice. Update
+`MIGRATION.md` as each one lands, with its score.
+
+Build shared components once and compose pages from them. If a second template
+makes you want to change a component the first one uses, that is real — go and
+re-verify the first template afterwards. A fix that silently regresses a page
+you already signed off is the failure mode of this phase, and re-measuring is
+cheap.
+
+---
+
+## Phase 4 — Name the remainder
+
+Finish by making the gap explicit: everything that did not come across, why,
+and what you would need to close it. A migration is never total, and the
+difference between a good one and a bad one is largely whether the user knows
+precisely where the edges are.
+
+---
+
+## Things not to do
+
+- **Do not copy the markup.** A site builder's output is machine-generated:
+  wrapper divs many levels deep, generated class names, absolute positioning
+  where a layout belongs. You are rebuilding, not transcribing.
+- **Do not port the stylesheet.** Read it to learn the system, express the
+  system in this project's idiom.
+- **Do not "improve" things while you are here.** If the original's spacing is
+  inconsistent, match it and mention it. Silently correcting the design is a
+  decision you took on someone else's behalf, and it will read as a bug.
+- **Do not skip a page quietly.** Anything you cannot do goes in
+  `MIGRATION.md` where the user can see it.
+- **Do not claim a number you did not measure.**
 "#
     .to_string()
 }

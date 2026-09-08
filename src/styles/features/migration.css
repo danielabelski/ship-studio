@@ -14,12 +14,12 @@
    * the app, a measurement is simply not where you want it yet. Naming them
    * after the status roles would make the panel shout.
    */
-  --wf-band-match: var(--accent-success);
-  --wf-band-close: #7cc4a4;
-  --wf-band-off: #d9a441;
-  --wf-band-broken: #d4736b;
+  --mig-band-match: var(--accent-success);
+  --mig-band-close: #7cc4a4;
+  --mig-band-off: #d9a441;
+  --mig-band-broken: #d4736b;
   /* The diff's magenta, matching what the capture script paints. */
-  --wf-diff-mark: #ff00c8;
+  --mig-diff-mark: #ff00c8;
 }
 
 /*
@@ -27,14 +27,14 @@
  * width each pane is narrower than a phone, which makes the comparison — the
  * only reason the panel exists — the thing there is least room for.
  */
-.wf-modal {
+.mig-modal {
   width: min(72rem, 92vw);
   max-width: none;
 }
 
 /* ── Panel ────────────────────────────────────────────────────────────── */
 
-.wf-panel {
+.mig-panel {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
@@ -43,86 +43,86 @@
   height: 100%;
 }
 
-.wf-panel--centred {
+.mig-panel--centred {
   align-items: center;
   justify-content: center;
 }
 
-.wf-panel__empty {
+.mig-panel__empty {
   color: var(--text-secondary);
   text-align: center;
   font-size: var(--font-size-body-lg);
   line-height: 1.6;
 }
 
-.wf-panel__empty-detail {
+.mig-panel__empty-detail {
   color: var(--text-muted);
   font-size: var(--font-size-label);
 }
 
-.wf-panel__header {
+.mig-panel__header {
   display: flex;
   align-items: center;
   gap: var(--spacing-lg);
   flex-wrap: wrap;
 }
 
-.wf-panel__score-block {
+.mig-panel__score-block {
   display: flex;
   align-items: baseline;
   gap: var(--spacing-sm);
 }
 
-.wf-panel__score {
+.mig-panel__score {
   font-size: var(--font-size-3xl);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
-.wf-panel__score--match {
-  color: var(--wf-band-match);
+.mig-panel__score--match {
+  color: var(--mig-band-match);
 }
-.wf-panel__score--close {
-  color: var(--wf-band-close);
+.mig-panel__score--close {
+  color: var(--mig-band-close);
 }
-.wf-panel__score--off {
-  color: var(--wf-band-off);
+.mig-panel__score--off {
+  color: var(--mig-band-off);
 }
-.wf-panel__score--broken {
-  color: var(--wf-band-broken);
+.mig-panel__score--broken {
+  color: var(--mig-band-broken);
 }
 
-.wf-panel__score-unit {
+.mig-panel__score-unit {
   font-size: var(--font-size-h4);
   margin-left: 2px;
 }
 
-.wf-panel__band {
+.mig-panel__band {
   font-size: var(--font-size-body-lg);
   color: var(--text-secondary);
 }
 
-.wf-panel__score-note,
-.wf-panel__no-score {
+.mig-panel__score-note,
+.mig-panel__no-score {
   font-size: var(--font-size-label);
   color: var(--text-muted);
 }
 
-.wf-panel__sources {
+.mig-panel__sources {
   display: flex;
   gap: var(--spacing-lg);
   margin: 0;
   margin-left: auto;
 }
 
-.wf-panel__sources dt {
+.mig-panel__sources dt {
   font-size: var(--font-size-label);
   color: var(--text-muted);
   margin-bottom: 2px;
 }
 
-.wf-panel__sources dd {
+.mig-panel__sources dd {
   margin: 0;
   font-size: var(--font-size-label);
   color: var(--text-secondary);
@@ -130,20 +130,20 @@
 }
 
 /* Names the stand-in stylesheet, so two identical URLs do not read as a bug. */
-.wf-panel__overlay-note {
-  color: var(--wf-band-off);
+.mig-panel__overlay-note {
+  color: var(--mig-band-off);
 }
 
-.wf-panel__sources a {
+.mig-panel__sources a {
   color: var(--accent-active);
   text-decoration: none;
 }
 
-.wf-panel__sources a:hover {
+.mig-panel__sources a:hover {
   text-decoration: underline;
 }
 
-.wf-panel__hint {
+.mig-panel__hint {
   color: var(--text-muted);
   font-size: var(--font-size-body-lg);
   text-align: center;
@@ -152,14 +152,14 @@
 
 /* ── History ──────────────────────────────────────────────────────────── */
 
-.wf-history {
+.mig-history {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--spacing-md);
   background: var(--surface-panel);
 }
 
-.wf-history__summary {
+.mig-history__summary {
   display: flex;
   align-items: baseline;
   gap: var(--spacing-sm);
@@ -167,26 +167,26 @@
   font-variant-numeric: tabular-nums;
 }
 
-.wf-history__from {
-  color: var(--wf-band-off);
+.mig-history__from {
+  color: var(--mig-band-off);
   font-weight: 600;
 }
 
-.wf-history__arrow {
+.mig-history__arrow {
   color: var(--text-muted);
 }
 
-.wf-history__to {
-  color: var(--wf-band-match);
+.mig-history__to {
+  color: var(--mig-band-match);
   font-weight: 600;
 }
 
-.wf-history__passes {
+.mig-history__passes {
   font-size: var(--font-size-label);
   color: var(--text-muted);
 }
 
-.wf-history__list {
+.mig-history__list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -195,46 +195,46 @@
   gap: var(--spacing-xs);
 }
 
-.wf-history__item {
+.mig-history__item {
   display: grid;
   grid-template-columns: 1fr auto minmax(0, 16rem);
   align-items: center;
   gap: var(--spacing-sm);
 }
 
-.wf-history__track {
+.mig-history__track {
   height: 6px;
   border-radius: var(--radius-sm);
   background: var(--surface-control);
   overflow: hidden;
 }
 
-.wf-history__bar {
+.mig-history__bar {
   height: 100%;
   border-radius: var(--radius-sm);
 }
 
-.wf-history__bar--match {
-  background: var(--wf-band-match);
+.mig-history__bar--match {
+  background: var(--mig-band-match);
 }
-.wf-history__bar--close {
-  background: var(--wf-band-close);
+.mig-history__bar--close {
+  background: var(--mig-band-close);
 }
-.wf-history__bar--off {
-  background: var(--wf-band-off);
+.mig-history__bar--off {
+  background: var(--mig-band-off);
 }
-.wf-history__bar--broken {
-  background: var(--wf-band-broken);
+.mig-history__bar--broken {
+  background: var(--mig-band-broken);
 }
 
-.wf-history__value {
+.mig-history__value {
   font-family: var(--font-mono);
   font-size: var(--font-size-label);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
-.wf-history__note {
+.mig-history__note {
   font-size: var(--font-size-label);
   color: var(--text-muted);
   overflow: hidden;
@@ -244,12 +244,12 @@
 
 /* ── Matrix ───────────────────────────────────────────────────────────── */
 
-.wf-matrix {
+.mig-matrix {
   width: 100%;
   border-collapse: collapse;
 }
 
-.wf-matrix__caption {
+.mig-matrix__caption {
   caption-side: top;
   text-align: left;
   font-size: var(--font-size-label);
@@ -257,8 +257,8 @@
   padding-bottom: var(--spacing-sm);
 }
 
-.wf-matrix__corner,
-.wf-matrix__head {
+.mig-matrix__corner,
+.mig-matrix__head {
   font-size: var(--font-size-label);
   color: var(--text-muted);
   font-weight: 500;
@@ -267,31 +267,31 @@
   border-bottom: 1px solid var(--border);
 }
 
-.wf-matrix__corner {
+.mig-matrix__corner {
   text-align: left;
 }
 
-.wf-matrix__row-head {
+.mig-matrix__row-head {
   text-align: left;
   padding: var(--spacing-sm) var(--spacing-xs);
   font-weight: 400;
   border-bottom: 1px solid var(--border);
 }
 
-.wf-matrix__name {
+.mig-matrix__name {
   display: block;
   font-size: var(--font-size-body-lg);
   color: var(--text-primary);
 }
 
-.wf-matrix__route {
+.mig-matrix__route {
   display: block;
   font-family: var(--font-mono);
   font-size: var(--font-size-label);
   color: var(--text-muted);
 }
 
-.wf-matrix__cell {
+.mig-matrix__cell {
   text-align: center;
   padding: var(--spacing-xs);
   border-bottom: 1px solid var(--border);
@@ -303,7 +303,7 @@
  * a score cell still reads as a measurement that came back empty. Neither is
  * true, and both are the kind of invented state the project forbids.
  */
-.wf-matrix__pending {
+.mig-matrix__pending {
   text-align: left;
   padding: var(--spacing-sm);
   font-size: var(--font-size-label);
@@ -312,12 +312,12 @@
   border-bottom: 1px solid var(--border);
 }
 
-.wf-matrix__none {
+.mig-matrix__none {
   font-size: var(--font-size-label);
   color: var(--text-muted);
 }
 
-.wf-score {
+.mig-score {
   display: inline-flex;
   align-items: baseline;
   gap: 1px;
@@ -334,45 +334,45 @@
   transition: border-color var(--transition-interaction);
 }
 
-.wf-score:hover {
+.mig-score:hover {
   border-color: var(--border);
 }
 
-.wf-score--selected {
+.mig-score--selected {
   border-color: var(--accent-active);
 }
 
-.wf-score__value {
+.mig-score__value {
   font-size: var(--font-size-body-lg);
 }
 
-.wf-score__unit {
+.mig-score__unit {
   font-size: var(--font-size-label);
   color: var(--text-muted);
 }
 
-.wf-score--match .wf-score__value {
-  color: var(--wf-band-match);
+.mig-score--match .mig-score__value {
+  color: var(--mig-band-match);
 }
-.wf-score--close .wf-score__value {
-  color: var(--wf-band-close);
+.mig-score--close .mig-score__value {
+  color: var(--mig-band-close);
 }
-.wf-score--off .wf-score__value {
-  color: var(--wf-band-off);
+.mig-score--off .mig-score__value {
+  color: var(--mig-band-off);
 }
-.wf-score--broken .wf-score__value {
-  color: var(--wf-band-broken);
+.mig-score--broken .mig-score__value {
+  color: var(--mig-band-broken);
 }
 
 /* ── Comparison viewer ────────────────────────────────────────────────── */
 
-.wf-comparison {
+.mig-comparison {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
 }
 
-.wf-comparison__bar {
+.mig-comparison__bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -382,19 +382,19 @@
   background: var(--surface-panel);
 }
 
-.wf-comparison__meta {
+.mig-comparison__meta {
   display: flex;
   align-items: baseline;
   gap: var(--spacing-sm);
 }
 
-.wf-comparison__template {
+.mig-comparison__template {
   font-size: var(--font-size-body-lg);
   color: var(--text-primary);
 }
 
-.wf-comparison__width,
-.wf-comparison__delta {
+.mig-comparison__width,
+.mig-comparison__delta {
   font-family: var(--font-mono);
   font-size: var(--font-size-label);
   color: var(--text-muted);
@@ -402,18 +402,18 @@
 
 /* A height difference is a layout fault the pixel score understates, so it is
    called out rather than left for someone to notice in the two images. */
-.wf-comparison__delta {
-  color: var(--wf-band-off);
+.mig-comparison__delta {
+  color: var(--mig-band-off);
 }
 
-.wf-comparison__panes {
+.mig-comparison__panes {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1px;
   background: var(--border);
 }
 
-.wf-comparison__pane {
+.mig-comparison__pane {
   margin: 0;
   background: var(--surface-app);
   display: flex;
@@ -421,7 +421,7 @@
   min-width: 0;
 }
 
-.wf-comparison__caption {
+.mig-comparison__caption {
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-label);
   color: var(--text-muted);
@@ -433,41 +433,41 @@
  * thousand pixels tall, and the panes have to be a window onto them rather
  * than something the page grows to contain.
  */
-.wf-comparison__scroll {
+.mig-comparison__scroll {
   height: 26rem;
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--surface-app);
 }
 
-.wf-comparison__scroll--wide {
+.mig-comparison__scroll--wide {
   height: 32rem;
 }
 
-.wf-comparison__scroll img {
+.mig-comparison__scroll img {
   display: block;
   width: 100%;
   height: auto;
 }
 
-.wf-comparison__single {
+.mig-comparison__single {
   display: flex;
   flex-direction: column;
 }
 
 /* ── Overlay wipe ─────────────────────────────────────────────────────── */
 
-.wf-overlay {
+.mig-overlay {
   position: relative;
 }
 
-.wf-overlay__base {
+.mig-overlay__base {
   display: block;
   width: 100%;
   height: auto;
 }
 
-.wf-overlay__clip {
+.mig-overlay__clip {
   position: absolute;
   inset: 0 auto 0 0;
   overflow: hidden;
@@ -475,13 +475,13 @@
 
 /* The clipped copy must be as wide as the container, not as wide as its own
    clip, or the rebuild rescales as the wipe moves and nothing lines up. */
-.wf-overlay__clip img {
+.mig-overlay__clip img {
   display: block;
   height: auto;
   max-width: none;
 }
 
-.wf-overlay__seam {
+.mig-overlay__seam {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -489,7 +489,7 @@
   background: var(--accent-active);
 }
 
-.wf-comparison__wipe {
+.mig-comparison__wipe {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -498,16 +498,16 @@
   background: var(--surface-panel);
 }
 
-.wf-comparison__wipe input {
+.mig-comparison__wipe input {
   flex: 1;
 }
 
-.wf-comparison__wipe-label {
+.mig-comparison__wipe-label {
   font-size: var(--font-size-label);
   color: var(--text-muted);
 }
 
-.wf-comparison__legend {
+.mig-comparison__legend {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -519,71 +519,194 @@
   font-variant-numeric: tabular-nums;
 }
 
-.wf-comparison__swatch {
+.mig-comparison__swatch {
   width: 10px;
   height: 10px;
   border-radius: 2px;
-  background: var(--wf-diff-mark);
+  background: var(--mig-diff-mark);
 }
 
-/* ── Import modal ─────────────────────────────────────────────────────── */
+/* ── Phase rail ───────────────────────────────────────────────────────── */
 
-.wf-import {
+.mig-status {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
 }
 
-.wf-import__tiers {
+.mig-rail {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: var(--spacing-sm);
 }
 
-.wf-tier {
+.mig-rail__item {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--spacing-md);
-  text-align: left;
-  border: 1px solid var(--border);
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
   border-radius: var(--radius);
-  background: var(--surface-control);
-  cursor: pointer;
-  transition: border-color var(--transition-interaction);
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
+  min-width: 0;
 }
 
-.wf-tier:hover {
-  border-color: var(--text-muted);
-}
-
-.wf-tier--chosen {
+/* Only the active phase is emphasised. Ticking every finished phase in green
+   makes a migration that is 20% through look like a wall of success. */
+.mig-rail__item--active {
   border-color: var(--accent-active);
 }
 
-.wf-tier__label {
-  font-size: var(--font-size-body-lg);
-  color: var(--text-primary);
+.mig-rail__item--not-started {
+  opacity: 0.55;
 }
 
-.wf-tier__detail {
-  font-size: var(--font-size-label);
-  color: var(--text-secondary);
+.mig-rail__item--blocked {
+  border-color: var(--mig-band-off);
 }
 
-.wf-tier__requirement {
-  margin-top: var(--spacing-xs);
-  font-size: var(--font-size-label);
+.mig-rail__marker {
+  flex-shrink: 0;
+  margin-top: 1px;
   color: var(--text-muted);
 }
 
-.wf-import__consequences {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--spacing-lg);
+.mig-rail__item--done .mig-rail__marker {
+  color: var(--mig-band-match);
 }
 
-.wf-import__list {
+.mig-rail__item--active .mig-rail__marker {
+  color: var(--accent-active);
+}
+
+.mig-rail__item--blocked .mig-rail__marker {
+  color: var(--mig-band-off);
+}
+
+.mig-rail__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mig-rail__label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-label);
+  color: var(--text-primary);
+}
+
+.mig-rail__now {
+  font-size: var(--font-size-label);
+  color: var(--accent-active);
+}
+
+.mig-rail__detail {
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* ── Needs you ────────────────────────────────────────────────────────── */
+
+/*
+ * A question the agent is waiting on outranks everything else on the screen:
+ * while one is open the migration is not slow, it is stopped, and the user is
+ * the only one who can restart it.
+ */
+.mig-needs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.mig-needs__item {
+  border: 1px solid var(--mig-band-off);
+  border-radius: var(--radius);
+  padding: var(--spacing-md);
+  background: var(--surface-panel);
+}
+
+.mig-needs__head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--mig-band-off);
+}
+
+.mig-needs__question {
+  margin: 0;
+  font-size: var(--font-size-body-lg);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.mig-needs__why {
+  margin: var(--spacing-xs) 0 0;
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.mig-needs__rec {
+  margin: var(--spacing-sm) 0 0;
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.mig-needs__rec-label {
+  display: inline-block;
+  margin-right: var(--spacing-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Four-part report ─────────────────────────────────────────────────── */
+
+.mig-report {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-md);
+}
+
+.mig-report__col {
+  min-width: 0;
+}
+
+.mig-report__title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mig-report__count {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+/* Every heading renders even at zero. A migration claiming nothing is
+   outstanding should have to say so, not omit the column. */
+.mig-report__empty {
+  margin: 0;
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.mig-report__list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -592,33 +715,119 @@
   gap: var(--spacing-xs);
 }
 
-.wf-import__list li {
+.mig-report__list li {
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-xs);
   font-size: var(--font-size-label);
   line-height: 1.5;
-}
-
-.wf-import__list--brings li {
   color: var(--text-secondary);
 }
 
-.wf-import__list--brings svg {
-  color: var(--wf-band-match);
+.mig-report__list svg {
   flex-shrink: 0;
+  margin-top: 2px;
 }
 
-.wf-import__list--misses li {
+.mig-report__col--done svg {
+  color: var(--mig-band-match);
+}
+.mig-report__col--doing svg {
+  color: var(--accent-active);
+}
+.mig-report__col--pending svg {
+  color: var(--text-muted);
+}
+.mig-report__col--blocked svg {
+  color: var(--mig-band-broken);
+}
+
+/* ── URL entry ────────────────────────────────────────────────────────── */
+
+.mig-url-modal {
+  width: min(34rem, 92vw);
+}
+
+.mig-url {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.mig-url__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.mig-url__label {
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+}
+
+.mig-url__error {
+  margin: 0;
+  font-size: var(--font-size-label);
+  color: var(--mig-band-broken);
+}
+
+.mig-url__plan-title {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mig-url__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: mig-step;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.mig-url__steps li {
+  counter-increment: mig-step;
+  display: grid;
+  grid-template-columns: 1.25rem 1fr;
+  gap: var(--spacing-xs);
+  align-items: baseline;
+}
+
+.mig-url__steps li::before {
+  content: counter(mig-step);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
   color: var(--text-muted);
 }
 
-.wf-import__list--misses svg {
-  color: var(--wf-band-broken);
-  flex-shrink: 0;
+.mig-url__step-label {
+  grid-column: 2;
+  font-size: var(--font-size-body-lg);
+  color: var(--text-primary);
 }
 
-.wf-import__footer {
+.mig-url__step-detail {
+  grid-column: 2;
+  font-size: var(--font-size-label);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.mig-url__promise {
+  margin: var(--spacing-md) 0 0;
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--border);
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.mig-url__footer {
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-sm);

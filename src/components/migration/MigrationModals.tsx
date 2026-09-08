@@ -12,7 +12,7 @@ import { useModal } from '../../contexts/ModalContext';
 import { useOptionalToast } from '../../contexts/ToastContext';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { FidelityPanel } from './FidelityPanel';
-import { WebflowImportModal } from './WebflowImportModal';
+import { SiteUrlPanel } from './SiteUrlPanel';
 
 /**
  * Where the prototype reads its comparison from.
@@ -21,11 +21,11 @@ import { WebflowImportModal } from './WebflowImportModal';
  * statically. The shipped version resolves this from the open project, which
  * is why the panel takes it as a prop rather than reaching for it.
  */
-const DEMO_RUN = '/webflow-demo';
+const DEMO_RUN = '/migration-demo';
 
-export function WebflowModals() {
-  const fidelity = useModal('webflowFidelity');
-  const importSource = useModal('webflowImport');
+export function MigrationModals() {
+  const fidelity = useModal('migrationFidelity');
+  const importSource = useModal('siteUrlImport');
   const toast = useOptionalToast();
 
   return (
@@ -33,20 +33,21 @@ export function WebflowModals() {
       <ModalFrame
         isOpen={fidelity.isOpen}
         onClose={fidelity.close}
-        title="Fidelity"
-        className="wf-modal"
+        title="Migration"
+        className="mig-modal"
       >
         <FidelityPanel source={DEMO_RUN} />
       </ModalFrame>
 
-      <WebflowImportModal
+      <SiteUrlPanel
         isOpen={importSource.isOpen}
         onClose={importSource.close}
-        onConfirm={(kind) => {
+        onStart={(url) => {
           importSource.close();
-          // Nothing behind this yet — the ingest is the next piece of work, and
-          // a button that quietly does nothing is worse than one that says so.
-          toast.showToast(`Not wired up yet: ${kind}`, 'info');
+          // Nothing behind this yet — scaffolding the project and handing the
+          // URL to the agent is the next piece of work. A button that quietly
+          // does nothing is worse than one that says so.
+          toast.showToast(`Not wired up yet — would start a migration of ${url}`, 'info');
         }}
       />
     </>

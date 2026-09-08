@@ -12,7 +12,7 @@
  * happened. They get their own state and their own reason.
  */
 
-import { fidelityBand, FIDELITY_BAND_LABEL, type TemplateFidelity } from '@/lib/webflow';
+import { fidelityBand, FIDELITY_BAND_LABEL, type TemplateFidelity } from '@/lib/migration';
 
 interface FidelityMatrixProps {
   templates: TemplateFidelity[];
@@ -29,17 +29,17 @@ export function FidelityMatrix({
   onSelect,
 }: FidelityMatrixProps) {
   return (
-    <table className="wf-matrix">
-      <caption className="wf-matrix__caption">
+    <table className="mig-matrix">
+      <caption className="mig-matrix__caption">
         Pixel match against the Webflow original, per breakpoint
       </caption>
       <thead>
         <tr>
-          <th scope="col" className="wf-matrix__corner">
+          <th scope="col" className="mig-matrix__corner">
             Template
           </th>
           {breakpoints.map((bp) => (
-            <th scope="col" key={bp} className="wf-matrix__head">
+            <th scope="col" key={bp} className="mig-matrix__head">
               {bp}
             </th>
           ))}
@@ -48,13 +48,13 @@ export function FidelityMatrix({
       <tbody>
         {templates.map((template) => (
           <tr key={template.template}>
-            <th scope="row" className="wf-matrix__row-head">
-              <span className="wf-matrix__name">{template.template}</span>
-              <span className="wf-matrix__route">{template.route}</span>
+            <th scope="row" className="mig-matrix__row-head">
+              <span className="mig-matrix__name">{template.template}</span>
+              <span className="mig-matrix__route">{template.route}</span>
             </th>
 
             {template.status === 'not-compared' ? (
-              <td className="wf-matrix__pending" colSpan={breakpoints.length}>
+              <td className="mig-matrix__pending" colSpan={breakpoints.length}>
                 {template.reason}
               </td>
             ) : (
@@ -62,8 +62,8 @@ export function FidelityMatrix({
                 const cell = template.breakpoints.find((b) => b.breakpoint === bp);
                 if (!cell) {
                   return (
-                    <td key={bp} className="wf-matrix__cell wf-matrix__cell--empty">
-                      <span className="wf-matrix__none">not run</span>
+                    <td key={bp} className="mig-matrix__cell mig-matrix__cell--empty">
+                      <span className="mig-matrix__none">not run</span>
                     </td>
                   );
                 }
@@ -71,16 +71,16 @@ export function FidelityMatrix({
                 const isSelected =
                   selected?.template === template.template && selected.breakpoint === bp;
                 return (
-                  <td key={bp} className="wf-matrix__cell">
+                  <td key={bp} className="mig-matrix__cell">
                     <button
                       type="button"
-                      className={`wf-score wf-score--${band}${isSelected ? ' wf-score--selected' : ''}`}
+                      className={`mig-score mig-score--${band}${isSelected ? ' mig-score--selected' : ''}`}
                       aria-pressed={isSelected}
                       title={`${FIDELITY_BAND_LABEL[band]} — ${cell.differingPixels.toLocaleString()} pixels differ`}
                       onClick={() => onSelect(template.template, bp)}
                     >
-                      <span className="wf-score__value">{cell.score.toFixed(1)}</span>
-                      <span className="wf-score__unit">%</span>
+                      <span className="mig-score__value">{cell.score.toFixed(1)}</span>
+                      <span className="mig-score__unit">%</span>
                     </button>
                   </td>
                 );

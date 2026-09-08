@@ -88,13 +88,13 @@ next thing I would build, and I would build it before the ingest.
 node scripts/webflow-fidelity.mjs \
   --reference https://tempo-template.webflow.io/ \
   --rebuild http://127.0.0.1:3000/ \
-  --out public/webflow-demo/v1
+  --out public/migration-demo/v1
 
 # Reproduce the four-pass demo
 bash prototypes/webflow-fidelity/run-demo.sh
 
 # Redraw diff images from captures already on disk (no network, seconds)
-node scripts/webflow-fidelity-recompare.mjs public/webflow-demo
+node scripts/webflow-fidelity-recompare.mjs public/migration-demo
 ```
 
 ## Seeing the UI
@@ -103,10 +103,10 @@ node scripts/webflow-fidelity-recompare.mjs public/webflow-demo
 pnpm harness --port 1426
 ```
 
-Then <http://127.0.0.1:1426/harness.html?scenario=webflow-fidelity&command=webflow.fidelity>,
-or open any scenario and press `⌘K` → "Check fidelity against Webflow".
+Then <http://127.0.0.1:1426/harness.html?scenario=migration-fidelity&command=migration.fidelity>,
+or open any scenario and press `⌘K` → "Migration status and fidelity".
 
-Two scenarios are registered: `webflow-fidelity` and `webflow-import`. The
+Two scenarios are registered: `migration-fidelity` and `migration-import`. The
 Overlay and Difference views have no scenario because the harness runs a
 scenario's `steps` before its `command`, so a step cannot reach a control
 inside a modal the command is what opens — worth fixing in the harness, but not
@@ -114,9 +114,9 @@ here.
 
 ## What is not built
 
-- Any ingest. The source picker's buttons say so instead of pretending.
+- Any ingest. The URL panel's Start button says so instead of pretending.
 - Any Rust. The panel reads JSON and PNGs written by the script and served
-  statically; `src/lib/webflow.ts` is shaped so those reads become `invoke`
+  statically; `src/lib/migration.ts` is shaped so those reads become `invoke`
   calls without the components changing.
 - Template discovery. Three of the four rows in the matrix are honestly marked
   "not compared" rather than given invented scores.

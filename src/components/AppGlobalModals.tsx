@@ -2,7 +2,7 @@ import { HelpModal } from './HelpModal';
 import { ChangelogModal } from './dashboard/ChangelogModal';
 import { AttachedLibrariesModal } from './dashboard/AttachedLibrariesModal';
 import { SettingsModal } from './dashboard/SettingsModal';
-import { WebflowModals } from './webflow/WebflowModals';
+import { MigrationModals } from './migration/MigrationModals';
 import { ToastList } from './primitives/ToastList';
 import { useModal } from '../contexts/ModalContext';
 import { usePaletteContext } from './CommandPalette/paletteContext';
@@ -44,7 +44,7 @@ function GlobalModalsBody() {
       <ChangelogModal isOpen={changelog.isOpen} onClose={changelog.close} />
       <AttachedLibrariesModal isOpen={attachedLibraries.isOpen} onClose={attachedLibraries.close} />
       <SettingsModal isOpen={settings.isOpen} onClose={settings.close} />
-      <WebflowModals />
+      <MigrationModals />
       <ToastList toasts={toasts} onDismiss={dismissToast} />
     </>
   );

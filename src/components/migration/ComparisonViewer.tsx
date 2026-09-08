@@ -18,7 +18,7 @@
 
 import { useCallback, useRef, useState, type ChangeEvent } from 'react';
 import { SegmentedControl } from '../primitives/SegmentedControl';
-import type { BreakpointComparison } from '@/lib/webflow';
+import type { BreakpointComparison } from '@/lib/migration';
 
 type ViewMode = 'side-by-side' | 'overlay' | 'difference';
 
@@ -56,13 +56,13 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
   const heightDelta = comparison.rebuildHeight - comparison.referenceHeight;
 
   return (
-    <div className="wf-comparison">
-      <div className="wf-comparison__bar">
-        <div className="wf-comparison__meta">
-          <span className="wf-comparison__template">{templateLabel}</span>
-          <span className="wf-comparison__width">{comparison.breakpoint}px</span>
+    <div className="mig-comparison">
+      <div className="mig-comparison__bar">
+        <div className="mig-comparison__meta">
+          <span className="mig-comparison__template">{templateLabel}</span>
+          <span className="mig-comparison__width">{comparison.breakpoint}px</span>
           {heightDelta !== 0 && (
-            <span className="wf-comparison__delta" title="Full-page height difference">
+            <span className="mig-comparison__delta" title="Full-page height difference">
               {heightDelta > 0 ? '+' : ''}
               {heightDelta}px tall
             </span>
@@ -77,21 +77,21 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
       </div>
 
       {mode === 'side-by-side' && (
-        <div className="wf-comparison__panes">
-          <figure className="wf-comparison__pane">
-            <figcaption className="wf-comparison__caption">Webflow</figcaption>
+        <div className="mig-comparison__panes">
+          <figure className="mig-comparison__pane">
+            <figcaption className="mig-comparison__caption">Webflow</figcaption>
             <div
-              className="wf-comparison__scroll"
+              className="mig-comparison__scroll"
               ref={leftRef}
               onScroll={() => syncScroll(leftRef.current, rightRef.current)}
             >
               <img src={`${comparison.dir}/reference.png`} alt="" />
             </div>
           </figure>
-          <figure className="wf-comparison__pane">
-            <figcaption className="wf-comparison__caption">Rebuild</figcaption>
+          <figure className="mig-comparison__pane">
+            <figcaption className="mig-comparison__caption">Rebuild</figcaption>
             <div
-              className="wf-comparison__scroll"
+              className="mig-comparison__scroll"
               ref={rightRef}
               onScroll={() => syncScroll(rightRef.current, leftRef.current)}
             >
@@ -102,20 +102,20 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
       )}
 
       {mode === 'overlay' && (
-        <div className="wf-comparison__single">
-          <div className="wf-comparison__scroll wf-comparison__scroll--wide">
-            <div className="wf-overlay">
-              <img className="wf-overlay__base" src={`${comparison.dir}/reference.png`} alt="" />
+        <div className="mig-comparison__single">
+          <div className="mig-comparison__scroll mig-comparison__scroll--wide">
+            <div className="mig-overlay">
+              <img className="mig-overlay__base" src={`${comparison.dir}/reference.png`} alt="" />
               {/* inline-style-ok: wipe position is a live pointer value */}
-              <div className="wf-overlay__clip" style={{ width: `${wipe}%` }}>
+              <div className="mig-overlay__clip" style={{ width: `${wipe}%` }}>
                 <img src={`${comparison.dir}/rebuild.png`} alt="" />
               </div>
               {/* inline-style-ok: seam tracks the wipe */}
-              <div className="wf-overlay__seam" style={{ left: `${wipe}%` }} />
+              <div className="mig-overlay__seam" style={{ left: `${wipe}%` }} />
             </div>
           </div>
-          <label className="wf-comparison__wipe">
-            <span className="wf-comparison__wipe-label">Rebuild</span>
+          <label className="mig-comparison__wipe">
+            <span className="mig-comparison__wipe-label">Rebuild</span>
             <input
               type="range"
               min={0}
@@ -124,18 +124,18 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
               onChange={(e: ChangeEvent<HTMLInputElement>) => setWipe(Number(e.target.value))}
               aria-label="Wipe between the original and the rebuild"
             />
-            <span className="wf-comparison__wipe-label">Webflow</span>
+            <span className="mig-comparison__wipe-label">Webflow</span>
           </label>
         </div>
       )}
 
       {mode === 'difference' && (
-        <div className="wf-comparison__single">
-          <div className="wf-comparison__scroll wf-comparison__scroll--wide">
+        <div className="mig-comparison__single">
+          <div className="mig-comparison__scroll mig-comparison__scroll--wide">
             <img src={`${comparison.dir}/diff.png`} alt="" />
           </div>
-          <p className="wf-comparison__legend">
-            <span className="wf-comparison__swatch" aria-hidden="true" />
+          <p className="mig-comparison__legend">
+            <span className="mig-comparison__swatch" aria-hidden="true" />
             {comparison.differingPixels.toLocaleString()} pixels differ of{' '}
             {comparison.totalPixels.toLocaleString()}
           </p>

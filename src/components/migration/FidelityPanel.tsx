@@ -20,14 +20,17 @@ import { Button } from '../primitives/Button';
 import { Spinner } from '../primitives/Spinner';
 import { ComparisonViewer } from './ComparisonViewer';
 import { FidelityMatrix } from './FidelityMatrix';
+import { MigrationStatusView } from './MigrationStatusView';
 import { useAsyncState } from '@/hooks/useAsyncState';
 import {
   fidelityBand,
   FIDELITY_BAND_LABEL,
   loadFidelityRun,
+  loadMigrationStatus,
   runScore,
   type FidelityRun,
-} from '@/lib/webflow';
+  type MigrationStatus,
+} from '@/lib/migration';
 
 interface FidelityPanelProps {
   /** Directory the capture wrote to. Becomes a project path once this is native. */
@@ -41,9 +44,16 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
     error,
     execute,
   } = useAsyncState<FidelityRun, [string]>(loadFidelityRun);
+  // Loaded separately, and allowed to fail on its own: the agent's account of
+  // the work and the measurements of it are different artefacts, and one being
+  // absent is not a reason to show neither.
+  const { data: status, execute: loadStatus } = useAsyncState<MigrationStatus, [string]>(
+    loadMigrationStatus
+  );
   const [selected, setSelected] = useState<{ template: string; breakpoint: number } | null>(null);
 
   useEffect(() => {
+    void loadStatus(source);
     void execute(source).then((loaded) => {
       if (!loaded) return;
       // Open on the worst cell rather than on nothing. The panel's job is to
@@ -56,7 +66,7 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
         setSelected({ template: worst.t.template, breakpoint: worst.b.breakpoint });
       }
     });
-  }, [execute, source]);
+  }, [execute, loadStatus, source]);
 
   // Widest first — the order Webflow lists its own breakpoints in, so the
   // column headings read the way the person authoring the site is used to.
@@ -77,7 +87,7 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
 
   if (isLoading) {
     return (
-      <div className="wf-panel wf-panel--centred">
+      <div className="mig-panel mig-panel--centred">
         <Spinner size="lg" />
       </div>
     );
@@ -85,11 +95,11 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
 
   if (error || !run) {
     return (
-      <div className="wf-panel wf-panel--centred">
-        <p className="wf-panel__empty">
+      <div className="mig-panel mig-panel--centred">
+        <p className="mig-panel__empty">
           No comparison has been run yet.
           <br />
-          <span className="wf-panel__empty-detail">
+          <span className="mig-panel__empty-detail">
             Run <code>scripts/webflow-fidelity.mjs</code> against the original and this project.
           </span>
         </p>
@@ -101,27 +111,27 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
   const band = overall === null ? null : fidelityBand(overall);
 
   return (
-    <div className="wf-panel">
-      <header className="wf-panel__header">
-        <div className="wf-panel__score-block">
+    <div className="mig-panel">
+      <header className="mig-panel__header">
+        <div className="mig-panel__score-block">
           {overall === null ? (
-            <span className="wf-panel__no-score">Not compared</span>
+            <span className="mig-panel__no-score">Not compared</span>
           ) : (
             <>
-              <span className={`wf-panel__score wf-panel__score--${band}`}>
+              <span className={`mig-panel__score mig-panel__score--${band}`}>
                 {overall.toFixed(1)}
-                <span className="wf-panel__score-unit">%</span>
+                <span className="mig-panel__score-unit">%</span>
               </span>
-              <span className="wf-panel__band">{band && FIDELITY_BAND_LABEL[band]}</span>
+              <span className="mig-panel__band">{band && FIDELITY_BAND_LABEL[band]}</span>
             </>
           )}
           {/* Worst, not mean. An average across breakpoints is exactly the
               statistic that hides a broken phone layout behind a good desktop
               one, which is the failure this panel exists to catch. */}
-          <span className="wf-panel__score-note">worst breakpoint</span>
+          <span className="mig-panel__score-note">worst breakpoint</span>
         </div>
 
-        <dl className="wf-panel__sources">
+        <dl className="mig-panel__sources">
           <div>
             <dt>Original</dt>
             <dd>
@@ -135,7 +145,7 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
             <dd>
               {run.rebuild.replace(/^https?:\/\//, '').replace(/\/$/, '')}
               {run.rebuildOverlay && (
-                <span className="wf-panel__overlay-note"> + {run.rebuildOverlay}</span>
+                <span className="mig-panel__overlay-note"> + {run.rebuildOverlay}</span>
               )}
             </dd>
           </div>
@@ -145,6 +155,8 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
           Compare again
         </Button>
       </header>
+
+      {status && <MigrationStatusView status={status} />}
 
       {run.history.length > 1 && <FidelityHistory history={run.history} />}
 
@@ -158,7 +170,7 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
       {comparison && selected ? (
         <ComparisonViewer comparison={comparison} templateLabel={selected.template} />
       ) : (
-        <p className="wf-panel__hint">Pick a score to see what produced it.</p>
+        <p className="mig-panel__hint">Pick a score to see what produced it.</p>
       )}
     </div>
   );
@@ -176,34 +188,34 @@ function FidelityHistory({ history }: { history: FidelityRun['history'] }) {
   const last = history[history.length - 1];
 
   return (
-    <section className="wf-history" aria-label="Comparison history">
-      <div className="wf-history__summary">
-        <span className="wf-history__from">{first.score.toFixed(1)}%</span>
-        <span className="wf-history__arrow" aria-hidden="true">
+    <section className="mig-history" aria-label="Comparison history">
+      <div className="mig-history__summary">
+        <span className="mig-history__from">{first.score.toFixed(1)}%</span>
+        <span className="mig-history__arrow" aria-hidden="true">
           →
         </span>
-        <span className="wf-history__to">{last.score.toFixed(1)}%</span>
-        <span className="wf-history__passes">
+        <span className="mig-history__to">{last.score.toFixed(1)}%</span>
+        <span className="mig-history__passes">
           over {history.length} {history.length === 1 ? 'pass' : 'passes'} at 1440px
         </span>
       </div>
-      <ol className="wf-history__list">
+      <ol className="mig-history__list">
         {history.map((entry) => {
           const band = fidelityBand(entry.score);
           return (
-            <li key={entry.iteration} className="wf-history__item">
-              <div className="wf-history__track">
+            <li key={entry.iteration} className="mig-history__item">
+              <div className="mig-history__track">
                 {/* Anchored at 80 rather than 0: every score worth reading sits
                     in the last fifth of the range, and a bar from zero makes
                     89% and 100% look like the same bar. */}
                 <div
-                  className={`wf-history__bar wf-history__bar--${band}`}
+                  className={`mig-history__bar mig-history__bar--${band}`}
                   /* inline-style-ok: bar length is the measurement itself */
                   style={{ width: `${Math.max(0, (entry.score - 80) / 0.2)}%` }}
                 />
               </div>
-              <span className="wf-history__value">{entry.score.toFixed(2)}%</span>
-              <span className="wf-history__note">{entry.note}</span>
+              <span className="mig-history__value">{entry.score.toFixed(2)}%</span>
+              <span className="mig-history__note">{entry.note}</span>
             </li>
           );
         })}

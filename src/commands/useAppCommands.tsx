@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useCommands } from './useCommands';
-import { useWebflowCommands } from './useWebflowCommands';
+import { useMigrationCommands } from './useMigrationCommands';
 import type { PaletteCtx } from './types';
 import { useOpenModal } from '../contexts/ModalContext';
 import { getDashboardProjects, type DashboardProject, type Project } from '../lib/project';
@@ -81,7 +81,7 @@ export function useAppCommands({
 }: UseAppCommandsParams) {
   const openModal = useOpenModal();
 
-  useWebflowCommands();
+  useMigrationCommands();
 
   // IDE availability — fetched once so we can hide commands for tools the
   // user doesn't have installed. A silent failure leaves both enabled

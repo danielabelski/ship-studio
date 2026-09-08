@@ -16,65 +16,79 @@
  */
 
 /**
- * Where a migration is reading the site from, best first.
+ * The phases, in the order the skill runs them.
  *
- * These are not interchangeable and the difference is not cosmetic — each tier
- * can carry strictly less than the one above it, and a user who picks the
- * bottom one deserves to know what they gave up before they spend an afternoon
- * on it rather than after.
+ * The order is the method, not a progress bar. Tokens before pages is what
+ * makes the work converge instead of drift; one verified page before the rest
+ * is what stops a bad structural decision being made twelve times. Showing the
+ * phases is therefore not decoration — it is how the user can see that the
+ * agent is following the method, and where it currently is inside it.
  */
-export type WebflowSourceKind = 'account' | 'export' | 'url';
+export type MigrationPhaseId = 'survey' | 'design-system' | 'homepage' | 'templates' | 'remainder';
 
-export interface WebflowSourceTier {
-  kind: WebflowSourceKind;
+/**
+ * What a phase is doing right now.
+ *
+ * `blocked` exists separately from `active` on purpose. An agent waiting on an
+ * answer and an agent working look identical from outside unless the model
+ * distinguishes them, and "it seemed busy" is how a migration quietly stalls
+ * for an afternoon.
+ */
+export type PhaseStatus = 'done' | 'active' | 'blocked' | 'not-started';
+
+export interface MigrationPhase {
+  id: MigrationPhaseId;
   label: string;
+  status: PhaseStatus;
+  /** One line on where this phase actually got to. Never a promise. */
   detail: string;
-  /** What this tier can bring across. */
-  brings: string[];
-  /** What it cannot, stated plainly. */
-  misses: string[];
-  requirement: string | null;
 }
 
-export const WEBFLOW_SOURCE_TIERS: readonly WebflowSourceTier[] = [
-  {
-    kind: 'account',
-    label: 'Connect Webflow',
-    detail: 'Reads the site through Webflow’s own API.',
-    brings: [
-      'Variables, as real design tokens',
-      'Components with their props',
-      'CMS collections and their content',
-      'Assets, locales and page metadata',
-    ],
-    misses: ['Interactions still have no export format'],
-    requirement: 'Sign in to Webflow',
-  },
-  {
-    kind: 'export',
-    label: 'Export .zip',
-    detail: 'The code export from your site settings.',
-    brings: ['Every static page as it renders', 'The full stylesheet', 'Images, video and fonts'],
-    misses: [
-      'No CMS content — collection pages come across empty',
-      'Variables arrive as plain CSS',
-    ],
-    requirement: 'Needs a paid Webflow plan',
-  },
-  {
-    kind: 'url',
-    label: 'Published URL',
-    detail: 'Reads the live site, like a visitor.',
-    brings: ['Every page that is linked from another', 'How the site actually renders'],
-    misses: [
-      'No CMS schema — only the rows that happen to be published',
-      'No component boundaries',
-      'Nothing behind a password',
-    ],
-    requirement: null,
-  },
-] as const;
+/**
+ * Something only the user can settle.
+ *
+ * The skill's rule is ask rather than substitute, so these are first-class:
+ * a question, why it matters, and what the agent would do. A recommendation is
+ * required — bringing a decision without one is just handing the work back.
+ */
+export interface OpenQuestion {
+  id: string;
+  question: string;
+  why: string;
+  recommendation: string;
+}
 
+/**
+ * The four-part answer to "where are we".
+ *
+ * Every report the agent makes has these parts, and so does this panel, so the
+ * screen and the terminal never tell different stories. `notDone` is listed
+ * explicitly rather than left as "everything not in `done`" — the difference
+ * between a migration that is honest and one that is not is almost entirely
+ * whether the gaps are written down somewhere the user looks.
+ */
+export interface MigrationStatus {
+  /** The site being rebuilt. The only input the whole feature takes. */
+  sourceUrl: string;
+  startedAt: string;
+  phases: MigrationPhase[];
+  /** What the agent is doing this minute, or null when it is waiting. */
+  doing: string | null;
+  /** Finished and verified, each with the evidence that says so. */
+  done: string[];
+  /** Known remaining work. */
+  notDone: string[];
+  /**
+   * What cannot come across at all, and why.
+   *
+   * Kept apart from `notDone` because they are different promises: one is work
+   * outstanding, the other is work that will never happen and that the user
+   * has to plan around.
+   */
+  cannotCarry: { item: string; reason: string }[];
+  /** Decisions waiting on the user. A migration with one of these is stalled. */
+  needsYou: OpenQuestion[];
+}
 /** One breakpoint's comparison. Webflow authors at 1440/991/767/479. */
 export interface BreakpointComparison {
   breakpoint: number;
@@ -256,3 +270,26 @@ async function loadHistory(base: string): Promise<FidelityRun['history']> {
 
   return entries.filter((e): e is FidelityRun['history'][number] => e !== null);
 }
+
+/**
+ * Load the migration's own account of itself.
+ *
+ * Written by the agent as it works, and read here. Deliberately a separate
+ * read from the fidelity captures: the scores say how good the rebuild is, and
+ * this says what has been attempted at all. A page can be absent from both,
+ * and the panel has to be able to say so.
+ */
+export async function loadMigrationStatus(base: string): Promise<MigrationStatus> {
+  const res = await fetch(`${base}/migration.json`);
+  if (!res.ok) throw new Error(`No migration status at ${base}`);
+  return (await res.json()) as MigrationStatus;
+}
+
+/** Phase labels, kept beside the type so the rail and the skill agree. */
+export const PHASE_LABEL: Record<MigrationPhaseId, string> = {
+  survey: 'Survey',
+  'design-system': 'Design system',
+  homepage: 'Homepage',
+  templates: 'Templates',
+  remainder: 'Remainder',
+};
