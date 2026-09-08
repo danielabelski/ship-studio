@@ -22,8 +22,8 @@ Every fix below came from watching one fail, not from reasoning about it.
 
 ### The method converges
 
-Two independent from-scratch rebuilds of `arist.com`'s homepage, each starting
-from an empty Astro starter:
+Two independent from-scratch rebuilds of the same marketing site's homepage,
+each starting from an empty Astro starter:
 
 ```
 trial 1   62.18%  →  77.72%  →  99.62%  →  99.87%
@@ -35,7 +35,7 @@ All three reached the Matches band and one reached parity. Trial 2 is the more
 interesting: it went backwards for two passes and recovered anyway — see "the
 score only goes up".
 
-Both arist runs then did the thing the worst-breakpoint rule exists for. Each
+Both of those runs then did the thing the worst-breakpoint rule exists for. Each
 scored ~99.9% at its widest width, ran the full set, found a mobile width at
 93.2%, and fixed *that* — a mean would have called both finished.
 
@@ -89,12 +89,13 @@ exactly when the rebuild differs most. "The widest content box is 1140 here and
 
 ### The agent drives
 
-Asked to migrate `arist.com`, the survey ended with seven decisions, each
-carrying its own recommendation — where content should live and whether that
-means a CMS, an unlicensable typeface, where a form submits, whether to copy 62
-image assets, verbatim content or marked placeholders, whether to reimplement
-scroll motion, and how a `?pillar=` filter survives a static build. Told "you
-pick", it took all seven and recorded which way it went in `MIGRATION.md`.
+Asked to migrate a 30-route marketing site, the survey ended with seven
+decisions, each carrying its own recommendation — where content should live and
+whether that means a CMS, an unlicensable typeface, where a form submits,
+whether to copy 62 image assets, verbatim content or marked placeholders,
+whether to reimplement scroll motion, and how a `?pillar=` filter survives a
+static build. Told "you pick", it took all seven and recorded which way it went
+in `MIGRATION.md`.
 
 Asking at the end of the survey is the point: it is the first moment there is
 enough to ask well, and the last moment asking is cheap. An earlier run raised

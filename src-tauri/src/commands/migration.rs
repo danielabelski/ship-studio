@@ -792,11 +792,11 @@ mod tests {
 
     /// The exact file a real run produced, reduced to the parts that broke.
     ///
-    /// Kept verbatim rather than tidied: the value of a regression test written
-    /// from a live failure is that it preserves what actually happened, not a
-    /// cleaner version of it.
+    /// Kept verbatim rather than tidied, save for the site's address: the value
+    /// of a regression test written from a live failure is that it preserves
+    /// what actually happened, not a cleaner version of it.
     const AS_AN_AGENT_WROTE_IT: &str = r#"{
-      "sourceUrl": "https://arist.com/",
+      "sourceUrl": "https://example.com/",
       "startedAt": "2026-09-08T02:30:08Z",
       "phases": [
         { "id": "survey", "label": "Survey", "status": "done", "detail": "18 URLs." },
