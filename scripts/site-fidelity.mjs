@@ -396,13 +396,16 @@ async function capture(url, width, settleMs, extraCss) {
  * Where a captured original is kept between passes.
  *
  * Keyed by URL and width so two templates, or two breakpoints, never collide.
- * Lives beside the runs rather than in a temp directory, so it is obvious what
- * it is, it is cleaned up with the project, and a stale one can simply be
- * deleted.
+ * Kept inside the project rather than a temp directory, so it is obvious what
+ * it is, it is cleaned up with the project, and a stale one can be deleted.
+ *
+ * One level above the runs, deliberately. Anything sitting *among* them gets
+ * read as one — the panel skips it for having no report, but every tool that
+ * lists runs has to know to ignore it, and one already did not.
  */
 function referenceCachePath(outDir, url, width) {
   const key = createHash('sha1').update(`${url}@${width}`).digest('hex').slice(0, 12);
-  return path.join(path.dirname(outDir), '.reference-cache', `${key}.png`);
+  return path.join(path.dirname(outDir), '..', '.reference-cache', `${key}.png`);
 }
 
 /**

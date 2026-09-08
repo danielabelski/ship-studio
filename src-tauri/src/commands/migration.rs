@@ -409,6 +409,12 @@ fn runs_at(root: &Path) -> Result<Vec<FidelityReportFile>, CommandError> {
         if !entry.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
+        // A run is a directory the capture tool wrote. Anything hidden beside
+        // them — a cache, an editor's leavings — is not one, and is skipped by
+        // name rather than only by failing to hold a report.
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
         let dir = entry.path();
         let Ok(raw) = std::fs::read_to_string(dir.join("report.json")) else {
             continue;
@@ -672,6 +678,14 @@ mod tests {
         // A directory with no report is skipped rather than failing the read:
         // the agent may well be mid-capture when someone opens the panel.
         std::fs::create_dir_all(dir.path().join(FIDELITY_DIR).join("in-progress")).unwrap();
+        // And a hidden directory is not a run even if it does hold a report.
+        let cache = dir.path().join(FIDELITY_DIR).join(".reference-cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(
+            cache.join("report.json"),
+            r#"{"label":"home","score":1,"name":"not-a-run"}"#,
+        )
+        .unwrap();
 
         let runs = runs_at(dir.path()).expect("reads");
         let order: Vec<&str> = runs

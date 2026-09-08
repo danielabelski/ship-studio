@@ -39,6 +39,9 @@ async function snapshot(root) {
       withFileTypes: true,
     })) {
       if (!e.isDirectory()) continue;
+      // A run is a directory the capture tool wrote; anything else living
+      // beside them is not one.
+      if (e.name.startsWith('.')) continue;
       try {
         const r = JSON.parse(
           await readFile(path.join(root, '.shipstudio/fidelity', e.name, 'report.json'), 'utf8')
