@@ -92,21 +92,18 @@ pub fn get_gh_command_for_project(project_path: &std::path::Path) -> Command {
     cmd
 }
 
-/// Parse "owner/repo" from a GitHub URL (HTTPS or SSH format)
+/// Parse "owner/repo" from a GitHub URL (HTTPS or SSH format).
+///
+/// Delegates to [`parse_remote`](crate::commands::git::parse_remote) so there
+/// is exactly one answer in the codebase to "is this remote GitHub?". This used
+/// to be a substring search for `github.com/`, which took the *first* match
+/// anywhere in the string: `https://evil.com/github.com/owner/repo.git` parsed
+/// as the GitHub repo `owner/repo`, and `github.com.example.com` was rejected
+/// only by luck of punctuation. Matching on the parsed host cannot be spoofed
+/// by a path.
 pub fn parse_github_repo(url: &str) -> Option<String> {
-    // HTTPS: https://github.com/owner/repo.git
-    if let Some(start) = url.find("github.com/") {
-        let rest = &url[start + 11..];
-        let end = rest.find(".git").unwrap_or(rest.len());
-        return Some(rest[..end].trim_end_matches('/').to_string());
-    }
-    // SSH: git@github.com:owner/repo.git
-    if let Some(start) = url.find("github.com:") {
-        let rest = &url[start + 11..];
-        let end = rest.find(".git").unwrap_or(rest.len());
-        return Some(rest[..end].trim_end_matches('/').to_string());
-    }
-    None
+    let remote = crate::commands::git::parse_remote(url)?;
+    remote.is_github().then_some(remote.path)
 }
 
 #[tauri::command]
@@ -1338,6 +1335,20 @@ mod tests {
             parse_github_repo("https://github.com/owner/repo").as_deref(),
             Some("owner/repo")
         );
+    }
+
+    /// A host that merely *contains* github.com, or a path that does, is not
+    /// GitHub. The old substring parser answered "owner/repo" to the first of
+    /// these, which turned another forge's remote into a GitHub link.
+    #[test]
+    fn parse_github_repo_cannot_be_spoofed_by_the_path_or_host() {
+        for url in [
+            "https://evil.com/github.com/owner/repo.git",
+            "https://github.com.evil.com/owner/repo.git",
+            "git@gitlab.com:owner/github.com/repo.git",
+        ] {
+            assert_eq!(parse_github_repo(url), None, "{url} is not GitHub");
+        }
     }
 
     #[test]

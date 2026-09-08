@@ -102,14 +102,19 @@ pub fn parse_remote(url: &str) -> Option<RemoteRef> {
         return None;
     }
 
-    let (authority, path) = if let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .or_else(|| url.strip_prefix("ssh://"))
-        .or_else(|| url.strip_prefix("git://"))
-    {
+    // URL schemes are case-insensitive and git honours that — it will happily
+    // fetch from `HTTPS://github.com/owner/repo.git`. Matching the scheme
+    // case-sensitively made that spelling unparseable, which for a GitHub
+    // remote meant reporting no remote at all: the very bug this module exists
+    // to fix. Only the scheme is lowercased; a repo path is case-sensitive.
+    let scheme = url
+        .find("://")
+        .map(|idx| (url[..idx].to_ascii_lowercase(), idx))
+        .filter(|(scheme, _)| matches!(scheme.as_str(), "https" | "http" | "ssh" | "git"));
+
+    let (authority, path) = if let Some((_, idx)) = scheme {
         // scheme://[user@]host[:port]/path
-        let (authority, path) = rest.split_once('/')?;
+        let (authority, path) = url[idx + 3..].split_once('/')?;
         (authority, path)
     } else if let Some((authority, path)) = url.split_once(':') {
         // scp-like: [user@]host:path. Windows drive letters (`C:\…`) and any
@@ -162,6 +167,45 @@ mod tests {
     #[test]
     fn parses_https_remotes_without_the_git_suffix() {
         assert_eq!(parsed("https://github.com/owner/repo").path, "owner/repo");
+    }
+
+    /// Every spelling in this list was confirmed against real git: each one
+    /// reaches the host when handed to `git ls-remote`, so treating any of them
+    /// as unparseable would report "no remote" for a working GitHub project.
+    #[test]
+    fn parses_every_url_form_real_git_accepts() {
+        for url in [
+            "https://github.com/owner/repo.git",
+            "https://github.com/owner/repo/",
+            "https://github.com:443/owner/repo.git",
+            "https://user:tok@github.com/owner/repo.git",
+            "ssh://git@github.com/owner/repo.git",
+            "git@github.com:owner/repo.git",
+            // Schemes are case-insensitive; git fetches from this happily.
+            "HTTPS://github.com/owner/repo.git",
+            "Git@GitHub.com:owner/repo.git",
+        ] {
+            let r = parsed(url);
+            assert_eq!(r.host, "github.com", "host for {url}");
+            assert_eq!(r.path, "owner/repo", "path for {url}");
+            assert!(r.is_github(), "{url} should be GitHub");
+        }
+    }
+
+    /// Credentials embedded in the URL must not be mistaken for the host.
+    #[test]
+    fn userinfo_is_not_the_host() {
+        let r = parsed("https://user:tok@gitlab.com/group/app.git");
+        assert_eq!(r.host, "gitlab.com");
+        assert_eq!(r.forge, GitForge::GitLab);
+    }
+
+    /// A scheme we do not speak is not a remote we can classify.
+    #[test]
+    fn rejects_schemes_that_are_not_git_transports() {
+        for url in ["file:///tmp/repo.git", "ftp://host.com/repo.git"] {
+            assert_eq!(parse_remote(url), None, "{url} should not parse");
+        }
     }
 
     #[test]
