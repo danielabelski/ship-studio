@@ -263,7 +263,10 @@ third template is a decision that arrives too late to be cheap.
 and you keep it current — it is what survives the conversation ending.
 
 **Say you are starting before you start.** Mark the phase you are entering as
-active and write one line about what you are doing, *then* do it. A survey runs
+active and write one line about what you are doing, *then* do it — and close
+the phase behind you as you go, so exactly one is ever active. Two at once
+leaves the reader unable to say where the work is, which is the one question
+the file exists to answer. A survey runs
 for several minutes; a status that still reads "not started" throughout is
 indistinguishable, from the outside, from an agent that never began — and the
 user's only view of you is that file. This is the difference between a long job
