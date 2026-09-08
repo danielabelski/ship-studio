@@ -385,6 +385,18 @@ nothing said to go back.
 running** — it will name what moved, which is usually a single value applied in
 one more place than intended.
 
+**Before marking a phase done, re-read the reports — do not rely on
+remembering.** A run finished a full six-width verification in which one page
+came back at 38.62% at a single width, and still recorded nothing outstanding.
+It had the number; it had stopped looking at it. Open the last report for every
+page in the phase and check its worst breakpoint against the bar.
+
+**A single width wildly out of line with its neighbours, at identical page
+height, is a capture artefact — not a defect.** A real layout fault changes how
+tall the page is. When the heights match and one width alone is far off, an
+image did not render for that shot: re-measure it before chasing it. That is
+also the only case where re-running the same command is the right move.
+
 **Stop conditions.** Three passes with no improvement over the best score: stop
 looping, say what you tried and what you think is in the way, and ask. Grinding
 silently is worse than asking, and so is grinding loudly.
