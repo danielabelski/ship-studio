@@ -413,11 +413,22 @@ substitute. These belong in `MIGRATION.md`, not hidden inside a percentage.
 Same loop, one template at a time, hardest first if you have a choice. Update
 `MIGRATION.md` as each one lands, with its score.
 
-Build shared components once and compose pages from them. If a second template
-makes you want to change a component the first one uses, that is real — go and
-re-verify the first template afterwards. A fix that silently regresses a page
-you already signed off is the failure mode of this phase, and re-measuring is
-cheap.
+Build shared components once and compose pages from them — that is what makes
+the second template faster than the first, and the tenth faster than the
+second.
+
+**When a template lands, re-measure one earlier page that shares components
+with it.** One width is enough. Not "if you think you changed something
+shared": every page after the first is built out of parts the earlier ones are
+also using, and the whole point of a shared component is that a change reaches
+places you are not looking at. An agent that only re-checks when it remembers
+editing a file will miss exactly the regressions worth catching, because the
+ones that matter are the ones it did not realise it caused.
+
+The cost is about a minute against a cached reference. The alternative is
+finding out at the end that page three broke page one, with eight more built on
+top of the same mistake — and a signed-off page that quietly regressed is worse
+than one that was never finished, because it has already been believed.
 
 ---
 
