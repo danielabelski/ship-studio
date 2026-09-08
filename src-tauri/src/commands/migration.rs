@@ -788,7 +788,12 @@ mod tests {
 
         let runs = runs_at(dir.path()).expect("reads");
         assert_eq!(runs.len(), 1);
-        assert!(runs[0].dir.ends_with("batch/page"));
+        // `Path::ends_with` compares components, so it is right on both
+        // platforms. `str::ends_with` is a literal compare: the dir is built
+        // from `to_string_lossy` on a native path, so on Windows it ends
+        // "batch\\page" and could never match a forward slash. The code was
+        // correct; only this assertion was not.
+        assert!(std::path::Path::new(&runs[0].dir).ends_with("batch/page"));
     }
 
     #[test]
