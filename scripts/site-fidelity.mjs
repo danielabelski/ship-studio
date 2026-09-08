@@ -30,14 +30,16 @@
  *   --breakpoints 1440,991,767,479   override the widths
  *   --label hero                     name this template in the report
  *   --settle 1200                    ms to wait after load before capturing
+ *   --refresh-reference              re-capture the original, ignoring the cache
  *
  * Writes `<out>/<label>/<width>/{reference,rebuild,diff}.png` and a
  * `report.json` in the shape the Fidelity panel consumes.
  */
 
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { COMPARE_IN_PAGE, PIXEL_THRESHOLD_SQ } from './site-fidelity-compare.mjs';
 
@@ -66,6 +68,17 @@ const IMAGE_WAIT_MS = 6000;
 
 /** How long to wait for webfonts to swap in before giving up on them. */
 const FONT_WAIT_MS = 5000;
+
+/**
+ * How long a cached capture of the original stays usable.
+ *
+ * The original is not changing while someone rebuilds it, and re-capturing it
+ * every pass doubles the cost of a loop whose whole value is being cheap
+ * enough to run often. An hour is far longer than a work session and far
+ * shorter than "stale enough to mislead" — and `--refresh-reference` is there
+ * for the case where the source really did change.
+ */
+const REFERENCE_CACHE_MS = 60 * 60 * 1000;
 
 /**
  * Ceiling on a single capture.
@@ -268,7 +281,22 @@ async function capture(url, width, settleMs, extraCss) {
         });
       `,
     });
-    await page.send('Page.navigate', { url });
+    /*
+     * A navigation that failed must not become a score.
+     *
+     * CDP reports the failure in the reply and then leaves Chrome showing its
+     * own error page — which screenshots perfectly well. A trial against a
+     * host with a TLS problem duly produced "39.77%", a number derived
+     * entirely from comparing an error page to a rebuild, and the agent spent
+     * the next ten minutes trying to improve it.
+     *
+     * A number nobody can tell is meaningless is worse than no number, so this
+     * is loud and it names the URL.
+     */
+    const nav = await page.send('Page.navigate', { url });
+    if (nav?.errorText) {
+      throw new Error(`could not load ${url}: ${nav.errorText}`);
+    }
 
     /*
      * Settle: document ready first, then webfonts, on separate budgets.
@@ -364,6 +392,51 @@ async function capture(url, width, settleMs, extraCss) {
   }
 }
 
+/**
+ * Where a captured original is kept between passes.
+ *
+ * Keyed by URL and width so two templates, or two breakpoints, never collide.
+ * Lives beside the runs rather than in a temp directory, so it is obvious what
+ * it is, it is cleaned up with the project, and a stale one can simply be
+ * deleted.
+ */
+function referenceCachePath(outDir, url, width) {
+  const key = createHash('sha1').update(`${url}@${width}`).digest('hex').slice(0, 12);
+  return path.join(path.dirname(outDir), '.reference-cache', `${key}.png`);
+}
+
+/**
+ * The original at this width — from cache when it is fresh, otherwise captured.
+ *
+ * Only the *original* is ever cached. The rebuild is the thing being changed,
+ * and serving a stale capture of it would report a fix that has not happened,
+ * which is the one failure this whole tool exists to prevent.
+ */
+async function referenceCapture(url, width, settleMs, outDir, refresh) {
+  const cached = referenceCachePath(outDir, url, width);
+
+  if (!refresh) {
+    try {
+      const age = Date.now() - (await stat(cached)).mtimeMs;
+      if (age < REFERENCE_CACHE_MS) {
+        const data = await readFile(cached);
+        return { data: data.toString('base64'), cached: true };
+      }
+    } catch {
+      /* not cached yet */
+    }
+  }
+
+  const shot = await withTimeout(
+    capture(url, width, settleMs),
+    CAPTURE_TIMEOUT_MS,
+    `capturing ${url} at ${width}px`
+  );
+  await mkdir(path.dirname(cached), { recursive: true });
+  await writeFile(cached, Buffer.from(shot.data, 'base64'));
+  return { ...shot, cached: false };
+}
+
 // ─── Comparison ────────────────────────────────────────────────────────────
 
 
@@ -413,6 +486,7 @@ async function main() {
   const label = args.label ?? 'home';
   const outDir = path.resolve(args.out ?? 'prototypes/site-migration/run');
   const settleMs = Number(args.settle ?? 900);
+  const refreshReference = args['refresh-reference'] === 'true' || args['refresh-reference'] === '';
   const rebuildCss = args['rebuild-css']
     ? await readFile(path.resolve(args['rebuild-css']), 'utf8')
     : null;
@@ -442,11 +516,7 @@ async function main() {
     const results = [];
     for (const width of breakpoints) {
       process.stdout.write(`  ${label} @ ${width}px … `);
-      const ref = await withTimeout(
-        capture(reference, width, settleMs),
-        CAPTURE_TIMEOUT_MS,
-        `capturing ${reference} at ${width}px`
-      );
+      const ref = await referenceCapture(reference, width, settleMs, outDir, refreshReference);
       const reb = await withTimeout(
         capture(rebuild, width, settleMs, rebuildCss),
         CAPTURE_TIMEOUT_MS,
@@ -468,7 +538,10 @@ async function main() {
 
       const { diff: _diff, ...summary } = cmp;
       results.push({ breakpoint: width, ...summary, dir: path.relative(process.cwd(), dir) });
-      console.log(`${summary.score}%  (${summary.referenceHeight}px vs ${summary.rebuildHeight}px)`);
+      console.log(
+        `${summary.score}%  (${summary.referenceHeight}px vs ${summary.rebuildHeight}px)` +
+          (ref.cached ? '  [original from cache]' : '')
+      );
     }
 
     const report = {
