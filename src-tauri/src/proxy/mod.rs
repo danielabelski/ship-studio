@@ -937,16 +937,25 @@ fn websocket_retry_exhausted_is_expected(_kind: std::io::ErrorKind) -> bool {
 }
 
 /// Connect failures that mean "the dev server isn't listening right now":
-/// refused (nothing bound to the port) or silent (SYN unanswered mid-restart,
-/// surfaced as a per-attempt timeout). Both are normal states while a dev
+/// refused (nothing bound to the port), silent (SYN unanswered mid-restart,
+/// surfaced as a per-attempt timeout), or reset (a listening socket answering
+/// with an RST while it tears down). All three are normal states while a dev
 /// server restarts or is stopped — an environment condition, not a proxy bug —
 /// so exhausting the retry budget on them logs at warn level instead of
 /// auto-filing an error report. Shared by the WebSocket (issue #532) and
 /// plain-HTTP (issue #683) upstream connects.
+///
+/// `ConnectionReset` belongs here for the same reason it belongs in
+/// [`upstream_connection_lost_kind`]: on macOS a restarting dev server can
+/// answer a connect with an RST rather than refusing outright, and that is the
+/// identical condition one step earlier in the request. Leaving it out filed a
+/// bug report every time someone restarted their dev server (issue #934).
 fn upstream_unavailable(kind: std::io::ErrorKind) -> bool {
     matches!(
         kind,
-        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+        std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::TimedOut
+            | std::io::ErrorKind::ConnectionReset
     )
 }
 
@@ -1056,8 +1065,13 @@ async fn connect_upstream_with_retry(
                         < connect_deadline;
                 if retryable {
                     // A timed-out attempt already consumed its slice of the
-                    // budget; only refused connections need the backoff pause.
-                    if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                    // budget. Refused and reset both come back instantly, so
+                    // retrying either without a pause would spin the CPU flat
+                    // out until the deadline.
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::ConnectionReset
+                    ) {
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                     }
                     continue;
@@ -1434,6 +1448,10 @@ mod tests {
         // WebSocket (issue #532) and plain-HTTP (issue #683) connect paths.
         assert!(upstream_unavailable(std::io::ErrorKind::ConnectionRefused));
         assert!(upstream_unavailable(std::io::ErrorKind::TimedOut));
+        // A socket mid-teardown can answer a connect with an RST rather than
+        // refusing it — the same restart, a different syscall answer, and it
+        // used to file a bug report every time (issue #934).
+        assert!(upstream_unavailable(std::io::ErrorKind::ConnectionReset));
         // Anything else is a genuine proxy problem and stays at error level.
         assert!(!upstream_unavailable(std::io::ErrorKind::PermissionDenied));
         assert!(!upstream_unavailable(std::io::ErrorKind::AddrNotAvailable));

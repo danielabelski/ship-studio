@@ -13,7 +13,14 @@
  * @module components/workspace/SpotifyWidget
  */
 
-import { useCallback, useEffect, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type SyntheticEvent,
+} from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { AlertIcon, PauseIcon, PlayIcon, SkipNextIcon, SkipPreviousIcon } from '@/components/icons';
 import SpotifyLogoGraphic from '@/assets/graphics/spotify-logo.svg?react';
@@ -24,6 +31,8 @@ import { useOptionalToast } from '../../contexts/ToastContext';
 import { useCommands } from '../../commands/useCommands';
 import { isMac } from '../../lib/setup';
 import { asCommandError, formatCommandError } from '../../lib/errors';
+import { logger } from '../../lib/logger';
+import { createPollFailureGate } from '../../lib/pollFailureGate';
 import { getSpotifyState, spotifyControl, type SpotifyState } from '../../lib/spotify';
 import { getSpotifyWidgetEnabled, SPOTIFY_WIDGET_ENABLED_CHANGED_EVENT } from '../../lib/settings';
 
@@ -32,6 +41,14 @@ const PLAYING_INTERVAL_MS = 1000;
 /** Back off while paused, idle, or Spotify isn't running — each poll spawns
  *  a process on the Rust side, so idle cost matters. */
 const IDLE_INTERVAL_MS = 5000;
+
+/**
+ * Consecutive failed state polls tolerated before the widget says anything.
+ * At the playing cadence that is a few seconds of silence, which is the right
+ * trade: a slow Apple Events round-trip resolves itself well inside it, and a
+ * widget that is actually broken stays broken past it (issue #930).
+ */
+const POLL_FAILURES_BEFORE_TOAST = 3;
 
 /** macOS System Settings deep link to Privacy & Security → Automation. */
 const AUTOMATION_SETTINGS_URL =
@@ -68,6 +85,8 @@ export function SpotifyWidget({ isSidebarHidden }: SpotifyWidgetProps) {
   const [enabled, setEnabled] = useState(false);
   const [isWindowFocused, setIsWindowFocused] = useState(isWindowActive);
   const [state, setState] = useState<SpotifyState | null>(null);
+  // Decides when a run of failed state polls is worth interrupting over.
+  const pollFailuresRef = useRef(createPollFailureGate(POLL_FAILURES_BEFORE_TOAST));
   // Flips the icon/position immediately on click; cleared as soon as a fresh
   // poll reconciles with the real state, so a stuck backend can't leave it lying.
   const [optimisticPlaying, setOptimisticPlaying] = useState<boolean | null>(null);
@@ -112,8 +131,24 @@ export function SpotifyWidget({ isSidebarHidden }: SpotifyWidgetProps) {
       setState(next);
       setOptimisticPlaying(null);
       setOptimisticPosition(null);
+      pollFailuresRef.current.recordSuccess();
     } catch (err) {
-      showToast(formatCommandError(asCommandError(err)), 'error');
+      // A background poll is not a user action, and this one spawns an
+      // `osascript` on a 2s leash: an Apple Events round-trip that is slow
+      // because the machine is busy fails here and succeeds a second later.
+      // Toasting the first failure meant a transient timeout interrupted the
+      // user (issue #930). Ride out a few, then say something once — and only
+      // once — so a genuinely broken widget still speaks up.
+      const message = formatCommandError(asCommandError(err));
+      const action = pollFailuresRef.current.recordFailure();
+      if (action === 'surface') {
+        showToast(message, 'error');
+      } else if (action === 'suppress') {
+        logger.warn('[Spotify] state poll failed — retrying', {
+          consecutiveFailures: pollFailuresRef.current.consecutiveFailures,
+          error: message,
+        });
+      }
     }
   }, [showToast]);
 
