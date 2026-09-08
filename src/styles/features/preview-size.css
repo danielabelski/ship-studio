@@ -45,7 +45,6 @@
    it looks and behaves like the comment/edit toggles beside it. Only the bits
    specific to showing a measurement live here. */
 .preview-dimensions {
-  gap: var(--spacing-3xs);
   font-size: var(--font-size-body-md);
   font-variant-numeric: tabular-nums;
   user-select: none;
