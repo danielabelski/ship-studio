@@ -13,6 +13,16 @@ import { trackPageview } from '../lib/analytics';
 interface UseWorkspaceLayoutParams {
   /** Whether GitHub is connected for the current project */
   isGitHubConnected: boolean;
+  /**
+   * Whether the branches tab has anything to show — true for any project with
+   * a remote, GitHub or not.
+   *
+   * Branch management is plain git. Gating it on GitHub meant a GitLab project
+   * selecting "Branches" was silently returned to the preview tab, with no way
+   * to reach its own branches. Defaults to `isGitHubConnected`, so a caller
+   * that doesn't pass it keeps the old behaviour.
+   */
+  canManageBranches?: boolean;
 }
 
 type WorkspaceTab = 'preview' | 'code' | 'branches' | 'prs';
@@ -24,7 +34,11 @@ const TAB_SCREEN: Record<WorkspaceTab, string> = {
   prs: 'Workspace - Pull Requests',
 };
 
-export function useWorkspaceLayout({ isGitHubConnected }: UseWorkspaceLayoutParams) {
+export function useWorkspaceLayout({
+  isGitHubConnected,
+  canManageBranches,
+}: UseWorkspaceLayoutParams) {
+  const branchesAvailable = canManageBranches ?? isGitHubConnected;
   // Health-logs panel visibility (takes over the terminal pane when the user
   // opens the code-health log feed).
   const [showHealthLogs, setShowHealthLogs] = useState(false);
@@ -33,21 +47,24 @@ export function useWorkspaceLayout({ isGitHubConnected }: UseWorkspaceLayoutPara
   const [isPreviewHidden, setIsPreviewHidden] = useState(false);
 
   // Workspace tab state (preview/code/branches/prs). The raw value is what the
-  // user selected; `workspaceTab` below projects it through the GitHub-connected
-  // gate so branches/prs fall back to preview when GitHub isn't available. We
-  // keep the raw value so the user's last selection comes back on reconnect.
+  // user selected; `workspaceTab` below projects each of branches/prs through
+  // its own gate and falls back to preview when that tab can't apply. We keep
+  // the raw value so the user's last selection comes back on reconnect.
   const [workspaceTabRaw, setWorkspaceTabRaw] = useState<WorkspaceTab>('preview');
 
   // Tab switches are recorded as the `$pageview` below, not as a separate
   // click event — one screen change, one event.
   const setWorkspaceTab = setWorkspaceTabRaw;
 
-  const workspaceTab: WorkspaceTab =
-    !isGitHubConnected && (workspaceTabRaw === 'branches' || workspaceTabRaw === 'prs')
-      ? 'preview'
-      : workspaceTabRaw;
+  // Branches needs a repo; pull requests need GitHub specifically. Collapsing
+  // the two sent GitLab projects to preview when they asked for branches.
+  const tabUnavailable =
+    (workspaceTabRaw === 'branches' && !branchesAvailable) ||
+    (workspaceTabRaw === 'prs' && !isGitHubConnected);
 
-  // Pageview tracks the *projected* tab (after the GitHub-connected gate),
+  const workspaceTab: WorkspaceTab = tabUnavailable ? 'preview' : workspaceTabRaw;
+
+  // Pageview tracks the *projected* tab (after the availability gates),
   // so a forced fallback when GitHub disconnects is recorded as a screen
   // change. Also fires once on mount with the initial resolved tab — replaces
   // the seed previously fired from useProjectLifecycle.

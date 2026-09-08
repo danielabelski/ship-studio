@@ -7,9 +7,11 @@
 //! - `branches` — list, create, delete, switch branches
 //! - `sync` — fetch, pull, merge, commit, discard
 //! - `stash` — stash management, backups, restore
+//! - `remote` — what forge a remote URL points at
 
 mod branches;
 mod graph;
+mod remote;
 mod stash;
 mod status;
 mod sync;
@@ -17,6 +19,7 @@ mod worktree;
 
 pub use branches::*;
 pub use graph::*;
+pub use remote::*;
 pub use stash::*;
 pub use status::*;
 pub use sync::*;
@@ -38,9 +41,41 @@ const GIT_NETWORK_TIMEOUT_SECS: u64 = 60;
 /// `BACKEND_HUMANIZED_GIT_PHRASES` keys on (same as github.rs's
 /// `GH_PUSH_TIMEOUT_MESSAGE`), so the frontend still recognizes it as
 /// already-humanized and doesn't re-word it.
+///
+/// Says "the remote" rather than "GitHub": this fires for *every* network git
+/// op, and `run_git_net` doesn't know the host. Naming GitHub here told GitLab
+/// and self-managed users their push timed out against a service they don't
+/// use. The GitHub-specific timeout copy lives on `GH_PUSH_TIMEOUT_MESSAGE`,
+/// which only ever wraps a `gh` invocation.
 pub(crate) const GIT_NET_TIMEOUT_MESSAGE: &str =
-    "GitHub took too long to respond and the operation timed out. Larger projects can take a \
+    "The remote took too long to respond and the operation timed out. Larger projects can take a \
      while to upload — check your internet connection and try again.";
+
+/// The `-c` arguments that route `github.com` credentials through `gh`.
+///
+/// Two entries, in order, both scoped to the `https://github.com` URL:
+/// 1. an empty value, which resets the helper list git has accumulated so far
+///    (so a stale `osxkeychain` entry can't shadow `gh`), and
+/// 2. `gh auth git-credential`.
+///
+/// Because the key is `credential.https://github.com.helper` rather than the
+/// bare `credential.helper`, git consults neither entry for a request to any
+/// other host — a GitLab remote keeps the machine's own credential helpers.
+/// See [`run_git_net`] for what the unscoped version broke.
+fn github_credential_helper_args(gh: &std::path::Path) -> [String; 2] {
+    [
+        "credential.https://github.com.helper=".to_string(),
+        // Git hands a `!`-prefixed helper to `sh -c`, which word-splits on
+        // spaces — so the path must be quoted or a default Windows install
+        // (`C:\Program Files\GitHub CLI\gh.exe`) becomes the command
+        // `C:\Program` (issue #265). Single quotes keep backslashes literal
+        // under POSIX sh.
+        format!(
+            "credential.https://github.com.helper=!'{}' auth git-credential",
+            gh.display()
+        ),
+    ]
+}
 
 /// Run a git command that touches the network (fetch / pull / push), scoped to
 /// the workspace the project at `cwd` belongs to.
@@ -59,6 +94,17 @@ pub(crate) const GIT_NET_TIMEOUT_MESSAGE: &str =
 /// back to the machine's native login — the same identity every other GitHub
 /// feature in the app already uses. If `gh` isn't installed we skip the override
 /// and fall back to git's native credential resolution.
+///
+/// The override is scoped to `github.com` by URL, because `gh auth
+/// git-credential` answers for no other host. Setting the *unscoped*
+/// `credential.helper` — as this did until the scoping was added — cleared the
+/// machine's own helper and substituted one that returns nothing for a GitLab
+/// (or any non-GitHub) remote. With `GIT_TERMINAL_PROMPT=0` below there is
+/// then no fallback left, so every push and fetch to such a remote failed with
+/// `could not read Username`, for users whose credentials were sitting in the
+/// keychain the whole time. Git matches `credential.<url>.helper` per request,
+/// so scoping it leaves non-GitHub remotes on the machine's normal
+/// credential resolution and changes nothing for GitHub.
 pub(crate) async fn run_git_net(
     args: &[&str],
     cwd: &std::path::Path,
@@ -70,21 +116,15 @@ pub(crate) async fn run_git_net(
     // sets the working directory.
     let mut cmd = crate::utils::git_command_in(cwd)?;
 
-    // Force HTTPS credential resolution through gh (which reads the GH_CONFIG_DIR
-    // injected below) for every workspace. The empty `credential.helper=` first
-    // clears any inherited helper (e.g. osxkeychain) so a globally-cached
-    // credential can't shadow gh. These are git *global* options, so they must
-    // precede the subcommand in `args`.
+    // Route github.com credentials through gh (which reads the GH_CONFIG_DIR
+    // injected below) for every workspace. Scoped to that host by URL so a
+    // remote on any other forge keeps the machine's own credential helpers —
+    // see github_credential_helper_args. These are git *global* options, so
+    // they must precede the subcommand in `args`.
     if let Some(gh) = find_executable("gh") {
-        cmd.arg("-c").arg("credential.helper=");
-        // Git hands a `!`-prefixed helper to `sh -c`, which word-splits on
-        // spaces — so the path must be quoted or a default Windows install
-        // (`C:\Program Files\GitHub CLI\gh.exe`) becomes the command `C:\Program`
-        // (issue #265). Single quotes keep backslashes literal under POSIX sh.
-        cmd.arg("-c").arg(format!(
-            "credential.helper=!'{}' auth git-credential",
-            gh.display()
-        ));
+        for arg in github_credential_helper_args(&gh) {
+            cmd.arg("-c").arg(arg);
+        }
     }
 
     cmd.args(args)
@@ -1006,6 +1046,154 @@ mod tests {
             result.get("main").copied(),
             Some((0, 0)),
             "unknown remote should degrade to (0,0)"
+        );
+    }
+
+    // --- credential helper scoping -------------------------------------
+    //
+    // These drive real `git credential fill` rather than asserting on the
+    // argument strings, because the thing that broke GitLab was git's
+    // *resolution* behaviour, not the spelling of the config key. A stub
+    // stands in for `gh auth git-credential` (which answers only for
+    // github.com) and another for the machine's own helper.
+
+    /// Write an executable shell stub and return its path.
+    fn write_stub(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        path
+    }
+
+    /// Ask git which credentials it resolves for `host`, with the machine
+    /// helper and the gh substitute both installed the way `run_git_net`
+    /// installs them. Returns the username git settled on, if any.
+    fn resolve_username(host: &str, use_scoped_helper: bool) -> Option<String> {
+        let tmp = TempDir::new().unwrap();
+        // Stands in for `gh auth git-credential`: answers for github.com only.
+        //
+        // git appends the operation to the configured command, so this is
+        // invoked as `<stub> auth git-credential get` — the operation is the
+        // *last* argument, not the first. Checking `$1` would silently never
+        // match and make the github.com case look broken.
+        let gh = write_stub(
+            tmp.path(),
+            "gh-stub",
+            "#!/bin/sh\n\
+             for a in \"$@\"; do op=$a; done\n\
+             [ \"$op\" = get ] || exit 0\n\
+             while read -r l; do [ \"$l\" = 'host=github.com' ] && ok=1; done\n\
+             [ -n \"$ok\" ] && printf 'username=via-gh\\npassword=x\\n'\n\
+             exit 0\n",
+        );
+        // Stands in for the machine's own helper (osxkeychain et al).
+        let machine = write_stub(
+            tmp.path(),
+            "machine-stub",
+            "#!/bin/sh\n\
+             [ \"$1\" = get ] && printf 'username=via-machine\\npassword=x\\n'\n\
+             exit 0\n",
+        );
+
+        let mut cmd = std::process::Command::new("git");
+        cmd.arg("-c")
+            .arg(format!("credential.helper=!'{}'", machine.display()));
+
+        if use_scoped_helper {
+            for arg in github_credential_helper_args(&gh) {
+                cmd.arg("-c").arg(arg);
+            }
+        } else {
+            // The pre-fix shape: an unscoped reset plus an unscoped gh helper.
+            cmd.arg("-c").arg("credential.helper=");
+            cmd.arg("-c").arg(format!(
+                "credential.helper=!'{}' auth git-credential",
+                gh.display()
+            ));
+        }
+
+        let out = cmd
+            .arg("credential")
+            .arg("fill")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                write!(
+                    child.stdin.as_mut().unwrap(),
+                    "protocol=https\nhost={host}\n\n"
+                )?;
+                child.wait_with_output()
+            })
+            .unwrap();
+
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|l| l.strip_prefix("username=").map(str::to_string))
+    }
+
+    #[test]
+    fn github_credentials_still_resolve_through_gh() {
+        // The behaviour the unscoped version existed to guarantee: gh wins
+        // over a cached machine credential for github.com.
+        assert_eq!(
+            resolve_username("github.com", true).as_deref(),
+            Some("via-gh")
+        );
+    }
+
+    #[test]
+    fn non_github_remotes_keep_the_machines_own_credentials() {
+        // The regression this scoping fixes. Unscoped, git had only the gh
+        // helper to ask, gh declined to answer for a host it does not serve,
+        // and GIT_TERMINAL_PROMPT=0 left nothing to fall back to — so a
+        // GitLab push failed for a user whose credentials were right there.
+        assert_eq!(
+            resolve_username("gitlab.com", false),
+            None,
+            "pre-fix shape should resolve nothing for gitlab.com (the bug)"
+        );
+        assert_eq!(
+            resolve_username("gitlab.com", true).as_deref(),
+            Some("via-machine"),
+            "scoped helper should let the machine's own credentials through"
+        );
+        // Self-managed and other forges get the same treatment.
+        assert_eq!(
+            resolve_username("git.acme.com", true).as_deref(),
+            Some("via-machine")
+        );
+    }
+
+    #[test]
+    fn generic_git_timeout_copy_names_no_forge() {
+        // This message fires for every remote, so it must not claim the user
+        // was talking to GitHub...
+        assert!(!GIT_NET_TIMEOUT_MESSAGE.contains("GitHub"));
+        // ...while keeping the phrase errors.ts matches to recognise it as
+        // already humanized (BACKEND_HUMANIZED_GIT_PHRASES).
+        assert!(GIT_NET_TIMEOUT_MESSAGE
+            .to_lowercase()
+            .contains("check your internet connection"));
+    }
+
+    #[test]
+    fn github_helper_args_quote_the_gh_path() {
+        // Issue #265: an unquoted path with spaces is word-split by `sh -c`.
+        let args =
+            github_credential_helper_args(std::path::Path::new("/Program Files/GitHub CLI/gh.exe"));
+        assert_eq!(args[0], "credential.https://github.com.helper=");
+        assert!(
+            args[1].contains("!'/Program Files/GitHub CLI/gh.exe' auth git-credential"),
+            "gh path must stay quoted, got: {}",
+            args[1]
         );
     }
 }

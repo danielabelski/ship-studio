@@ -40,6 +40,11 @@ interface UseAgentBridgeParams {
   setViewport: (value: number | ViewportPreset) => void;
   /** Current custom viewport width in px, or null = full pane width. */
   getViewportWidth: () => number | null;
+  /** True while the breakpoint canvas is showing every breakpoint at once. */
+  canvasMode: boolean;
+  /** Size of the box the agent activity overlay covers, in the frame's own
+   *  pixels — null when the page's own viewport fractions can be trusted. */
+  getOverlayFrameSize: () => { w: number; h: number } | null;
 }
 
 export function useAgentBridge({
@@ -52,6 +57,8 @@ export function useAgentBridge({
   reload,
   setViewport,
   getViewportWidth,
+  canvasMode,
+  getOverlayFrameSize,
 }: UseAgentBridgeParams) {
   // Live values for the long-lived listener — rebinding the Tauri listener on
   // every URL change would race in-flight requests.
@@ -65,6 +72,8 @@ export function useAgentBridge({
     reload,
     setViewport,
     getViewportWidth,
+    canvasMode,
+    getOverlayFrameSize,
   });
   useEffect(() => {
     ctxRef.current = {
@@ -77,6 +86,8 @@ export function useAgentBridge({
       reload,
       setViewport,
       getViewportWidth,
+      canvasMode,
+      getOverlayFrameSize,
     };
   });
 
@@ -137,6 +148,8 @@ export function useAgentBridge({
             reload: live.reload,
             setViewport: live.setViewport,
             getViewportWidth: live.getViewportWidth,
+            canvasMode: live.canvasMode,
+            getOverlayFrameSize: live.getOverlayFrameSize,
           });
           endActivity();
           void trackEvent('agent_bridge_tool_used', {

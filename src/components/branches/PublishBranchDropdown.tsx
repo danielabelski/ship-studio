@@ -10,7 +10,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { ProjectGitHubStatus } from '../../lib/github';
+import { ProjectGitHubStatus, hasPushableRemote, remoteLabel } from '../../lib/github';
 import { publishBranch } from '../../lib/branches';
 import { ChevronIcon, BranchIcon, SuccessIcon, ErrorIcon, PushIcon } from '@/components/icons';
 import { Spinner } from '../primitives/Spinner';
@@ -119,6 +119,12 @@ export function PublishBranchDropdown({
 
   const hasGitHubRepo =
     projectGithubStatus?.status === 'connected' && projectGithubStatus?.github_repo;
+  // Pushing is plain `git push` (publishing.rs) and works against any remote.
+  // Gating it on hasGitHubRepo disabled the button outright for GitLab and
+  // self-managed projects, which could push perfectly well.
+  const canPush = hasPushableRemote(projectGithubStatus);
+  // Never say "GitHub" to a project whose code isn't there.
+  const where = remoteLabel(projectGithubStatus) ?? 'the remote';
   const isMainBranch = currentBranch === 'main' || currentBranch === 'master';
   const isOpen = controlledOpen ?? internalOpen;
 
@@ -304,8 +310,8 @@ export function PublishBranchDropdown({
     );
   }
 
-  // If no GitHub repo, show disabled state
-  if (!hasGitHubRepo) {
+  // No remote at all — nothing to push to.
+  if (!canPush) {
     return (
       <div
         className={`publish-dropdown${grouped ? ' publish-dropdown--grouped' : ''}`}
@@ -317,7 +323,7 @@ export function PublishBranchDropdown({
           className="source-control-push-button"
           data-education-id="publish-button"
           disabled
-          title="Create a GitHub repository first"
+          title="Create a repository for this project first"
         >
           <span className="source-control-push-content">
             <PushIcon size={16} />
@@ -363,8 +369,9 @@ export function PublishBranchDropdown({
               </div>
               {!isMainBranch && (
                 <div className="publish-branch-hint">
-                  Your changes are on the <strong>{currentBranch}</strong> branch on GitHub.
-                  {onCreatePR && (
+                  Your changes are on the <strong>{currentBranch}</strong> branch on {where}.
+                  {/* PR creation is `gh pr create` — GitHub only. */}
+                  {hasGitHubRepo && onCreatePR && (
                     <>
                       {' '}
                       When they are ready for review,{' '}
@@ -396,7 +403,7 @@ export function PublishBranchDropdown({
                 {publishState.errorType === 'push_rejected'
                   ? 'Push was rejected. Someone else pushed changes to this branch.'
                   : publishState.errorType === 'auth_error'
-                    ? 'Authentication failed. Please check your GitHub connection.'
+                    ? `Authentication failed. Please check your ${where} connection.`
                     : publishState.message}
               </div>
             </>
@@ -407,7 +414,7 @@ export function PublishBranchDropdown({
             <>
               <div className="publish-in-progress-header">
                 <Spinner />
-                <span>Pushing to GitHub...</span>
+                <span>Pushing to {where}...</span>
               </div>
             </>
           )}
@@ -416,7 +423,7 @@ export function PublishBranchDropdown({
           {publishState.status === 'idle' && canSync && (
             <>
               <div className="publish-branch-header">
-                <h3>Push to GitHub</h3>
+                <h3>Push to {where}</h3>
               </div>
 
               <div className="publish-branch-body">
@@ -426,8 +433,8 @@ export function PublishBranchDropdown({
                 </div>
 
                 <div className="publish-branch-description">
-                  Commits your changes and pushes the <strong>{currentBranch}</strong> branch to
-                  GitHub.
+                  Commits your changes and pushes the <strong>{currentBranch}</strong> branch to{' '}
+                  {where}.
                 </div>
               </div>
 
@@ -440,7 +447,7 @@ export function PublishBranchDropdown({
             <>
               <div className="publish-success">
                 <SuccessIcon />
-                <span>Nothing to push — GitHub is up to date</span>
+                <span>Nothing to push — {where} is up to date</span>
               </div>
             </>
           )}

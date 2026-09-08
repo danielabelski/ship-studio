@@ -374,12 +374,25 @@ pub struct GitHubCliStatus {
 /// GitHub connection status - verified against GitHub API
 #[derive(Serialize)]
 pub struct ProjectGitHubStatus {
-    /// "not-a-repo" | "no-remote" | "connected"
+    /// "not-a-repo" | "no-remote" | "other-remote" | "connected"
+    ///
+    /// `other-remote` means the project has an `origin` that parses fine but
+    /// isn't GitHub — a GitLab repo, a self-managed instance, any other forge.
+    /// It was folded into `no-remote` until this variant existed, which made
+    /// the UI tell those users their project had no remote and offer to create
+    /// a GitHub repo to fix it.
     pub status: String,
     /// e.g., "username/repo-name" - only set if connected
     pub github_repo: Option<String>,
     /// e.g., "https://github.com/username/repo-name" - only set if connected
     pub github_url: Option<String>,
+    /// Host of the configured `origin` - only set for "other-remote".
+    pub remote_host: Option<String>,
+    /// Display name of the forge that host identifies ("GitLab"), when it
+    /// identifies one at all. `None` for a host we can read but can't classify;
+    /// callers show [`remote_host`](Self::remote_host) rather than guessing a
+    /// vendor. Only set for "other-remote".
+    pub remote_forge: Option<String>,
 }
 
 #[derive(Deserialize)]

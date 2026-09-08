@@ -1,5 +1,6 @@
 import { useCommands } from './useCommands';
 import { useOpenModal } from '../contexts/ModalContext';
+import { hasPushableRemote, remoteLabel, type ProjectGitHubStatus } from '../lib/github';
 import {
   BranchIcon,
   PlusIcon,
@@ -36,10 +37,14 @@ export interface UseWorkspaceCommandsParams {
   /** Pulls the latest changes from GitHub (routes conflicts to the resolver) */
   handlePullLatest: () => void;
   /**
-   * Push/pull need a remote, and the Branches/PRs panes only render for a
-   * connected repo — commands that land there are hidden otherwise (#612).
+   * The project's remote, as the backend reported it.
+   *
+   * Everything here used to hang off one "is GitHub connected" boolean, which
+   * hid a distinction that matters: push, pull, switch and create are plain git
+   * and work against any forge, while pull requests are GitHub's. Gating all of
+   * them together cost a GitLab project every branch command in the palette.
    */
-  isGitHubConnected: boolean;
+  projectStatus: ProjectGitHubStatus | null;
   /** Opens the "New worktree" modal. */
   openWorktreeCreate: () => void;
   /** Worktree commands only make sense in a git repo (list is empty otherwise). */
@@ -57,11 +62,17 @@ export function useWorkspaceCommands({
   openBranchesMenu,
   openCreateBranch,
   handlePullLatest,
-  isGitHubConnected,
+  projectStatus,
   openWorktreeCreate,
   hasWorktreeData,
 }: UseWorkspaceCommandsParams) {
   const openModal = useOpenModal();
+  /** Pull requests are GitHub's. */
+  const isGitHubConnected = projectStatus?.status === 'connected';
+  /** Branch and sync commands need a remote, not a particular forge. */
+  const repoAvailable = hasPushableRemote(projectStatus);
+  /** "GitHub", "GitLab", or a bare host — never a guessed vendor. */
+  const target = remoteLabel(projectStatus) ?? 'the remote';
 
   useCommands(
     () => [
@@ -77,20 +88,20 @@ export function useWorkspaceCommands({
       },
       {
         id: 'git.push',
-        title: 'Push to GitHub',
+        title: `Push to ${target}`,
         subtitle: hasUncommittedChanges ? 'Commits your changes, then pushes' : undefined,
         icon: <PushIcon size={14} />,
         category: 'branch',
-        when: ({ kind }) => kind === 'project' && isGitHubConnected,
+        when: ({ kind }) => kind === 'project' && repoAvailable,
         keywords: ['publish', 'sync', 'upload', 'commit', 'git'],
         run: openPushDropdown,
       },
       {
         id: 'git.pull',
-        title: 'Pull latest from GitHub',
+        title: `Pull latest from ${target}`,
         icon: <PullIcon size={14} />,
         category: 'branch',
-        when: ({ kind }) => kind === 'project' && isGitHubConnected,
+        when: ({ kind }) => kind === 'project' && repoAvailable,
         keywords: ['sync', 'fetch', 'update', 'download', 'git'],
         run: handlePullLatest,
       },
@@ -100,10 +111,11 @@ export function useWorkspaceCommands({
         subtitle: currentBranch ? `Currently on ${currentBranch}` : undefined,
         icon: <BranchIcon size={14} />,
         category: 'branch',
-        // `useWorkspaceLayout` projects the branches/prs tabs back to preview
-        // when GitHub isn't connected, so without this gate the command was
-        // listed, selectable, and did nothing at all (issue #612).
-        when: ({ kind }) => kind === 'project' && isGitHubConnected,
+        // `useWorkspaceLayout` projects the branches tab back to preview when
+        // the project has no remote, so without this gate the command was
+        // listed, selectable, and did nothing at all (issue #612). It tracks
+        // that projection, which is now "has a remote" rather than "is GitHub".
+        when: ({ kind }) => kind === 'project' && repoAvailable,
         keywords: ['checkout', 'change', 'git'],
         run: openBranchesMenu,
       },
@@ -112,7 +124,7 @@ export function useWorkspaceCommands({
         title: 'Create new branch…',
         icon: <PlusIcon size={14} />,
         category: 'branch',
-        when: ({ kind }) => kind === 'project' && isGitHubConnected,
+        when: ({ kind }) => kind === 'project' && repoAvailable,
         keywords: ['new', 'git', 'checkout -b'],
         run: openCreateBranch,
       },
@@ -125,9 +137,14 @@ export function useWorkspaceCommands({
         icon: <PullRequestIcon size={14} />,
         category: 'branch',
         // Only available on a feature branch — opening a PR from main/
-        // master into itself isn't a real workflow.
+        // master into itself isn't a real workflow — and only where pull
+        // requests exist at all. Without the GitHub gate the palette offered
+        // this to a GitLab project, where it opens a modal that ends in
+        // `gh pr create` against a repo GitHub has never heard of. Every
+        // other GitHub command here was already gated; this one was missed.
         when: ({ kind }) =>
           kind === 'project' &&
+          isGitHubConnected &&
           currentBranch !== null &&
           currentBranch !== 'main' &&
           currentBranch !== 'master',
@@ -158,8 +175,9 @@ export function useWorkspaceCommands({
         title: 'Manage worktrees',
         icon: <BranchIcon size={14} />,
         category: 'branch',
-        // Lives inside the Branches pane, so it needs the same gate (#612).
-        when: ({ kind }) => kind === 'project' && hasWorktreeData && isGitHubConnected,
+        // Lives inside the Branches pane, so it needs the same gate (#612) —
+        // which is now "has a remote", since that pane no longer needs GitHub.
+        when: ({ kind }) => kind === 'project' && hasWorktreeData && repoAvailable,
         keywords: ['worktree', 'remove', 'prune', 'git'],
         run: () => setWorkspaceTab('branches'),
       },
@@ -185,6 +203,8 @@ export function useWorkspaceCommands({
       openCreateBranch,
       handlePullLatest,
       isGitHubConnected,
+      repoAvailable,
+      target,
       openWorktreeCreate,
       hasWorktreeData,
     ]
