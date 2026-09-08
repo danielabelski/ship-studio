@@ -28,6 +28,8 @@ const connectedStatus = {
   status: 'connected' as const,
   github_repo: 'martin/ship-studio',
   github_url: 'https://github.com/martin/ship-studio',
+  remote_host: null,
+  remote_forge: null,
 };
 
 function makeProps(overrides: Partial<Parameters<typeof BranchesMenu>[0]> = {}) {
@@ -227,7 +229,13 @@ describe('BranchesMenu', () => {
             cliStatus: { installed: true, authenticated: false },
             username: null,
           },
-          projectStatus: { status: 'no-remote', github_repo: null, github_url: null },
+          projectStatus: {
+            status: 'no-remote',
+            github_repo: null,
+            github_url: null,
+            remote_host: null,
+            remote_forge: null,
+          },
         })}
       />
     );

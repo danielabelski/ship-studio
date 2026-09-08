@@ -6,9 +6,13 @@ import { useIntegrationStatus, GITHUB_STATUS_FALLBACK } from './useIntegrationSt
 vi.mock('../lib/github', () => ({
   checkGitHubCliStatus: vi.fn().mockResolvedValue({ installed: false, authenticated: false }),
   getGitHubUsername: vi.fn().mockResolvedValue(null),
-  getProjectGitHubStatus: vi
-    .fn()
-    .mockResolvedValue({ status: 'no-remote', github_repo: null, github_url: null }),
+  getProjectGitHubStatus: vi.fn().mockResolvedValue({
+    status: 'no-remote',
+    github_repo: null,
+    github_url: null,
+    remote_host: null,
+    remote_forge: null,
+  }),
 }));
 
 vi.mock('../lib/claude', () => ({
@@ -276,6 +280,8 @@ describe('useIntegrationStatus', () => {
         status: 'connected' as const,
         github_repo: 'user/repo',
         github_url: 'https://github.com/user/repo',
+        remote_host: null,
+        remote_forge: null,
       };
       vi.mocked(github.getProjectGitHubStatus).mockResolvedValue(projectStatus);
 
@@ -297,6 +303,8 @@ describe('useIntegrationStatus', () => {
         status: 'connected' as const,
         github_repo: 'org/repo',
         github_url: 'https://github.com/org/repo',
+        remote_host: null,
+        remote_forge: null,
       };
 
       act(() => {
@@ -314,6 +322,8 @@ describe('useIntegrationStatus', () => {
           status: 'connected',
           github_repo: 'org/repo',
           github_url: 'https://github.com/org/repo',
+          remote_host: null,
+          remote_forge: null,
         });
       });
 

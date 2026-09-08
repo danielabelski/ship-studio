@@ -151,11 +151,19 @@ export interface UseIntegrationStatusReturn {
   fetchProjectGitHubStatus: (projectPath: string) => Promise<ProjectGitHubStatus>;
 }
 
-/** Fallback GitHub status when check fails */
+/**
+ * Fallback GitHub status when the check fails.
+ *
+ * Stays `no-remote` rather than `other-remote`: a failed check tells us
+ * nothing about where the code lives, and naming a host we never read would
+ * be exactly the invention this status was split up to avoid.
+ */
 export const GITHUB_STATUS_FALLBACK: ProjectGitHubStatus = {
   status: 'no-remote',
   github_repo: null,
   github_url: null,
+  remote_host: null,
+  remote_forge: null,
 };
 
 /**

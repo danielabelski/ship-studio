@@ -259,4 +259,96 @@ describe('PublishBranchDropdown open panel', () => {
     expect(screen.getByText(/Nothing to push/i)).toBeInTheDocument();
     expectNoBannedLabels();
   });
+
+  describe('remotes that are not GitHub', () => {
+    const gitlabStatus = {
+      status: 'other-remote',
+      github_repo: null,
+      github_url: null,
+      remote_host: 'gitlab.com',
+      remote_forge: 'GitLab',
+    } as unknown as ProjectGitHubStatus;
+
+    const selfManagedStatus = {
+      status: 'other-remote',
+      github_repo: null,
+      github_url: null,
+      remote_host: 'git.acme.com',
+      remote_forge: null,
+    } as unknown as ProjectGitHubStatus;
+
+    it('lets a GitLab project push', () => {
+      // The regression: Push was gated on having a *GitHub* repo, so a GitLab
+      // project got a permanently disabled button telling it to create one.
+      // `publish_branch` is plain `git push` and always would have worked.
+      render(<PublishBranchDropdown {...makeProps({ projectGithubStatus: gitlabStatus })} />);
+
+      const trigger = screen.getByText('Push').closest('button');
+      expect(trigger).not.toBeDisabled();
+    });
+
+    it('names the actual forge instead of saying GitHub', () => {
+      const { container } = render(
+        <PublishBranchDropdown
+          {...makeProps({ projectGithubStatus: gitlabStatus, currentBranch: 'main' })}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Push'));
+
+      expect(container.querySelector('.publish-branch-description')).toHaveTextContent(
+        'Commits your changes and pushes the main branch to GitLab.'
+      );
+      expect(screen.getByRole('heading', { name: 'Push to GitLab' })).toBeInTheDocument();
+      expect(container.textContent).not.toContain('GitHub');
+    });
+
+    it('falls back to the host when the forge is unknown', () => {
+      // A self-managed instance gets its address shown, not a guessed vendor.
+      const { container } = render(
+        <PublishBranchDropdown
+          {...makeProps({ projectGithubStatus: selfManagedStatus, currentBranch: 'main' })}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Push'));
+
+      expect(container.querySelector('.publish-branch-description')).toHaveTextContent(
+        'Commits your changes and pushes the main branch to git.acme.com.'
+      );
+      expect(container.textContent).not.toContain('GitHub');
+    });
+
+    it('does not offer PR creation for a non-GitHub remote', () => {
+      // `gh pr create` has nothing to talk to here.
+      const onCreatePR = vi.fn();
+      render(
+        <PublishBranchDropdown
+          {...makeProps({
+            projectGithubStatus: gitlabStatus,
+            currentBranch: 'feature/x',
+            onCreatePR,
+          })}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Push'));
+
+      expect(screen.queryByText(/create a PR/i)).not.toBeInTheDocument();
+    });
+
+    it('still disables push when there is no remote at all', () => {
+      const noRemote = {
+        status: 'no-remote',
+        github_repo: null,
+        github_url: null,
+        remote_host: null,
+        remote_forge: null,
+      } as unknown as ProjectGitHubStatus;
+
+      render(<PublishBranchDropdown {...makeProps({ projectGithubStatus: noRemote })} />);
+
+      expect(screen.getByText('Push').closest('button')).toBeDisabled();
+    });
+  });
 });

@@ -42,11 +42,19 @@ export const workspaceCommands: CommandMap = {
     workspace_has_package_json: false,
   },
 
+  // Asked for on every workspace open. Unmocked it badged every workspace
+  // capture incomplete, which by this harness's own rule means none of their
+  // screenshots counted as evidence. `true` is the backend's default
+  // (settings.rs: element_breadcrumb_enabled.unwrap_or(true)).
+  get_element_breadcrumb_enabled: true,
+
   // ---- git / github ------------------------------------------------------
   get_project_github_status: {
     status: 'connected',
     github_repo: 'harness-user/acme-marketing',
     github_url: 'https://github.com/harness-user/acme-marketing',
+    remote_host: null,
+    remote_forge: null,
   },
   list_pull_requests: [],
   // Asked for on every workspace open (`useBranchManagement`). Without it

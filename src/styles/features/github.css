@@ -332,3 +332,11 @@
 .github-modal .modal-actions button:first-child:hover {
   background: var(--border-default);
 }
+
+/* The GitHub button's label must not wrap — it sits in a fixed-width header
+   slot beside the branch controls, and a two-line label pushes that row's
+   height. Used by both the "Create Repo" call to action and the disabled
+   label shown for a remote that isn't GitHub. */
+.github-button-label {
+  white-space: nowrap;
+}

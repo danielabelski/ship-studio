@@ -95,6 +95,107 @@ export const featureScenarios: Scenario[] = [
     commands: { ...workspaceCommands },
   },
   {
+    id: 'gitlab-remote-push',
+    title: 'Push popover — a GitLab remote',
+    looksRightWhen:
+      'Push is enabled and the copy says GitLab throughout — heading, description, and the hint. ' +
+      'The word "GitHub" appears nowhere, and nothing offers to create a GitHub repository.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.source-control-push-button',
+    clipSelector: '.publish-dropdown-menu',
+    requires: '.publish-dropdown-menu',
+    commands: {
+      ...workspaceCommands,
+      get_project_github_status: {
+        status: 'other-remote',
+        github_repo: null,
+        github_url: null,
+        remote_host: 'gitlab.com',
+        remote_forge: 'GitLab',
+      },
+      // Show the popover with work to push, so the heading and description
+      // are on screen — the strings that used to hardcode "GitHub".
+      check_git_has_changes: true,
+    },
+  },
+  {
+    id: 'self-managed-remote-push',
+    title: 'Push popover — a self-managed remote',
+    looksRightWhen:
+      'The host (git.acme.com) is named literally. No vendor is guessed from the hostname, ' +
+      'and push still works.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.source-control-push-button',
+    clipSelector: '.publish-dropdown-menu',
+    requires: '.publish-dropdown-menu',
+    commands: {
+      ...workspaceCommands,
+      get_project_github_status: {
+        status: 'other-remote',
+        github_repo: null,
+        github_url: null,
+        remote_host: 'git.acme.com',
+        remote_forge: null,
+      },
+      check_git_has_changes: true,
+    },
+  },
+  {
+    id: 'gitlab-branches-tab',
+    // Reached via `branch.create`, which is itself one of the commands that
+    // used to be hidden for a non-GitHub remote — if the gate regresses, the
+    // palette won't have the command and this capture fails rather than
+    // quietly photographing the preview tab.
+    command: 'branch.create',
+    requires: '.branch-card',
+    title: 'Branches tab — a GitLab remote',
+    looksRightWhen:
+      'The branch list is fully usable: switch, create, delete, worktrees. No "Connect GitHub" ' +
+      'overlay, and no "Submit for Review" button, because pull requests need a GitHub remote.',
+    project: WORKSPACE_PROJECT,
+    commands: {
+      ...workspaceCommands,
+      get_project_github_status: {
+        status: 'other-remote',
+        github_repo: null,
+        github_url: null,
+        remote_host: 'gitlab.com',
+        remote_forge: 'GitLab',
+      },
+      list_branches: [
+        branch('main', { is_current: false, is_default: true }),
+        branch('feat/pricing-page', { is_current: true, ahead_of_main: 3, behind_main: 1 }),
+        branch('chore/deps', { behind_main: 2 }),
+      ],
+    },
+  },
+  {
+    id: 'gitlab-branches-menu',
+    command: 'branch.switch',
+    requires: '.branches-menu-branch-row',
+    title: 'Branches menu — a GitLab remote',
+    looksRightWhen:
+      'The menu is fully populated — sync and the branch list — rather than the "Connect this ' +
+      'project to GitHub" setup panel. Pull says GitLab, and there is no "Open in GitHub" link, ' +
+      'because we have no GitLab URL to open.',
+    project: WORKSPACE_PROJECT,
+    commands: {
+      ...workspaceCommands,
+      get_project_github_status: {
+        status: 'other-remote',
+        github_repo: null,
+        github_url: null,
+        remote_host: 'gitlab.com',
+        remote_forge: 'GitLab',
+      },
+      list_branches: [
+        branch('main', { is_current: true, is_default: true }),
+        branch('feat/pricing-page', { ahead_of_main: 3, behind_main: 1 }),
+        branch('chore/deps', { behind_main: 2 }),
+      ],
+    },
+  },
+  {
     id: 'branches-many',
     // Nothing opened the branches menu, so this photographed the workspace —
     // no branch list, no ahead/behind counts, none of what the caption checks.

@@ -9,7 +9,7 @@
 import { useCallback, useMemo } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { BranchInfo, PullRequestInfo } from '../../lib/branches';
-import type { ProjectGitHubStatus } from '../../lib/github';
+import { remoteLabel, type ProjectGitHubStatus } from '../../lib/github';
 import type { GitHubState } from '../../hooks/useIntegrationStatus';
 import {
   AddIcon,
@@ -81,10 +81,19 @@ export function BranchesMenu({
 }: BranchesMenuProps) {
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);
 
+  // Pulling and switching branches are plain git. A project on another forge
+  // is ready for all of it without `gh` — it just can't have the GitHub-only
+  // extras (the repo link, reviews), which are each conditional below.
   const repositoryReady =
-    githubState.cliStatus.installed &&
-    githubState.cliStatus.authenticated &&
-    projectStatus?.status === 'connected';
+    (githubState.cliStatus.installed &&
+      githubState.cliStatus.authenticated &&
+      projectStatus?.status === 'connected') ||
+    projectStatus?.status === 'other-remote';
+
+  /** "GitHub", "GitLab", or a bare host — never a guessed vendor. */
+  const remoteName = remoteLabel(projectStatus) ?? 'GitHub';
+  /** Gates the pull-request section: GitHub owns PRs, git doesn't. */
+  const isGitHubRepo = projectStatus?.status === 'connected';
 
   const recentBranches = useMemo(
     () =>
@@ -201,7 +210,7 @@ export function BranchesMenu({
                 disabled={isPulling}
                 leftIcon={isPulling ? <Spinner size="sm" /> : <PullIcon size={14} />}
               >
-                {isPulling ? 'Pulling latest...' : 'Pull latest from GitHub'}
+                {isPulling ? 'Pulling latest...' : `Pull latest from ${remoteName}`}
               </Button>
             </section>
 
@@ -278,79 +287,86 @@ export function BranchesMenu({
               </Button>
             </section>
 
-            <section className="branches-menu-section" aria-labelledby="branches-menu-prs">
-              <div className="branches-menu-section-heading">
-                <div className="branches-menu-section-heading-main">
-                  <div className="branches-menu-section-title" id="branches-menu-prs">
-                    Pull requests
+            {/* Pull requests are the one thing here that is GitHub's, not
+                git's — `gh pr create` against a GitLab repo cannot work, so a
+                non-GitHub project gets the rest of the menu without it. */}
+            {isGitHubRepo && (
+              <section className="branches-menu-section" aria-labelledby="branches-menu-prs">
+                <div className="branches-menu-section-heading">
+                  <div className="branches-menu-section-heading-main">
+                    <div className="branches-menu-section-title" id="branches-menu-prs">
+                      Pull requests
+                    </div>
+                    <span className="branches-menu-count" aria-label={`${openPRs.length} open`}>
+                      {openPRs.length}
+                    </span>
                   </div>
-                  <span className="branches-menu-count" aria-label={`${openPRs.length} open`}>
-                    {openPRs.length}
-                  </span>
+                  <TextButton
+                    className="branches-menu-section-view-all"
+                    onClick={() => runAndClose(onViewPRs)}
+                  >
+                    View all pull requests
+                  </TextButton>
                 </div>
-                <TextButton
-                  className="branches-menu-section-view-all"
-                  onClick={() => runAndClose(onViewPRs)}
-                >
-                  View all pull requests
-                </TextButton>
-              </div>
-              {currentOpenPR && (
-                <button
-                  type="button"
-                  className="branches-menu-row branches-menu-pr-row"
-                  onClick={() => {
-                    close();
-                    void openUrl(currentOpenPR.url);
-                  }}
-                >
-                  <span className="branches-menu-pr-leading-icon">
-                    <PullRequestIcon size={14} />
-                  </span>
-                  <span className="branches-menu-pr-content">
-                    <span className="branches-menu-pr-main">
-                      <span className="branches-menu-pr-inline">
-                        <span className="branches-menu-pr-number">#{currentOpenPR.number}</span>
-                        {currentOpenPR.title}
+                {currentOpenPR && (
+                  <button
+                    type="button"
+                    className="branches-menu-row branches-menu-pr-row"
+                    onClick={() => {
+                      close();
+                      void openUrl(currentOpenPR.url);
+                    }}
+                  >
+                    <span className="branches-menu-pr-leading-icon">
+                      <PullRequestIcon size={14} />
+                    </span>
+                    <span className="branches-menu-pr-content">
+                      <span className="branches-menu-pr-main">
+                        <span className="branches-menu-pr-inline">
+                          <span className="branches-menu-pr-number">#{currentOpenPR.number}</span>
+                          {currentOpenPR.title}
+                        </span>
+                      </span>
+                      <span className="branches-menu-pr-meta">
+                        <span className="branches-menu-pr-branches">
+                          <span className="branches-menu-pr-branch">{currentOpenPR.headRef}</span>
+                          <span aria-hidden="true">→</span>
+                          <span className="branches-menu-pr-branch">{currentOpenPR.baseRef}</span>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span className="branches-menu-pr-author">{currentOpenPR.author}</span>
                       </span>
                     </span>
-                    <span className="branches-menu-pr-meta">
-                      <span className="branches-menu-pr-branches">
-                        <span className="branches-menu-pr-branch">{currentOpenPR.headRef}</span>
-                        <span aria-hidden="true">→</span>
-                        <span className="branches-menu-pr-branch">{currentOpenPR.baseRef}</span>
+                  </button>
+                )}
+                <Button
+                  width="fill"
+                  variant="ghost"
+                  className="branches-menu-action"
+                  disabled={!pullRequestBranch}
+                  title={
+                    pullRequestBranch
+                      ? `Create a pull request from ${pullRequestBranch}`
+                      : 'Create a feature branch first'
+                  }
+                  onClick={() =>
+                    pullRequestBranch && runAndClose(() => onStartPR(pullRequestBranch))
+                  }
+                >
+                  <span className="branches-menu-action-content">
+                    <span className="branches-menu-action-main">
+                      <span className="branches-menu-action-icon">
+                        <AddIcon size={14} />
                       </span>
-                      <span aria-hidden="true">·</span>
-                      <span className="branches-menu-pr-author">{currentOpenPR.author}</span>
+                      <span className="branches-menu-row-label">New pull request</span>
                     </span>
+                    {pullRequestBranch && (
+                      <span className="branches-menu-row-meta">{pullRequestBranch}</span>
+                    )}
                   </span>
-                </button>
-              )}
-              <Button
-                width="fill"
-                variant="ghost"
-                className="branches-menu-action"
-                disabled={!pullRequestBranch}
-                title={
-                  pullRequestBranch
-                    ? `Create a pull request from ${pullRequestBranch}`
-                    : 'Create a feature branch first'
-                }
-                onClick={() => pullRequestBranch && runAndClose(() => onStartPR(pullRequestBranch))}
-              >
-                <span className="branches-menu-action-content">
-                  <span className="branches-menu-action-main">
-                    <span className="branches-menu-action-icon">
-                      <AddIcon size={14} />
-                    </span>
-                    <span className="branches-menu-row-label">New pull request</span>
-                  </span>
-                  {pullRequestBranch && (
-                    <span className="branches-menu-row-meta">{pullRequestBranch}</span>
-                  )}
-                </span>
-              </Button>
-            </section>
+                </Button>
+              </section>
+            )}
           </>
         )}
       </Dropdown>

@@ -6,6 +6,7 @@
  * @module components/workspace/BranchPRTabContainer
  */
 
+import { PullRequestIcon } from '@/components/icons';
 import { BranchesTab } from '../branches/BranchesTab';
 import { PullRequestsTab } from '../branches/PullRequestsTab';
 import { ConnectOverlay } from '../ConnectOverlay';
@@ -83,11 +84,24 @@ export function BranchPRTabContainer({
     integrations.github.cliStatus.authenticated &&
     integrations.projectGithub?.status === 'connected';
 
+  // A remote that isn't GitHub is still a remote. Branch management is plain
+  // git — switching, creating, deleting, worktrees — and none of it has ever
+  // needed GitHub, but this pane was gated on a GitHub connection, so a GitLab
+  // project got an overlay asking it to connect GitHub instead of its branches.
+  const otherRemote = integrations.projectGithub?.status === 'other-remote';
+  const canManageBranches = githubConnected || otherRemote;
+  // What to call the remote in copy: "GitLab" where the host says so, else the
+  // host itself. Never a guessed vendor — see lib/github.ts remoteLabel.
+  const remoteName =
+    integrations.projectGithub?.remote_forge ?? integrations.projectGithub?.remote_host ?? null;
+
   return (
     <>
       {showBranchesPane &&
-        (githubConnected ? (
+        (canManageBranches ? (
           <BranchesTab
+            canOpenPullRequests={githubConnected}
+            remoteName={remoteName ?? 'GitHub'}
             branches={branches}
             currentBranch={currentBranch || ''}
             projectPath={projectPath}
@@ -133,11 +147,22 @@ export function BranchPRTabContainer({
           />
         ) : (
           <div style={{ position: 'relative', flex: 1 }}>
-            <ConnectOverlay
-              title="Connect GitHub to view pull requests"
-              description="Submit code for review, merge changes, and track your team's work."
-              onConnect={() => void handleGitHubConnect()}
-            />
+            {otherRemote ? (
+              // Connecting GitHub would not give this project pull requests —
+              // its code is somewhere else. Say what's true instead of offering
+              // a button that fixes nothing.
+              <ConnectOverlay
+                icon={<PullRequestIcon size={48} />}
+                title="Pull requests need a GitHub remote"
+                description={`This project pushes to ${remoteName ?? 'another remote'}. Branches, pushing and syncing all work as usual — reviewing pull requests from Ship Studio is GitHub-only.`}
+              />
+            ) : (
+              <ConnectOverlay
+                title="Connect GitHub to view pull requests"
+                description="Submit code for review, merge changes, and track your team's work."
+                onConnect={() => void handleGitHubConnect()}
+              />
+            )}
           </div>
         ))}
     </>
