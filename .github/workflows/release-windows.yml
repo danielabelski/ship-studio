@@ -273,10 +273,12 @@ jobs:
           # Gate: every asset the site and the docs link to under the
           # /releases/latest/download/ alias must be present before this
           # release is allowed to become "latest". ShipStudio_darwin-universal.dmg
-          # is the one the marketing site's "Download for Mac" button uses
-          # (lib/constants.ts DOWNLOAD_LINKS.mac); it was missing from the
-          # upload list below, so v1.2.0-win flipped the alias and 404'd every
-          # Mac download from the web.
+          # is the one the marketing site's "Download for Mac" button resolves
+          # to; it was missing from the upload list below, so v1.2.0-win flipped
+          # the alias and 404'd every Mac download from the web. The site now
+          # falls back to the legacy arch-named copies rather than 404ing, but
+          # that serves the universal build under a misleading name and hides
+          # this bug — so the gate below stays strict.
           missing=()
           for f in latest.json \
                    ShipStudio_darwin-universal.dmg \
