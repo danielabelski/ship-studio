@@ -346,6 +346,10 @@ function AppContents({ initialProjectPath }: AppProps) {
     resetLayout,
   } = useWorkspaceLayout({
     isGitHubConnected: integrations.projectGithub?.status === 'connected',
+    // Any remote can have branches; only GitHub has pull requests.
+    canManageBranches:
+      integrations.projectGithub?.status === 'connected' ||
+      integrations.projectGithub?.status === 'other-remote',
   });
 
   // Plugin state

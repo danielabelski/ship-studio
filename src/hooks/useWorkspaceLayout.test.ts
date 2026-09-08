@@ -83,4 +83,41 @@ describe('useWorkspaceLayout', () => {
     });
     expect(result.current.isPreviewHidden).toBe(true);
   });
+
+  // A GitLab project is not a GitHub project, but it does have branches.
+  describe('a remote that is not GitHub', () => {
+    const gitlabProject = { isGitHubConnected: false, canManageBranches: true };
+
+    it('can still reach its branches', () => {
+      const { result } = renderHook(() => useWorkspaceLayout(gitlabProject));
+
+      act(() => {
+        result.current.setWorkspaceTab('branches');
+      });
+
+      // Before this, branches was projected to preview whenever GitHub was
+      // absent, so the tab could not be opened at all.
+      expect(result.current.workspaceTab).toBe('branches');
+    });
+
+    it('still cannot reach pull requests, which are GitHub-only', () => {
+      const { result } = renderHook(() => useWorkspaceLayout(gitlabProject));
+
+      act(() => {
+        result.current.setWorkspaceTab('prs');
+      });
+
+      expect(result.current.workspaceTab).toBe('preview');
+    });
+  });
+
+  it('keeps the old behaviour when canManageBranches is not passed', () => {
+    const { result } = renderHook(() => useWorkspaceLayout({ isGitHubConnected: false }));
+
+    act(() => {
+      result.current.setWorkspaceTab('branches');
+    });
+
+    expect(result.current.workspaceTab).toBe('preview');
+  });
 });

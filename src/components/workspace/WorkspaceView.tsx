@@ -846,7 +846,7 @@ export const WorkspaceView = memo(function WorkspaceView({
       setCreateBranchRequest((request) => request + 1);
     },
     handlePullLatest: () => void handlePullLatest(),
-    isGitHubConnected: integrations.projectGithub?.status === 'connected',
+    projectStatus: integrations.projectGithub ?? null,
     openWorktreeCreate: worktree.openCreate,
     hasWorktreeData: worktree.worktrees.length > 0,
   });

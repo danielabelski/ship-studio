@@ -115,6 +115,24 @@ interface BranchesTabProps {
   onBranchSwitch: (branchName: string) => void;
   /** Callback to open submit for review modal */
   onSubmitForReview: (branchName: string) => void;
+  /**
+   * Whether this project can have pull requests at all.
+   *
+   * False for a remote that isn't GitHub: everything else on this tab is plain
+   * git and works, but "Submit for Review" would call `gh pr create` against a
+   * repo GitHub has never heard of. Defaults to true so existing callers and
+   * tests are unaffected.
+   */
+  canOpenPullRequests?: boolean;
+  /**
+   * What to call the remote in copy — "GitHub", "GitLab", or a bare host.
+   *
+   * Sending a branch and reverting to the remote version are plain git; only
+   * the wording was ever GitHub-specific, and it read as a lie on a project
+   * that pushes somewhere else. Defaults to "GitHub", so every existing caller
+   * renders exactly as before.
+   */
+  remoteName?: string;
   /** Callback to navigate to the PRs tab */
   onViewPR?: () => void;
   /** Callback to refresh branch list */
@@ -144,6 +162,8 @@ export function BranchesTab({
   onBranchSwitch,
   onSubmitForReview,
   onViewPR,
+  canOpenPullRequests = true,
+  remoteName = 'GitHub',
   onRefresh,
   onSendToAgent,
   worktrees = [],
@@ -417,7 +437,7 @@ export function BranchesTab({
     try {
       await pushBranch(projectPath, branchName);
       void trackEvent('branch_published', { $screen_name: 'Workspace' });
-      onToast?.(`Sent ${branchName} to GitHub`, 'success');
+      onToast?.(`Sent ${branchName} to ${remoteName}`, 'success');
       setSendToGitHubBranch(null);
       onRefresh();
     } catch (e) {
@@ -468,7 +488,7 @@ export function BranchesTab({
       // Pull latest from remote
       await gitPull(projectPath);
 
-      onToast?.(`Reverted to GitHub version`, 'success');
+      onToast?.(`Reverted to the ${remoteName} version`, 'success');
       onRefresh();
     } catch (e) {
       trackError('branch_revert', e, 'Workspace');
@@ -570,8 +590,8 @@ export function BranchesTab({
                   className={`branch-sync-badge ${currentBranchInfo.pushed ? 'synced' : 'local'}`}
                   title={
                     currentBranchInfo.pushed
-                      ? 'This branch exists on GitHub'
-                      : 'This branch is only on your machine. Send it to GitHub to put it there.'
+                      ? `This branch exists on ${remoteName}`
+                      : `This branch is only on your machine. Send it to ${remoteName} to put it there.`
                   }
                 >
                   {currentBranchInfo.pushed ? 'On GitHub' : 'Local only'}
@@ -586,7 +606,8 @@ export function BranchesTab({
               </div>
             </div>
             <div className="branch-card-actions">
-              {!currentBranchInfo.isDefault &&
+              {canOpenPullRequests &&
+                !currentBranchInfo.isDefault &&
                 currentBranchInfo.name !== 'staging' &&
                 (() => {
                   const existingPR = openPRs.find((pr) => pr.headRef === currentBranchInfo.name);
@@ -615,12 +636,12 @@ export function BranchesTab({
                   size="compact"
                   onClick={() => setSendToGitHubBranch(currentBranchInfo.name)}
                   disabled={publishingBranch === currentBranchInfo.name}
-                  title="Push this branch to GitHub (no pull request)"
+                  title={`Push this branch to ${remoteName} (no pull request)`}
                   leftIcon={
                     publishingBranch === currentBranchInfo.name ? undefined : <PushIcon size={14} />
                   }
                 >
-                  Send to GitHub
+                  Send to {remoteName}
                 </Button>
               )}
               <Button
@@ -631,7 +652,7 @@ export function BranchesTab({
                 title="Discard local changes and pull from GitHub"
                 leftIcon={isReverting ? undefined : <PullIcon size={14} />}
               >
-                {isReverting ? 'Reverting...' : 'Revert to GitHub'}
+                {isReverting ? 'Reverting...' : `Revert to ${remoteName}`}
               </Button>
             </div>
           </div>
@@ -743,6 +764,7 @@ export function BranchesTab({
           <div className="branches-tab-section-header">Your Branches</div>
           {userBranches.map((branch) => (
             <BranchCard
+              remoteName={remoteName}
               key={branch.name}
               branch={branch}
               isCurrent={false}
@@ -766,6 +788,7 @@ export function BranchesTab({
           <div className="branches-tab-section-header">Team Branches</div>
           {teamBranches.map((branch) => (
             <BranchCard
+              remoteName={remoteName}
               key={branch.name}
               branch={branch}
               isCurrent={false}
@@ -789,6 +812,7 @@ export function BranchesTab({
           <div className="branches-tab-section-header">Main Branches</div>
           {mainBranches.map((branch) => (
             <BranchCard
+              remoteName={remoteName}
               key={branch.name}
               branch={branch}
               isCurrent={false}
@@ -1027,13 +1051,13 @@ export function BranchesTab({
           isOpen
           onClose={() => setSendToGitHubBranch(null)}
           dismissable={!publishingBranch}
-          title="Send to GitHub?"
+          title={`Send to ${remoteName}?`}
           className="post-merge-content"
         >
           <div className="post-merge-body">
             <p>
-              This puts <strong>{sendToGitHubBranch}</strong> on GitHub so it's saved there and your
-              teammates can see it.
+              This puts <strong>{sendToGitHubBranch}</strong> on {remoteName} so it's saved there
+              and your teammates can see it.
             </p>
             <p>
               It <strong>won't</strong> open a pull request or merge anything. It just uploads the
@@ -1055,7 +1079,7 @@ export function BranchesTab({
               disabled={!!publishingBranch}
               leftIcon={publishingBranch ? undefined : <PushIcon size={14} />}
             >
-              {publishingBranch ? 'Sending...' : 'Send to GitHub'}
+              {publishingBranch ? 'Sending...' : `Send to ${remoteName}`}
             </Button>
           </div>
         </ModalFrame>
@@ -1067,7 +1091,7 @@ export function BranchesTab({
           isOpen
           onClose={() => setShowRevertConfirm(false)}
           dismissable={!isReverting}
-          title="Revert to GitHub?"
+          title={`Revert to ${remoteName}?`}
           className="post-merge-content"
         >
           <div className="post-merge-body">
@@ -1158,6 +1182,8 @@ interface BranchCardProps {
   isPublishing: boolean;
   showDelete?: boolean;
   showSubmitForReview?: boolean;
+  /** What to call the remote — see BranchesTabProps.remoteName. */
+  remoteName?: string;
 }
 
 function BranchCard({
@@ -1172,6 +1198,7 @@ function BranchCard({
   isPublishing,
   showDelete = false,
   showSubmitForReview = false,
+  remoteName = 'GitHub',
 }: BranchCardProps) {
   // Non-current cards act as a big "switch to this branch" button.
   const cardIsClickable = !isCurrent && !isSwitching;
@@ -1205,8 +1232,8 @@ function BranchCard({
             className={`branch-sync-badge ${branch.pushed ? 'synced' : 'local'}`}
             title={
               branch.pushed
-                ? 'This branch exists on GitHub'
-                : 'This branch is only on your machine. Send it to GitHub to put it there.'
+                ? `This branch exists on ${remoteName}`
+                : `This branch is only on your machine. Send it to ${remoteName} to put it there.`
             }
           >
             {branch.pushed ? 'On GitHub' : 'Local only'}
@@ -1246,7 +1273,7 @@ function BranchCard({
             disabled={isPublishing}
             leftIcon={isPublishing ? undefined : <PushIcon size={14} />}
           >
-            Send to GitHub
+            Send to {remoteName}
           </Button>
         )}
         {showDelete && (
