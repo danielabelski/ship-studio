@@ -185,6 +185,12 @@ export const baseCommands: CommandMap = {
   register_external_project: null,
   set_compact_workspace_toolbar_enabled: null,
   fetch_community_templates: '[]',
+  // Both `Result<(), CommandError>` on the Rust side, so `null` over IPC.
+  // Reached only by the palette sweep — `devserver.stop` and
+  // `preview.toggleElementBreadcrumb` are the two commands nothing else
+  // invokes, so they were the last two captures still badged incomplete.
+  stop_static_server: null,
+  set_element_breadcrumb_enabled: null,
 
   // ---- agents -------------------------------------------------------------
   get_agents_status: [

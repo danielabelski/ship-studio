@@ -63,6 +63,14 @@ export const workspaceCommands: CommandMap = {
     has_package_json: true,
     workspace_has_package_json: false,
   },
+  // Asked for on every workspace open, on the path that decides which package
+  // manager runs the dev script. Unmocked, it badged 41 of the 58 palette
+  // captures incomplete — which by this harness's own rule means none of their
+  // screenshots counted as evidence, and the sweep that is supposed to give
+  // every feature visual coverage was blind. A plain string, per
+  // `detectPackageManager` in `src/lib/github.ts` ("pnpm" | "yarn" | "bun" |
+  // "npm"); 'pnpm' matches what this repo uses.
+  detect_package_manager: 'pnpm',
 
   // Asked for on every workspace open. Unmocked it badged every workspace
   // capture incomplete, which by this harness's own rule means none of their
