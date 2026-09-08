@@ -24,6 +24,7 @@ import { MigrationStatusView } from './MigrationStatusView';
 import { useAsyncState } from '@/hooks/useAsyncState';
 import {
   buildResumePrompt,
+  initMigration,
   fidelityBand,
   FIDELITY_BAND_LABEL,
   loadFidelityRun,
@@ -33,6 +34,7 @@ import {
   type MigrationStatus,
 } from '@/lib/migration';
 import { queueHandoff } from '@/lib/workflowHandoff';
+import { logger } from '@/lib/logger';
 import { useOptionalToast } from '../../contexts/ToastContext';
 
 interface FidelityPanelProps {
@@ -64,8 +66,27 @@ export function FidelityPanel({ projectPath }: FidelityPanelProps) {
    * be a second source of truth, and the stale one would win whenever the
    * panel was open before the agent's last write.
    */
-  const resume = () => {
+  const resume = async () => {
     if (!status) return;
+    // Refresh the measuring tools first.
+    //
+    // They are written into the project when it is created and never touched
+    // again, so a migration started last week keeps whatever version of the
+    // engine it was born with — including bugs fixed since. `init_migration`
+    // is idempotent and leaves the status file alone, so this is the natural
+    // moment to bring the project up to date: the agent is about to depend on
+    // those tools again.
+    //
+    // A failure here is not fatal. The existing copy still works, and losing
+    // the hand-off over a refresh would be a worse trade than running on a
+    // slightly older engine.
+    try {
+      await initMigration(projectPath, status.sourceUrl);
+    } catch (err) {
+      logger.warn('[Migration] Could not refresh the measuring tools', {
+        error: String(err),
+      });
+    }
     queueHandoff(projectPath, buildResumePrompt(status.sourceUrl));
     toast?.showToast('Picking the migration back up in a new terminal', 'info');
   };
@@ -180,7 +201,7 @@ export function FidelityPanel({ projectPath }: FidelityPanelProps) {
 
         <div className="mig-panel__actions">
           {status && (
-            <Button variant="primary" onClick={resume}>
+            <Button variant="primary" onClick={() => void resume()}>
               Resume
             </Button>
           )}

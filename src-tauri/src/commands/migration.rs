@@ -291,6 +291,10 @@ fn initial_status(source_url: &str) -> MigrationStatus {
 /// already been writing to, because that file is the record of the work and
 /// resetting it would erase what the user is relying on to know where things
 /// stand.
+///
+/// That asymmetry is what lets Resume call it. The tools are written once at
+/// creation and would otherwise stay frozen at whatever shipped that day, so a
+/// migration started before a bug was fixed would keep hitting it forever.
 #[tauri::command]
 #[tracing::instrument]
 pub async fn init_migration(project_path: String, source_url: String) -> Result<(), CommandError> {
