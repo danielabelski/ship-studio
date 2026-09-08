@@ -33,11 +33,11 @@ import {
 } from '@/lib/migration';
 
 interface FidelityPanelProps {
-  /** Directory the capture wrote to. Becomes a project path once this is native. */
-  source: string;
+  /** The open project. Everything shown is read out of its `.shipstudio/`. */
+  projectPath: string;
 }
 
-export function FidelityPanel({ source }: FidelityPanelProps) {
+export function FidelityPanel({ projectPath }: FidelityPanelProps) {
   const {
     data: run,
     isLoading,
@@ -47,14 +47,14 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
   // Loaded separately, and allowed to fail on its own: the agent's account of
   // the work and the measurements of it are different artefacts, and one being
   // absent is not a reason to show neither.
-  const { data: status, execute: loadStatus } = useAsyncState<MigrationStatus, [string]>(
+  const { data: status, execute: loadStatus } = useAsyncState<MigrationStatus | null, [string]>(
     loadMigrationStatus
   );
   const [selected, setSelected] = useState<{ template: string; breakpoint: number } | null>(null);
 
   useEffect(() => {
-    void loadStatus(source);
-    void execute(source).then((loaded) => {
+    void loadStatus(projectPath);
+    void execute(projectPath).then((loaded) => {
       if (!loaded) return;
       // Open on the worst cell rather than on nothing. The panel's job is to
       // show where the rebuild is wrong, and making someone hunt for that in a
@@ -66,7 +66,7 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
         setSelected({ template: worst.t.template, breakpoint: worst.b.breakpoint });
       }
     });
-  }, [execute, loadStatus, source]);
+  }, [execute, loadStatus, projectPath]);
 
   // Widest first — the order Webflow lists its own breakpoints in, so the
   // column headings read the way the person authoring the site is used to.
@@ -100,7 +100,7 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
           No comparison has been run yet.
           <br />
           <span className="mig-panel__empty-detail">
-            Run <code>scripts/webflow-fidelity.mjs</code> against the original and this project.
+            Run <code>scripts/site-fidelity.mjs</code> against the original and this project.
           </span>
         </p>
       </div>
@@ -151,7 +151,7 @@ export function FidelityPanel({ source }: FidelityPanelProps) {
           </div>
         </dl>
 
-        <Button variant="secondary" onClick={() => void execute(source)}>
+        <Button variant="secondary" onClick={() => void execute(projectPath)}>
           Compare again
         </Button>
       </header>
@@ -196,7 +196,7 @@ function FidelityHistory({ history }: { history: FidelityRun['history'] }) {
         </span>
         <span className="mig-history__to">{last.score.toFixed(1)}%</span>
         <span className="mig-history__passes">
-          over {history.length} {history.length === 1 ? 'pass' : 'passes'} at 1440px
+          over {history.length} {history.length === 1 ? 'pass' : 'passes'}
         </span>
       </div>
       <ol className="mig-history__list">

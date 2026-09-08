@@ -1,11 +1,17 @@
-# Webflow fidelity — prototype
+# Site migration — URL in, rebuilt site out
 
-Proving one claim: **a Webflow migration can be measured, and the measurement
-can be closed as a loop.**
+One input: a URL. The agent surveys the site, extracts its design system,
+rebuilds it template by template, and **measures each one against the original**
+before calling it done.
 
-The old `webflow-to-code` plugin analysed an export, wrote a markdown brief and
-stopped. Whether the result resembled the original was never checked by
-anything. This is the missing half.
+Three parts:
+
+- `scripts/site-fidelity.mjs` — the comparison engine. Copied into every
+  migration project at `.shipstudio/fidelity/` so the agent can run it.
+- The `shipstudio-site-to-code` skill — the method, and the rules about how the
+  agent reports and when it must stop and ask.
+- New Project → **From a URL** — creates the project, scaffolds the tooling, and
+  hands the agent its brief.
 
 ## What was actually run
 
@@ -26,11 +32,19 @@ Four passes at 1440px, one fix each:
 | 3 | 98.38% | type scale returned to the site's own 44/50 and 19/30 |
 | 4 | 100.00% | accent colour taken from the variable, not by eye |
 
-And the full four-breakpoint state of pass 1:
+### Why the score is the worst breakpoint, not an average
 
-| 1440 | 991 | 767 | 479 |
-|------|-----|-----|-----|
-| 89.25% | 92.19% | 92.31% | 89.87% |
+Passes 1 and 2 across all four widths:
+
+| Pass | 1440 | 991 | 767 | 479 | **Worst** |
+|------|------|-----|-----|-----|-----------|
+| 1 | 89.25% | 92.19% | 92.31% | 89.87% | **89.25%** |
+| 2 | 95.45% | 92.19% | 92.47% | 89.87% | **89.87%** |
+
+Fixing the container moved 1440 by six points and left 479 **exactly where it
+was** — the rule never applied at mobile widths. The mean would have read as
+solid progress. The worst breakpoint says what actually happened, which is that
+the phone layout has not been touched.
 
 ## Honesty about the rebuild side
 
@@ -85,16 +99,16 @@ next thing I would build, and I would build it before the ingest.
 
 ```bash
 # Measure a rebuild against the original
-node scripts/webflow-fidelity.mjs \
+node scripts/site-fidelity.mjs \
   --reference https://tempo-template.webflow.io/ \
   --rebuild http://127.0.0.1:3000/ \
   --out public/migration-demo/v1
 
 # Reproduce the four-pass demo
-bash prototypes/webflow-fidelity/run-demo.sh
+bash prototypes/site-migration/run-demo.sh
 
 # Redraw diff images from captures already on disk (no network, seconds)
-node scripts/webflow-fidelity-recompare.mjs public/migration-demo
+node scripts/site-fidelity-recompare.mjs public/migration-demo
 ```
 
 ## Seeing the UI

@@ -19,6 +19,7 @@ export function useMigrationCommands() {
       {
         id: 'migration.import',
         title: 'Rebuild a site from its URL…',
+        subtitle: 'New Project → From a URL',
         icon: <GlobeIcon size={14} />,
         category: 'project',
         when: 'home',
@@ -34,7 +35,7 @@ export function useMigrationCommands() {
           'clone',
           'rebuild',
         ],
-        run: () => openModal('siteUrlImport'),
+        run: () => openModal('newProject'),
       },
       {
         id: 'migration.fidelity',

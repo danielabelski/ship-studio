@@ -24,9 +24,9 @@
  * whole image pipeline is a `Runtime.evaluate` away.
  *
  * Usage:
- *   node scripts/webflow-fidelity.mjs --reference https://x.webflow.io/ \
+ *   node scripts/site-fidelity.mjs --reference https://x.webflow.io/ \
  *                                     --rebuild http://127.0.0.1:4321/ \
- *                                     --out prototypes/webflow-fidelity/run
+ *                                     --out prototypes/site-migration/run
  *
  *   --breakpoints 1440,991,767,479   override the widths
  *   --label hero                     name this template in the report
@@ -40,7 +40,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { COMPARE_IN_PAGE, PIXEL_THRESHOLD_SQ } from './webflow-fidelity-compare.mjs';
+import { COMPARE_IN_PAGE, PIXEL_THRESHOLD_SQ } from './site-fidelity-compare.mjs';
 
 const CDP_PORT = Number(process.env.SHIPSTUDIO_FIDELITY_CDP_PORT ?? 9334);
 
@@ -249,7 +249,7 @@ async function capture(url, width, settleMs, extraCss) {
     await sleep(settleMs);
     await page.eval(SETTLE_WEBFLOW);
 
-    // Stand-in for generated code (see prototypes/webflow-fidelity/README.md):
+    // Stand-in for generated code (see prototypes/site-migration/README.md):
     // overlaying CSS on the live page produces a rendering that differs from
     // the reference in specific, nameable ways, which is what the loop needs
     // to be exercised against before any real migration output exists.
@@ -327,7 +327,7 @@ async function main() {
   }
 
   const label = args.label ?? 'home';
-  const outDir = path.resolve(args.out ?? 'prototypes/webflow-fidelity/run');
+  const outDir = path.resolve(args.out ?? 'prototypes/site-migration/run');
   const settleMs = Number(args.settle ?? 900);
   const rebuildCss = args['rebuild-css']
     ? await readFile(path.resolve(args['rebuild-css']), 'utf8')

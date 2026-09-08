@@ -704,6 +704,9 @@ pub fn run() {
             commands::skills::install_skill,
             commands::skills::remove_skill,
             // MCP servers
+            commands::migration::init_migration,
+            commands::migration::read_migration_status,
+            commands::migration::read_fidelity_runs,
             commands::mcp::list_mcp_servers,
             commands::mcp::add_mcp_server,
             commands::mcp::remove_mcp_server,

@@ -1,5 +1,7 @@
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+
 /**
- * Webflow migration — types and the data layer behind the Fidelity panel.
+ * Site migration — types and the data layer behind the Migration panel.
  *
  * The question this feature answers is "does the rebuild still look like the
  * site", and the answer has to be *measured*, not asserted. Everything here is
@@ -9,7 +11,7 @@
  * the project's first principle forbids.
  *
  * The reads currently resolve against files written by
- * `scripts/webflow-fidelity.mjs`. In the shipped version they become Tauri
+ * `scripts/site-fidelity.mjs`. In the shipped version they become Tauri
  * commands; the shapes are the contract either way.
  *
  * @module lib/webflow
@@ -174,37 +176,73 @@ export function runScore(run: FidelityRun): number | null {
   return scores.length ? Math.min(...scores) : null;
 }
 
-/** Raw shape written by `scripts/webflow-fidelity.mjs`. */
+/** Raw shape written by the capture script into each run's `report.json`. */
 interface FidelityReport {
   label: string;
   reference: string;
   rebuild: string;
   capturedAt: string;
   score: number;
-  breakpoints: BreakpointComparison[];
+  breakpoints: Omit<BreakpointComparison, 'dir'>[];
   rebuildCss?: string | null;
 }
 
-/**
- * Load a run.
- *
- * `base` is the directory the capture script wrote to, served statically. The
- * shipped version replaces this with an invoke; the return shape does not
- * change, which is the reason for the indirection.
- */
-export async function loadFidelityRun(base: string): Promise<FidelityRun> {
-  const report = (await fetch(`${base}/v1/report.json`).then((r) => {
-    if (!r.ok) throw new Error(`No fidelity report at ${base}`);
-    return r.json();
-  })) as FidelityReport;
+/** One run directory as the backend found it. */
+interface FidelityRunFile {
+  /** Absolute path on disk, or a served path under the UI harness. */
+  dir: string;
+  report: FidelityReport;
+}
 
-  const history = await loadHistory(base);
+/**
+ * Turn a capture directory into something an `<img>` can load.
+ *
+ * Inside the app these are absolute paths in the user's project, which the
+ * webview will only load through Tauri's asset protocol. Under the UI harness
+ * the same captures are served over HTTP, so the path is already a URL.
+ *
+ * Feature-detected rather than environment-detected, and that distinction is
+ * load-bearing: the harness installs `window.__TAURI_INTERNALS__` through the
+ * official `mockIPC`, so testing for that global reports "we are in Tauri"
+ * everywhere the captures are *not* behind the asset protocol — which is
+ * exactly where converting them produces a URL nothing can load.
+ */
+export function fidelityImageUrl(dir: string, file: string): string {
+  const path = `${dir}/${file}`;
+  try {
+    return convertFileSrc(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Every capture run in the project, oldest first.
+ *
+ * Runs are directories, and the agent names them, so their order is the order
+ * the backend returns them in. Nothing here infers a sequence from scores —
+ * a pass that made things worse is still the pass that came next, and hiding
+ * that would defeat the point of showing the history at all.
+ */
+export async function loadFidelityRun(projectPath: string): Promise<FidelityRun> {
+  const runs = await invoke<FidelityRunFile[]>('read_fidelity_runs', { projectPath });
+  if (runs.length === 0) throw new Error('No fidelity runs yet');
+
+  const latest = runs[runs.length - 1];
+  const report = latest.report;
 
   return {
     reference: report.reference,
     rebuild: report.rebuild,
     rebuildOverlay: report.rebuildCss ?? null,
-    history,
+    // One entry per run, labelled with the run's own directory name. The
+    // agent chooses those names, and a name it chose is more informative than
+    // an index this function would invent.
+    history: runs.map((run, index) => ({
+      iteration: index + 1,
+      score: run.report.score,
+      note: run.dir.split('/').pop() ?? `pass ${index + 1}`,
+    })),
     templates: [
       {
         template: report.label,
@@ -214,75 +252,28 @@ export async function loadFidelityRun(base: string): Promise<FidelityRun> {
         capturedAt: report.capturedAt,
         breakpoints: report.breakpoints.map((b) => ({
           ...b,
-          dir: `${base}/v1/${report.label}/${b.breakpoint}`,
+          dir: `${latest.dir}/${report.label}/${b.breakpoint}`,
         })),
-      },
-      // Deliberately unmeasured. A migration reaches templates one at a time,
-      // and the panel has to be honest about the ones it has not reached.
-      {
-        template: 'about',
-        route: '/about',
-        status: 'not-compared',
-        reason: 'Not rebuilt yet',
-      },
-      {
-        template: 'work',
-        route: '/work',
-        status: 'not-compared',
-        reason: 'Not rebuilt yet',
-      },
-      {
-        template: 'post',
-        route: '/post/[slug]',
-        status: 'not-compared',
-        reason: 'CMS template — needs collection content',
       },
     ],
   };
 }
 
 /**
- * Each pass of the loop, read from the per-iteration reports.
+ * The agent's account of itself, or null when this project is not a migration.
  *
- * Missing iterations are skipped rather than interpolated: the history is a
- * record of comparisons that were actually run.
+ * Null rather than a throw: most projects are not migrations, and asking is a
+ * normal thing for the panel to do. Only a *malformed* status is an error,
+ * because that one needs fixing and hiding it behind an empty panel is how it
+ * would go unnoticed.
  */
-async function loadHistory(base: string): Promise<FidelityRun['history']> {
-  const notes = [
-    'First pass',
-    'Container width corrected to 1200px',
-    'Type scale corrected to the site’s values',
-    'Accent colour taken from the variable',
-  ];
-
-  const entries = await Promise.all(
-    [1, 2, 3, 4].map(async (iteration) => {
-      try {
-        const res = await fetch(`${base}/v${iteration}/report.json`);
-        if (!res.ok) return null;
-        const report = (await res.json()) as FidelityReport;
-        return { iteration, score: report.score, note: notes[iteration - 1] ?? '' };
-      } catch {
-        return null;
-      }
-    })
-  );
-
-  return entries.filter((e): e is FidelityRun['history'][number] => e !== null);
+export async function loadMigrationStatus(projectPath: string): Promise<MigrationStatus | null> {
+  return invoke<MigrationStatus | null>('read_migration_status', { projectPath });
 }
 
-/**
- * Load the migration's own account of itself.
- *
- * Written by the agent as it works, and read here. Deliberately a separate
- * read from the fidelity captures: the scores say how good the rebuild is, and
- * this says what has been attempted at all. A page can be absent from both,
- * and the panel has to be able to say so.
- */
-export async function loadMigrationStatus(base: string): Promise<MigrationStatus> {
-  const res = await fetch(`${base}/migration.json`);
-  if (!res.ok) throw new Error(`No migration status at ${base}`);
-  return (await res.json()) as MigrationStatus;
+/** Prepare a project to have `sourceUrl` rebuilt into it. */
+export async function initMigration(projectPath: string, sourceUrl: string): Promise<void> {
+  await invoke('init_migration', { projectPath, sourceUrl });
 }
 
 /** Phase labels, kept beside the type so the rail and the skill agree. */
@@ -293,3 +284,41 @@ export const PHASE_LABEL: Record<MigrationPhaseId, string> = {
   templates: 'Templates',
   remainder: 'Remainder',
 };
+
+/**
+ * The first thing the agent is told.
+ *
+ * Deliberately short. The method lives in the `shipstudio-site-to-code` skill,
+ * and restating it here would create a second copy to drift — so this names the
+ * job, points at the skill, and supplies the two things the skill cannot know
+ * on its own: where this project's measuring tool is, and that the panel reads
+ * `migration.json`.
+ *
+ * The last line is the one that matters. An agent that finishes a phase and
+ * says nothing has, from the user's side, stalled.
+ */
+export function buildMigrationPrompt(sourceUrl: string): string {
+  return [
+    `Rebuild ${sourceUrl} in this project.`,
+    '',
+    'Use the shipstudio-site-to-code skill and follow its phases in order:',
+    'survey, then the design system from computed values, then the homepage',
+    'verified against the original, then the remaining templates.',
+    '',
+    'To measure a page against the original:',
+    '',
+    '  node .shipstudio/fidelity/site-fidelity.mjs \\',
+    `    --reference ${sourceUrl} \\`,
+    '    --rebuild http://localhost:3000/ \\',
+    '    --label home --out .shipstudio/fidelity/<pass-name>',
+    '',
+    'It screenshots both sides at 1440/991/767/479 and scores the pixel match.',
+    'Use the dev server URL this project actually runs on. A page is not done',
+    'below 99.5% at its worst breakpoint.',
+    '',
+    'Keep .shipstudio/migration.json current as you go — phases, what you are',
+    'doing, what is done, what is not, what cannot come across, and anything',
+    'you need me to decide. That file is what I read to see where things are,',
+    'so update it at the end of every phase and whenever you get stuck.',
+  ].join('\n');
+}

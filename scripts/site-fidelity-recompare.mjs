@@ -7,7 +7,7 @@
  * directory, re-runs the comparison against the reference.png/rebuild.png
  * already there, and rewrites diff.png and the scores.
  *
- * Usage: node scripts/webflow-fidelity-recompare.mjs public/migration-demo
+ * Usage: node scripts/site-fidelity-recompare.mjs public/migration-demo
  */
 
 import { spawn } from 'node:child_process';
@@ -46,7 +46,7 @@ async function main() {
     process.exit(2);
   }
 
-  const { COMPARE_IN_PAGE, PIXEL_THRESHOLD_SQ } = await import('./webflow-fidelity-compare.mjs');
+  const { COMPARE_IN_PAGE, PIXEL_THRESHOLD_SQ } = await import('./site-fidelity-compare.mjs');
   const pairs = await findPairs(root);
   if (!pairs.length) {
     console.error(`No reference/rebuild pairs under ${root}`);

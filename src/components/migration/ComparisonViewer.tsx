@@ -18,7 +18,7 @@
 
 import { useCallback, useRef, useState, type ChangeEvent } from 'react';
 import { SegmentedControl } from '../primitives/SegmentedControl';
-import type { BreakpointComparison } from '@/lib/migration';
+import { fidelityImageUrl, type BreakpointComparison } from '@/lib/migration';
 
 type ViewMode = 'side-by-side' | 'overlay' | 'difference';
 
@@ -79,13 +79,13 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
       {mode === 'side-by-side' && (
         <div className="mig-comparison__panes">
           <figure className="mig-comparison__pane">
-            <figcaption className="mig-comparison__caption">Webflow</figcaption>
+            <figcaption className="mig-comparison__caption">Original</figcaption>
             <div
               className="mig-comparison__scroll"
               ref={leftRef}
               onScroll={() => syncScroll(leftRef.current, rightRef.current)}
             >
-              <img src={`${comparison.dir}/reference.png`} alt="" />
+              <img src={fidelityImageUrl(comparison.dir, 'reference.png')} alt="" />
             </div>
           </figure>
           <figure className="mig-comparison__pane">
@@ -95,7 +95,7 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
               ref={rightRef}
               onScroll={() => syncScroll(rightRef.current, leftRef.current)}
             >
-              <img src={`${comparison.dir}/rebuild.png`} alt="" />
+              <img src={fidelityImageUrl(comparison.dir, 'rebuild.png')} alt="" />
             </div>
           </figure>
         </div>
@@ -105,10 +105,14 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
         <div className="mig-comparison__single">
           <div className="mig-comparison__scroll mig-comparison__scroll--wide">
             <div className="mig-overlay">
-              <img className="mig-overlay__base" src={`${comparison.dir}/reference.png`} alt="" />
+              <img
+                className="mig-overlay__base"
+                src={fidelityImageUrl(comparison.dir, 'reference.png')}
+                alt=""
+              />
               {/* inline-style-ok: wipe position is a live pointer value */}
               <div className="mig-overlay__clip" style={{ width: `${wipe}%` }}>
-                <img src={`${comparison.dir}/rebuild.png`} alt="" />
+                <img src={fidelityImageUrl(comparison.dir, 'rebuild.png')} alt="" />
               </div>
               {/* inline-style-ok: seam tracks the wipe */}
               <div className="mig-overlay__seam" style={{ left: `${wipe}%` }} />
@@ -124,7 +128,7 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
               onChange={(e: ChangeEvent<HTMLInputElement>) => setWipe(Number(e.target.value))}
               aria-label="Wipe between the original and the rebuild"
             />
-            <span className="mig-comparison__wipe-label">Webflow</span>
+            <span className="mig-comparison__wipe-label">Original</span>
           </label>
         </div>
       )}
@@ -132,7 +136,7 @@ export function ComparisonViewer({ comparison, templateLabel }: ComparisonViewer
       {mode === 'difference' && (
         <div className="mig-comparison__single">
           <div className="mig-comparison__scroll mig-comparison__scroll--wide">
-            <img src={`${comparison.dir}/diff.png`} alt="" />
+            <img src={fidelityImageUrl(comparison.dir, 'diff.png')} alt="" />
           </div>
           <p className="mig-comparison__legend">
             <span className="mig-comparison__swatch" aria-hidden="true" />

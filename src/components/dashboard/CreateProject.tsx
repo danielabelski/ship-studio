@@ -29,6 +29,7 @@ import {
 import { useAsyncState } from '../../hooks/useAsyncState';
 import { TemplateGallery, type CommunityTemplate } from './TemplateGallery';
 import { TemplateCard } from './TemplateCard';
+import { SiteUrlPanel, normaliseUrl } from '../migration/SiteUrlPanel';
 
 /** Props for the CreateProject component */
 interface CreateProjectProps {
@@ -71,12 +72,18 @@ export function CreateProject({ onComplete, onCancel }: CreateProjectProps) {
     setError,
     saveDefaultTemplate,
     defaultTemplateId,
+    setMigrationUrl,
   } = useProjectCreation({ onComplete, onCancel });
 
   const [setAsDefaultChecked, setSetAsDefaultChecked] = useState(false);
 
   // Tab state: "scratch" = start from scratch, "template" = community templates
-  const [activeTab, setActiveTab] = useState<'scratch' | 'template'>('scratch');
+  const [activeTab, setActiveTab] = useState<'scratch' | 'template' | 'url'>('scratch');
+  // The address being rebuilt, as typed. Normalised only when it is used,
+  // so the field never rewrites what someone is halfway through typing.
+  const [siteUrl, setSiteUrl] = useState('');
+  const normalisedSiteUrl = normaliseUrl(siteUrl);
+  const siteUrlInvalid = siteUrl.trim().length > 0 && normalisedSiteUrl === null;
 
   // Community templates from API
   const [communitySearch, setCommunitySearch] = useState('');
@@ -145,7 +152,33 @@ export function CreateProject({ onComplete, onCancel }: CreateProjectProps) {
   const selectedCommunityTemplate =
     communityTemplates.find((t) => t.id === selectedCommunityId) ?? null;
 
+  /**
+   * A project name from the site's host.
+   *
+   * The host, never the path: naming it after the page someone happened to
+   * paste would give `/pricing` and `/about` different project names for the
+   * same site.
+   */
+  const nameFromUrl = (url: string): string => {
+    try {
+      return new URL(url).hostname.replace(/^www\./, '').replace(/[^a-z0-9]+/gi, '-');
+    } catch {
+      return 'migrated-site';
+    }
+  };
+
   const handleContinue = async () => {
+    if (activeTab === 'url') {
+      if (!normalisedSiteUrl || !selectedTemplate) return;
+      // Carried into creation so the hand-off happens in the same breath as
+      // the workspace opening; the name is only a suggestion and the next
+      // step still lets it be changed.
+      setMigrationUrl(normalisedSiteUrl);
+      setProjectName(nameFromUrl(normalisedSiteUrl));
+      rawHandleContinue();
+      return;
+    }
+
     if (activeTab === 'scratch') {
       if (setAsDefaultChecked && selectedTemplate) {
         saveDefaultTemplate(selectedTemplate.id);
@@ -260,6 +293,9 @@ export function CreateProject({ onComplete, onCancel }: CreateProjectProps) {
               <TabsTab value="template" className="create-tab">
                 Start from Template
               </TabsTab>
+              <TabsTab value="url" className="create-tab">
+                From a URL
+              </TabsTab>
             </TabsList>
 
             <TabsPanel value="scratch" className="create-tab-panel">
@@ -361,6 +397,19 @@ export function CreateProject({ onComplete, onCancel }: CreateProjectProps) {
                 </>
               )}
             </TabsPanel>
+
+            <TabsPanel value="url" className="create-tab-panel">
+              {activeTab === 'url' && (
+                <SiteUrlPanel
+                  url={siteUrl}
+                  onUrlChange={setSiteUrl}
+                  templates={TEMPLATES.filter((t) => t.category === 'web')}
+                  selectedTemplateId={selectedTemplate?.id ?? null}
+                  onSelectTemplate={handleTemplateSelect}
+                  invalid={siteUrlInvalid}
+                />
+              )}
+            </TabsPanel>
           </Tabs>
 
           {error && <p className="error">{error}</p>}
@@ -376,7 +425,9 @@ export function CreateProject({ onComplete, onCancel }: CreateProjectProps) {
                 downloading ||
                 (activeTab === 'scratch'
                   ? !selectedTemplate && !hasZipTemplate
-                  : !selectedCommunityId && !hasZipTemplate)
+                  : activeTab === 'url'
+                    ? !normalisedSiteUrl || !selectedTemplate
+                    : !selectedCommunityId && !hasZipTemplate)
               }
               onClick={() => void handleContinue()}
             >

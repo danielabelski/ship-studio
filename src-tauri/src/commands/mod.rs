@@ -27,6 +27,7 @@ pub mod hosting;
 pub mod i18n;
 pub mod ide;
 pub mod mcp;
+pub mod migration;
 pub mod mobile;
 pub mod monorepo;
 pub mod plugins;

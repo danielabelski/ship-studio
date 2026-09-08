@@ -1,15 +1,134 @@
 /**
  * Site-migration scenarios.
  *
- * The panel reads captures written by `scripts/webflow-fidelity.mjs` and served
- * from `public/migration-demo`, so these need no command fixtures for the data
- * itself — the run on disk *is* the fixture, and it is a real one: real
- * screenshots of a real site against a rebuild with real mistakes in it. That
- * is the point of the panel, so faking it here would defeat the review.
+ * The Migration panel reads its captures out of the open project, so the
+ * fixtures below stand in for that read — but the *images* they point at are
+ * real, served from `public/migration-demo`: real screenshots of a real site
+ * against a rebuild with real mistakes in it. Faking those would defeat the
+ * review, since what the panel is for is looking at them.
  */
 
 import type { Scenario } from '../types';
 import { workspaceCommands, WORKSPACE_PROJECT } from './workspace';
+
+/**
+ * Runs as `read_fidelity_runs` returns them: oldest first, in the natural
+ * order of their directory names. The panel opens on the last one.
+ */
+const FIDELITY_RUNS = [
+  {
+    dir: '/migration-demo/v1',
+    report: run(89.25, 'rebuild-v1.css', [
+      bp(1440, 89.25, 1_944_863, 18_083_520, 12_558, 12_482),
+      bp(991, 92.19, 1_169_461, 14_973_019, 15_085, 15_109),
+      bp(767, 92.31, 1_197_918, 15_570_100, 20_268, 20_300),
+      bp(479, 89.87, 849_066, 8_382_500, 17_464, 17_500),
+    ]),
+  },
+  {
+    dir: '/migration-demo/v2',
+    report: run(89.87, 'rebuild-v2.css', [
+      bp(1440, 95.45, 822_641, 18_083_520, 12_558, 12_548),
+      bp(991, 92.19, 1_169_461, 14_973_019, 15_085, 15_109),
+      bp(767, 92.47, 1_171_918, 15_570_100, 20_268, 20_300),
+      bp(479, 89.87, 849_066, 8_382_500, 17_464, 17_500),
+    ]),
+  },
+];
+
+function bp(
+  breakpoint: number,
+  score: number,
+  differingPixels: number,
+  totalPixels: number,
+  referenceHeight: number,
+  rebuildHeight: number
+) {
+  return { breakpoint, score, differingPixels, totalPixels, referenceHeight, rebuildHeight };
+}
+
+function run(score: number, rebuildCss: string, breakpoints: ReturnType<typeof bp>[]) {
+  return {
+    label: 'home',
+    reference: 'https://tempo-template.webflow.io/',
+    rebuild: 'https://tempo-template.webflow.io/',
+    rebuildCss,
+    capturedAt: '2026-09-08T01:26:28.924Z',
+    score,
+    breakpoints,
+  };
+}
+
+const MIGRATION_STATUS = {
+  sourceUrl: 'https://tempo-template.webflow.io/',
+  startedAt: '2026-09-07T19:04:00.000Z',
+  phases: [
+    {
+      id: 'survey',
+      label: 'Survey',
+      status: 'done',
+      detail: '18 URLs across 4 templates. Breakpoints read from the site: 1440 / 991 / 767 / 479.',
+    },
+    {
+      id: 'design-system',
+      label: 'Design system',
+      status: 'done',
+      detail: '31 tokens from computed styles. Style guide at /style-guide; written to CLAUDE.md.',
+    },
+    {
+      id: 'homepage',
+      label: 'Homepage',
+      status: 'active',
+      detail: '89.9% at its worst breakpoint after 2 passes. Not accepted below 99.5%.',
+    },
+    {
+      id: 'templates',
+      label: 'Templates',
+      status: 'not-started',
+      detail: '3 templates queued. Not begun until the homepage is signed off.',
+    },
+    {
+      id: 'remainder',
+      label: 'Remainder',
+      status: 'not-started',
+      detail: 'Written at the end, from what is still open.',
+    },
+  ],
+  doing:
+    'Homepage, pass 3 — the container fix did not reach 479px; looking at the mobile type scale.',
+  done: [
+    'Survey — 18 URLs grouped into 4 templates, written to MIGRATION.md',
+    'Design system — 31 tokens taken from computed styles, not sampled by eye',
+    'Style guide route at /style-guide, rendering every token',
+  ],
+  notDone: [
+    'Homepage is at 89.9% at 479px and is not accepted below 99.5%',
+    'about, work and the post template have not been started',
+    'No interactive states checked yet — hover, focus, open menu',
+    'Nothing checked between breakpoints, only at them',
+  ],
+  cannotCarry: [
+    {
+      item: 'Scroll and load interactions',
+      reason:
+        "Webflow's IX2 has no export format. They need rebuilding by hand, and are not counted in any score.",
+    },
+    {
+      item: 'The heading typeface',
+      reason:
+        'Served from a CDN under a licence that does not cover self-hosting. A substitute needs your decision.',
+    },
+  ],
+  needsYou: [
+    {
+      id: 'font',
+      question: 'The heading font cannot be self-hosted. Which way do you want to go?',
+      why: 'It sets the look of every page, so it is worth settling before the other three templates are built rather than after.',
+      recommendation:
+        'License it directly — it is the only option that keeps the site looking like itself. Otherwise the closest free substitute is a near match at display sizes and visibly different in body copy.',
+    },
+  ],
+};
 
 export const migrationScenarios: Scenario[] = [
   {
@@ -18,30 +137,30 @@ export const migrationScenarios: Scenario[] = [
     requires: '.mig-matrix',
     title: 'Migration — where the work actually is',
     looksRightWhen:
-      'The phase rail shows the method and where the agent is inside it. The open question is unmissable, because while one is open the migration is stopped, not slow. Done / Doing / Not done / Can\u2019t carry all render even when empty. The worst breakpoint leads, never an average, and untouched templates say so in words instead of showing a score.',
+      'The phase rail shows the method and where the agent is inside it. The open question is unmissable, because while one is open the migration is stopped, not slow. Done / Doing / Not done / Can’t carry all render even when empty. The headline is 89.9% — the 479px cell — even though 1440 improved to 95.5%: the worst breakpoint leads, and an average here would have read as progress.',
     project: WORKSPACE_PROJECT,
     commands: {
       ...workspaceCommands,
+      read_migration_status: MIGRATION_STATUS,
+      read_fidelity_runs: FIDELITY_RUNS,
       // Asked for by the preview toolbar the moment a workspace mounts. Not
       // this panel's concern, but an unanswered command fails the capture, and
       // a screenshot from a run with unmocked commands is not evidence.
       get_element_breadcrumb_enabled: false,
     },
   },
-  // The Overlay and Difference views have no scenario, and cannot yet: the
-  // harness runs a scenario's `steps` *before* its `command`, so a step can
-  // never click a control inside a modal that the command is what opens. Both
-  // views are reachable by hand; see prototypes/webflow-fidelity/README.md.
   {
-    id: 'migration-import',
-    command: 'migration.import',
+    id: 'migration-start',
+    // Driven by clicks rather than by a command: the harness runs a scenario's
+    // `steps` before its `command`, so a step can never reach a control inside
+    // a modal that the command is what opens. Both of these are reachable from
+    // the dashboard without one.
+    openSelector: '[data-education-id="new-project-button"]',
+    steps: [{ click: '.create-tabs .tabs__tab:nth-child(3)' }],
     requires: '.mig-url__steps',
     title: 'Migration — starting from a URL',
     looksRightWhen:
-      'One field. The five phases are stated before the user commits, in the order the skill runs them, and the two promises — nothing called done unmeasured, nothing dropped silently — are on screen rather than implied.',
-    // Opens from the dashboard, so it needs no workspace fixtures — but the
-    // harness requires the key, and an empty map is the honest way to say
-    // "this surface asks the backend for nothing".
+      'One field and a stack to build it in. The five phases are stated before the user commits, in the order the skill runs them, and the two promises — nothing called done unmeasured, nothing dropped silently — are on screen rather than implied.',
     commands: {},
   },
 ];

@@ -37,10 +37,13 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { trackError } from '../lib/analytics';
+import { buildMigrationPrompt, initMigration } from '../lib/migration';
+import { queueHandoff } from '../lib/workflowHandoff';
 import { friendlyProcessError } from '../lib/errors';
 import { getWindowLabel } from '../lib/window';
 import { checkNpmCachePermissions } from '../lib/setup';
 import { basename } from '../lib/paths';
+import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // Types & Constants
@@ -228,6 +231,15 @@ export function useProjectCreation({ onComplete, onCancel }: UseProjectCreationP
   const [currentStep, setCurrentStep] = useState<Step>('clone');
   const [error, setError] = useState<string | null>(null);
   const [createdProjectPath, setCreatedProjectPath] = useState<string | null>(null);
+  /**
+   * Set when this project is being created to rebuild a site into it.
+   *
+   * Carried through creation rather than applied afterwards because the
+   * hand-off has to happen in the same breath as `onComplete` — that call
+   * opens the workspace, and a prompt queued after it has already missed the
+   * terminal it was meant for.
+   */
+  const [migrationUrl, setMigrationUrl] = useState<string | null>(null);
 
   // Template zip state
   const [zipFile, setZipFile] = useState<File | null>(null); // From browser file picker
@@ -475,6 +487,25 @@ export function useProjectCreation({ onComplete, onCancel }: UseProjectCreationP
 
       // Small delay before opening
       await new Promise((r) => setTimeout(r, 800));
+
+      if (migrationUrl) {
+        // Write the starting status and drop the measuring tool into the
+        // project, then queue the brief. A failure here must not lose the
+        // project the user just waited for — they still have a scaffolded
+        // repo, and the migration can be restarted from the palette.
+        try {
+          await initMigration(projectPath, migrationUrl);
+          queueHandoff(projectPath, buildMigrationPrompt(migrationUrl));
+        } catch (err) {
+          logger.warn('[ProjectCreation] Could not start the migration', {
+            error: String(err),
+          });
+          setError(
+            'The project was created, but the migration could not be started. Open it and try again from the command palette.'
+          );
+        }
+      }
+
       onComplete(projectPath);
     } catch (err) {
       trackError('project_create', err, 'Dashboard');
@@ -694,6 +725,8 @@ export function useProjectCreation({ onComplete, onCancel }: UseProjectCreationP
     error,
     createdProjectPath,
     isDragging,
+    migrationUrl,
+    setMigrationUrl,
 
     // Refs
     fileInputRef,

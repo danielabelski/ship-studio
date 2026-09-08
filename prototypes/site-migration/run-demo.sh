@@ -10,15 +10,15 @@ REF="https://tempo-template.webflow.io/"
 OUT="public/migration-demo"
 
 # The state the panel opens on: iteration 1, every breakpoint.
-node scripts/webflow-fidelity.mjs \
+node scripts/site-fidelity.mjs \
   --reference "$REF" --rebuild "$REF" \
-  --rebuild-css prototypes/webflow-fidelity/rebuild-v1.css \
+  --rebuild-css prototypes/site-migration/rebuild-v1.css \
   --label home --out "$OUT/v1"
 
 # Convergence history: each iteration at the widest breakpoint.
 for v in 2 3 4; do
-  css="prototypes/webflow-fidelity/rebuild-v${v}.css"
+  css="prototypes/site-migration/rebuild-v${v}.css"
   args=(--reference "$REF" --rebuild "$REF" --label home --breakpoints 1440 --out "$OUT/v${v}")
   [ -s "$css" ] && args+=(--rebuild-css "$css")
-  node scripts/webflow-fidelity.mjs "${args[@]}"
+  node scripts/site-fidelity.mjs "${args[@]}"
 done
