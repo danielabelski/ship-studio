@@ -1224,6 +1224,43 @@ fn preferred_package_manager(path: &Path) -> Option<String> {
     None
 }
 
+/// Nearest enclosing git repository root, for bounding upward searches. A
+/// worktree's `.git` is a file, not a directory — `exists()` covers both.
+fn git_boundary_above(path: &Path) -> Option<std::path::PathBuf> {
+    let mut current = Some(path);
+    while let Some(dir) = current {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+/// `preferred_package_manager`, but walking up through the enclosing git
+/// repository: installs and dev servers run from workspace subpaths in
+/// monorepos (`apps/web`), where the lockfile lives at the repo root.
+/// Checking only the start directory reported "npm" for every bun/pnpm/yarn
+/// monorepo and spawned the one runner the repo isn't set up for. The git
+/// boundary stops the walk so a lockfile above the repository (another
+/// checkout, $HOME) is never misread as this project's; outside a git repo
+/// the walk runs to the filesystem root, matching how npm itself resolves
+/// workspaces.
+fn preferred_package_manager_in_or_above(path: &Path) -> Option<String> {
+    let ceiling = git_boundary_above(path);
+    let mut current = Some(path);
+    while let Some(dir) = current {
+        if let Some(pm) = preferred_package_manager(dir) {
+            return Some(pm);
+        }
+        if Some(dir) == ceiling.as_deref() {
+            break;
+        }
+        current = dir.parent();
+    }
+    None
+}
+
 /// Detects the package manager a project needs (lockfiles first, then the
 /// manifest's own declarations), falling back to npm.
 #[tauri::command]
@@ -1248,7 +1285,7 @@ pub async fn detect_package_manager(project_path: String) -> Result<String, Comm
         }
     }
 
-    match preferred_package_manager(path) {
+    match preferred_package_manager_in_or_above(path) {
         Some(preferred) if preferred != "npm" => Ok(or_npm(&preferred)),
         // No signal (or the project asks for npm explicitly) → npm.
         _ => Ok("npm".to_string()),
@@ -2046,6 +2083,72 @@ mod tests {
             assert_eq!(preferred_package_manager(dir.path()), None);
             let dir = project(&[]);
             assert_eq!(preferred_package_manager(dir.path()), None);
+        }
+
+        /// A monorepo workspace: `root/` is the git repo holding the lockfile,
+        /// while dev commands run from `root/apps/web`.
+        fn monorepo(root: &std::path::Path) -> std::path::PathBuf {
+            let web = root.join("apps").join("web");
+            fs::create_dir_all(&web).expect("mkdir apps/web");
+            fs::write(root.join(".git"), "").expect("write .git marker");
+            web
+        }
+
+        #[test]
+        fn detection_walks_up_to_the_repo_root_lockfile() {
+            for lockfile in ["bun.lock", "bun.lockb", "pnpm-lock.yaml", "yarn.lock"] {
+                let dir = tempfile::tempdir().expect("tempdir");
+                fs::write(dir.path().join(lockfile), "").expect("write lockfile");
+                let web = monorepo(dir.path());
+                assert_eq!(
+                    preferred_package_manager_in_or_above(&web).as_deref(),
+                    Some(match lockfile {
+                        l if l.starts_with("bun.") => "bun",
+                        l if l.starts_with("pnpm") => "pnpm",
+                        _ => "yarn",
+                    }),
+                    "lockfile at repo root should be found from apps/web"
+                );
+            }
+        }
+
+        #[test]
+        fn repo_root_manifest_signals_apply_to_workspace_subpaths() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            fs::write(
+                dir.path().join("package.json"),
+                r#"{"name":"x","packageManager":"pnpm@9.0.0"}"#,
+            )
+            .expect("write manifest");
+            let web = monorepo(dir.path());
+            assert_eq!(
+                preferred_package_manager_in_or_above(&web).as_deref(),
+                Some("pnpm")
+            );
+        }
+
+        #[test]
+        fn the_walk_stops_at_the_git_boundary() {
+            // Outside: a parent directory carrying a lockfile for some OTHER
+            // checkout. Inside: a git repo with no manager signals at all.
+            let outside = tempfile::tempdir().expect("tempdir");
+            fs::write(outside.path().join("pnpm-lock.yaml"), "").expect("write lockfile");
+            let repo = outside.path().join("checkout");
+            fs::create_dir_all(repo.join("apps").join("web")).expect("mkdir apps/web");
+            fs::write(repo.join(".git"), "").expect("write .git marker");
+            assert_eq!(
+                preferred_package_manager_in_or_above(&repo.join("apps").join("web")),
+                None
+            );
+        }
+
+        #[test]
+        fn running_at_the_repo_root_still_detects_directly() {
+            let dir = project(&[("bun.lock", "")]);
+            assert_eq!(
+                preferred_package_manager_in_or_above(dir.path()).as_deref(),
+                Some("bun")
+            );
         }
     }
 }
