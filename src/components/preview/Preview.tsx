@@ -1990,7 +1990,21 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                   : `${resize.customHeight + RESIZE_HANDLE_PX}px`,
             }}
           >
-            <div ref={setIframeWrapperEl} className="preview-iframe-wrapper">
+            <div
+              ref={setIframeWrapperEl}
+              className="preview-iframe-wrapper"
+              // `overflow: hidden` still makes this a scroll container — one
+              // with no scrollbar, so anything that scrolls it strands the
+              // frame where the user cannot bring it back. Nothing scrolls it
+              // on purpose; the overlays absolutely positioned over the frame
+              // (comment composer, element toolbar, plugin panels) do it by
+              // accident, because focus() reveals what it focuses. Snap back.
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                if (el.scrollTop !== 0) el.scrollTop = 0;
+                if (el.scrollLeft !== 0) el.scrollLeft = 0;
+              }}
+            >
               <iframe
                 key={projectPath}
                 ref={iframeRef}

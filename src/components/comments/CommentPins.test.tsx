@@ -154,4 +154,14 @@ describe('the composer and note use house inputs, not browser defaults', () => {
     expect(parseFloat(bubble.style.top)).toBeLessThan(0);
     expect(parseFloat(bubble.style.left)).toBeGreaterThan(400);
   });
+
+  it('takes focus without scrolling the frame wrapper out from under the user', () => {
+    // The wrapper is `overflow: hidden`, which still scrolls programmatically
+    // and offers no scrollbar back. focus() reveals what it focuses, so the
+    // composer used to drag the frame upward for good the moment it mounted.
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
+    render(<CommentComposer target={target} onSave={() => true} onCancel={vi.fn()} />);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
 });
