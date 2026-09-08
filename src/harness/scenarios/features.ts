@@ -95,6 +95,52 @@ export const featureScenarios: Scenario[] = [
     commands: { ...workspaceCommands },
   },
   {
+    id: 'gitlab-remote-push',
+    title: 'Push popover — a GitLab remote',
+    looksRightWhen:
+      'Push is enabled and the copy says GitLab throughout — heading, description, and the hint. ' +
+      'The word "GitHub" appears nowhere, and nothing offers to create a GitHub repository.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.source-control-push-button',
+    clipSelector: '.publish-dropdown-menu',
+    requires: '.publish-dropdown-menu',
+    commands: {
+      ...workspaceCommands,
+      get_project_github_status: {
+        status: 'other-remote',
+        github_repo: null,
+        github_url: null,
+        remote_host: 'gitlab.com',
+        remote_forge: 'GitLab',
+      },
+      // Show the popover with work to push, so the heading and description
+      // are on screen — the strings that used to hardcode "GitHub".
+      check_git_has_changes: true,
+    },
+  },
+  {
+    id: 'self-managed-remote-push',
+    title: 'Push popover — a self-managed remote',
+    looksRightWhen:
+      'The host (git.acme.com) is named literally. No vendor is guessed from the hostname, ' +
+      'and push still works.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.source-control-push-button',
+    clipSelector: '.publish-dropdown-menu',
+    requires: '.publish-dropdown-menu',
+    commands: {
+      ...workspaceCommands,
+      get_project_github_status: {
+        status: 'other-remote',
+        github_repo: null,
+        github_url: null,
+        remote_host: 'git.acme.com',
+        remote_forge: null,
+      },
+      check_git_has_changes: true,
+    },
+  },
+  {
     id: 'branches-many',
     // Nothing opened the branches menu, so this photographed the workspace —
     // no branch list, no ahead/behind counts, none of what the caption checks.

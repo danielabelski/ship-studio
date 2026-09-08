@@ -136,6 +136,29 @@ export function GitHubButton({
     }
   }, [projectStatus?.status]);
 
+  // Checked before the gh install/connect prompts below: a project whose code
+  // lives on GitLab has no reason to be told to install the GitHub CLI or sign
+  // in to GitHub. Its remote is the answer, whatever gh's state is.
+  //
+  // The project already has a remote, just not one we integrate with. Say so
+  // and name it — offering "Create Repo" here would be offering to solve a
+  // problem the user doesn't have, and creating a second home for their code.
+  if (projectStatus?.status === 'other-remote') {
+    const where = projectStatus.remote_forge ?? projectStatus.remote_host;
+    return (
+      <Button
+        disabled
+        title={
+          `This project's remote is ${where ?? 'not on GitHub'}. Git operations work; ` +
+          `repository and pull request features are GitHub-only.`
+        }
+      >
+        <GitHubIcon size={12} />
+        <span className="github-button-label">{where ?? 'Not GitHub'}</span>
+      </Button>
+    );
+  }
+
   // If gh CLI not installed, show install prompt
   if (!cliStatus.installed) {
     return (
@@ -203,7 +226,7 @@ export function GitHubButton({
         title="Create GitHub repository"
       >
         <GitHubIcon size={12} />
-        <span style={{ whiteSpace: 'nowrap' }}>Create Repo</span>
+        <span className="github-button-label">Create Repo</span>
       </Button>
 
       {/* Create Repo Modal */}

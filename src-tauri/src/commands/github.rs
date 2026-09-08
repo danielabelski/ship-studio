@@ -265,8 +265,36 @@ pub async fn get_github_orgs(project_path: Option<String>) -> Result<Vec<String>
     Ok(orgs)
 }
 
+/// A project with no usable `origin` at all.
+fn no_remote() -> ProjectGitHubStatus {
+    ProjectGitHubStatus {
+        status: "no-remote".to_string(),
+        github_repo: None,
+        github_url: None,
+        remote_host: None,
+        remote_forge: None,
+    }
+}
+
+/// A project whose `origin` points somewhere the GitHub integration doesn't
+/// reach. Carries the host so the UI can name where the code actually lives.
+fn other_remote(remote: &crate::commands::git::RemoteRef) -> ProjectGitHubStatus {
+    ProjectGitHubStatus {
+        status: "other-remote".to_string(),
+        github_repo: None,
+        github_url: None,
+        remote_host: Some(remote.host.clone()),
+        remote_forge: remote.forge_name().map(str::to_string),
+    }
+}
+
 /// Checks GitHub status by verifying with the GitHub CLI.
 /// Asks GitHub directly instead of inferring from local files.
+///
+/// Distinguishes "no remote" from "a remote we don't integrate with": a GitLab
+/// or self-managed `origin` returns `other-remote`, not `no-remote`, so the UI
+/// stops offering to create a GitHub repo for a project that already has one
+/// somewhere else.
 #[tauri::command]
 #[tracing::instrument(fields(project = %project_path))]
 pub async fn get_project_github_status(project_path: String) -> ProjectGitHubStatus {
@@ -274,6 +302,8 @@ pub async fn get_project_github_status(project_path: String) -> ProjectGitHubSta
         status: "not-a-repo".to_string(),
         github_repo: None,
         github_url: None,
+        remote_host: None,
+        remote_forge: None,
     };
 
     // Validate path
@@ -314,35 +344,31 @@ pub async fn get_project_github_status(project_path: String) -> ProjectGitHubSta
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             debug!(elapsed_ms = step_start.elapsed().as_millis() as u64, stderr = %stderr, "git remote get-url origin: no remote configured");
-            return ProjectGitHubStatus {
-                status: "no-remote".to_string(),
-                github_repo: None,
-                github_url: None,
-            };
+            return no_remote();
         }
         Err(e) => {
             warn!(elapsed_ms = step_start.elapsed().as_millis() as u64, error = %e, "git remote get-url origin failed/timed out");
-            return ProjectGitHubStatus {
-                status: "no-remote".to_string(),
-                github_repo: None,
-                github_url: None,
-            };
+            return no_remote();
         }
     };
 
-    // Parse GitHub repo from remote URL (handles HTTPS and SSH)
-    let github_repo = parse_github_repo(&remote_url);
-    let github_repo = match github_repo {
-        Some(repo) => repo,
+    // Read the remote before asking whether it's GitHub. A remote that parses
+    // but points elsewhere is a different answer from no remote at all — see
+    // ProjectGitHubStatus::status.
+    let remote = match crate::commands::git::parse_remote(&remote_url) {
+        Some(remote) => remote,
         None => {
-            debug!(remote_url = %remote_url, "Could not parse GitHub repo from remote URL");
-            return ProjectGitHubStatus {
-                status: "no-remote".to_string(),
-                github_repo: None,
-                github_url: None,
-            };
+            debug!(remote_url = %remote_url, "origin is not a parseable remote URL");
+            return no_remote();
         }
     };
+
+    if !remote.is_github() {
+        debug!(remote_url = %remote_url, host = %remote.host, "origin points at a non-GitHub forge");
+        return other_remote(&remote);
+    }
+
+    let github_repo = remote.path.clone();
 
     // Verify repo exists on GitHub using gh CLI (with timeout). Scope to the
     // project's workspace so a repo private to that workspace's GitHub login
@@ -370,24 +396,18 @@ pub async fn get_project_github_status(project_path: String) -> ProjectGitHubSta
                 status: "connected".to_string(),
                 github_repo: Some(github_repo),
                 github_url: Some(url),
+                remote_host: None,
+                remote_forge: None,
             }
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             debug!(elapsed_ms = step_start.elapsed().as_millis() as u64, stderr = %stderr, "gh repo view: repo not found or no access");
-            ProjectGitHubStatus {
-                status: "no-remote".to_string(),
-                github_repo: None,
-                github_url: None,
-            }
+            no_remote()
         }
         Err(e) => {
             warn!(elapsed_ms = step_start.elapsed().as_millis() as u64, error = %e, "gh repo view failed/timed out");
-            ProjectGitHubStatus {
-                status: "no-remote".to_string(),
-                github_repo: None,
-                github_url: None,
-            }
+            no_remote()
         }
     };
 
@@ -1269,6 +1289,39 @@ mod tests {
         assert!(GH_PUSH_TIMEOUT_MESSAGE
             .to_lowercase()
             .contains("check your internet connection"));
+    }
+
+    /// The distinction this status exists to make: a GitLab `origin` is not
+    /// the same answer as no `origin`. Reporting it as "no-remote" is what put
+    /// a "Create Repo" button in front of projects that already had one.
+    #[test]
+    fn other_remote_reports_the_host_instead_of_claiming_no_remote() {
+        let remote = crate::commands::git::parse_remote("https://gitlab.com/acme/app.git").unwrap();
+        let status = other_remote(&remote);
+        assert_eq!(status.status, "other-remote");
+        assert_eq!(status.remote_host.as_deref(), Some("gitlab.com"));
+        assert_eq!(status.remote_forge.as_deref(), Some("GitLab"));
+        // Nothing GitHub-shaped is invented for a repo that isn't on GitHub.
+        assert_eq!(status.github_repo, None);
+        assert_eq!(status.github_url, None);
+    }
+
+    #[test]
+    fn other_remote_names_no_forge_for_a_host_it_cannot_classify() {
+        let remote = crate::commands::git::parse_remote("git@git.acme.com:team/app.git").unwrap();
+        let status = other_remote(&remote);
+        assert_eq!(status.status, "other-remote");
+        assert_eq!(status.remote_host.as_deref(), Some("git.acme.com"));
+        // A self-managed host gets its address shown, not a guessed vendor.
+        assert_eq!(status.remote_forge, None);
+    }
+
+    #[test]
+    fn no_remote_carries_no_host() {
+        let status = no_remote();
+        assert_eq!(status.status, "no-remote");
+        assert_eq!(status.remote_host, None);
+        assert_eq!(status.remote_forge, None);
     }
 
     #[test]

@@ -24,12 +24,56 @@ export interface GitHubCliStatus {
 
 /** Project's GitHub repository connection status */
 export interface ProjectGitHubStatus {
-  /** Connection state */
-  status: 'not-a-repo' | 'no-remote' | 'connected';
+  /**
+   * Connection state.
+   *
+   * `other-remote` is a project whose `origin` points somewhere the GitHub
+   * integration doesn't reach — GitLab, a self-managed instance, another
+   * forge. It is deliberately distinct from `no-remote`: the code has a home,
+   * we just don't talk to it, so the UI must not offer to create a GitHub
+   * repository as though the project had none.
+   */
+  status: 'not-a-repo' | 'no-remote' | 'other-remote' | 'connected';
   /** Repository identifier (e.g., "username/repo-name") - only set if connected */
   github_repo: string | null;
   /** Full repository URL (e.g., "https://github.com/username/repo-name") - only set if connected */
   github_url: string | null;
+  /** Host of the configured `origin` (e.g. "gitlab.com") - only set for `other-remote` */
+  remote_host: string | null;
+  /**
+   * Display name of the forge that host identifies ("GitLab"), where it
+   * identifies one. `null` for a host we can read but can't classify — show
+   * {@link remote_host} rather than guessing a vendor. Only set for
+   * `other-remote`.
+   */
+  remote_forge: string | null;
+}
+
+/**
+ * What to call the place this project's code lives, in UI copy.
+ *
+ * Returns `"GitHub"` for a connected project, the forge name or bare host for
+ * a remote we don't integrate with, and `null` when there's no remote to name.
+ * Prefer this over hardcoding "GitHub" in any string a non-GitHub project can
+ * reach — that copy is how a GitLab user gets told their push went to the
+ * wrong place.
+ */
+export function remoteLabel(status: ProjectGitHubStatus | null): string | null {
+  if (!status) return null;
+  if (status.status === 'connected') return 'GitHub';
+  if (status.status === 'other-remote') return status.remote_forge ?? status.remote_host;
+  return null;
+}
+
+/**
+ * Whether `git push` has somewhere to go.
+ *
+ * True for any configured remote, GitHub or not — pushing is plain git and
+ * never needed the GitHub integration. Gating the Push button on a *GitHub*
+ * repo is what left GitLab projects unable to push from the app at all.
+ */
+export function hasPushableRemote(status: ProjectGitHubStatus | null): boolean {
+  return status?.status === 'connected' || status?.status === 'other-remote';
 }
 
 /**
