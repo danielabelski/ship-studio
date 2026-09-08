@@ -219,6 +219,13 @@ moment to confirm the target stack if the project does not already have one.
 `MIGRATION.md` is not a document you write once. It is the state of the work,
 and you keep it current — it is what survives the conversation ending.
 
+**Say you are starting before you start.** Mark the phase you are entering as
+active and write one line about what you are doing, *then* do it. A survey runs
+for several minutes; a status that still reads "not started" throughout is
+indistinguishable, from the outside, from an agent that never began — and the
+user's only view of you is that file. This is the difference between a long job
+and an apparently dead one.
+
 ---
 
 ## Phase 1 — The design system, before any page
