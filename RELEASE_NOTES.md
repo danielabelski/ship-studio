@@ -6,6 +6,19 @@ The latest entry is rendered inside the in-app update dialog, so write user-
 facing language — what changed, in plain English — not commit subjects.
 -->
 
+## What's New in v1.3.0
+
+- **Team** - See what your teammates actually did and why, who is on which branch, and the comments left on the project, without leaving the workspace. It reads your own repository rather than a server: no account, no sign-up, and it works on first launch even if nobody else on the team uses Ship Studio
+- **Comments are shared** - Pin a note to the element it is about and your teammates see it after their next sync. They travel on a ref of their own, so your branches, your commits and your pull requests never contain them. Tick the ones you want and hand them to your agent in one go; it can reply and mark them resolved when it's done. Comments still work with no repository at all
+- **Rebuild a site from its URL** - "From a URL" in New Project: give it an address and a stack, and your agent surveys the site, extracts its design system, and rebuilds it template by template. Nothing is reported as done until it has been measured against the original, and anything that can't come across is named rather than quietly dropped
+- **Projects whose remote isn't GitHub work** - GitLab and self-managed git hosts get branches, worktrees, sync and push, and the copy names the host you actually use. What genuinely needs GitHub, like pull requests, is absent rather than broken
+- **Dev servers start with the project's own package manager** - A bun or pnpm project no longer gets an npm dev script it was never set up for (thanks Maarten Keizer)
+- **Terminal output is no longer thrown away** - A verbose agent turn or a chatty build could outrun the terminal's parser until it gave up and discarded the rest, which is exactly the part with the error in it. The terminal now paces the process instead
+- **Lower idle CPU** - While anything on screen was changing, which during an agent turn is continuously, the app re-examined every element in the window four times a second to find scrollable ones. It now looks only at what actually changed
+- **Quieter in the background** - A project window you aren't looking at no longer walks git history, runs `gh`, or calls GitHub every minute. It refreshes the moment you come back to it
+- **A click inside a dialog no longer dismisses the popover underneath it**
+- **~17 more reported issues fixed** - Mostly routine environment states that used to file themselves as bug reports and now explain themselves instead: a dev server restarting, a project folder that moved, a broken npm install, an agent CLI whose own config won't parse, a clone cut off by a flaky network
+
 ## What's New in v1.2.0
 
 - **Breakpoint canvas** - See every breakpoint at once, side by side, each showing the whole page at its own device width and an honest viewport height. Pan and zoom it like a design canvas; click a frame's label to drop into that size and work there. Editing, inspection and screenshots follow whichever frame is active
