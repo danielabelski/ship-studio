@@ -215,13 +215,14 @@ export async function setCommitAttributionEnabled(enabled: boolean): Promise<voi
   }
 }
 
-// ============ Team records ============
+// ============ Written commit messages ============
 
 /**
- * Whether pushing from Ship Studio also writes a team record.
+ * Whether pushing from Ship Studio asks an agent to write the commit message.
  *
  * Defaults to on, and to on when the read fails, matching the backend. A feed
- * nobody writes to is the GitHub half forever.
+ * of bare subject lines is the GitHub half forever, which is the state this
+ * feature exists to improve on.
  */
 export async function getTeamSharingEnabled(): Promise<boolean> {
   try {
@@ -231,7 +232,7 @@ export async function getTeamSharingEnabled(): Promise<boolean> {
   }
 }
 
-/** Turn team records on or off. */
+/** Turn written commit messages on or off. */
 export async function setTeamSharingEnabled(enabled: boolean): Promise<void> {
   try {
     await invoke('set_team_sharing_enabled', { enabled });

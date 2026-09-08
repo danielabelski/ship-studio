@@ -1,19 +1,21 @@
 //! What a push writes, beyond the code.
 //!
-//! One agent call, three places the answer lands:
+//! One agent call, one place the answer lands:
 //!
 //! ```text
-//! summarise the working tree
-//!   -> the commit message      (subject + why + changes)
-//!   -> .shipstudio-team/…json  (the record the feed reads)
-//!   -> Ship-Studio-Update:     (the trailer joining the two)
+//! summarise the working tree  ->  the commit message (subject + why)
 //! ```
 //!
-//! All in a **single commit**, which is the decision this module exists to
-//! make. The record and the work it describes go in together, so there is no
-//! window where one exists without the other: no record about a commit that was
-//! never pushed, no commit whose explanation is sitting uncommitted on someone's
-//! laptop. Two commits could not promise that.
+//! That is the whole thing, and *why* it is the whole thing is the decision
+//! this module exists to record. An earlier version wrote a second copy of the
+//! same prose into a record file under `.shipstudio-team/`, joined to its commit by a
+//! trailer: a format only Ship Studio could read, describing something git
+//! already knew, giving every writer two chances to get one sentence recorded
+//! and a silent empty row whenever they got the second one wrong.
+//!
+//! A commit body is where "why" belongs. `git log` shows it, GitHub shows it,
+//! and a teammate who has never opened this app shows it. So the job here is to
+//! make the commit *good*, not to invent somewhere else to put the explanation.
 //!
 //! ## Everything here is optional, and the push never waits on it
 //!
@@ -21,32 +23,29 @@
 //! gauntlet refuses: every one of them falls back to a plain commit and pushes.
 //! A team feature that can stop you shipping is a team feature people turn off.
 
-use crate::errors::CommandError;
-
-use super::writer::{self, TeamSummary};
+use super::writer;
 
 /// What a push should commit, once the agent has had its say.
 pub struct PushContent {
-    /// The full commit message, trailers not yet applied.
+    /// The full commit message: subject, then the body carrying the *why*.
     pub message: String,
-    /// The record's id, when one was written. Becomes the commit trailer.
-    pub update_id: Option<String>,
     /// The agent that wrote it, for the `Made-With` trailer.
     pub agent: Option<&'static str>,
 }
 
-/// Whether pushes write team records.
+/// Whether pushes ask an agent to write the commit message.
 ///
-/// On by default: a feed nobody writes to is the GitHub half forever, which is
-/// the state this whole feature exists to improve on. It is disclosed in
-/// Settings next to what it writes, and turning it off costs one click.
+/// On by default: a feed of bare subject lines is the GitHub half forever,
+/// which is the state this whole feature exists to improve on. It is disclosed
+/// in Settings next to what it does, and turning it off costs one click.
 pub fn sharing_enabled() -> bool {
     crate::commands::setup::read_app_state()
         .team_sharing_enabled
         .unwrap_or(true)
 }
 
-/// Prepare a push: summarise, write the record, and build the commit message.
+/// Prepare a push: ask the agent what this change was for, and build the
+/// commit message from its answer.
 ///
 /// `provided` is a message the user typed. It wins outright and no agent is
 /// asked — a person who wrote their own commit message has said what they
@@ -62,103 +61,49 @@ pub async fn prepare(
     {
         return PushContent {
             message,
-            update_id: None,
             agent: None,
         };
     }
 
+    let _ = branch;
     if !sharing_enabled() {
-        // Still worth the agent's subject line; just nothing written to the
-        // repo beyond the commit itself.
-        return plain(project).await;
+        return plain();
     }
 
-    let (summary, agent) = match super::summarise_working_tree(project).await {
-        Ok(result) => result,
-        Err(error) => {
-            tracing::debug!(%error, "no team summary for this push; falling back");
-            return plain(project).await;
-        }
+    let Ok((summary, agent)) = super::summarise_working_tree(project).await else {
+        tracing::debug!("no summary for this push; committing plainly");
+        return plain();
     };
 
-    let message = writer::commit_message(&summary);
-    match write(project, &summary, branch, agent).await {
-        Ok(id) => PushContent {
-            message,
-            update_id: Some(id),
+    // The gauntlet, before the prose reaches a commit.
+    //
+    // It reads the project's own `.env` files and refuses a summary that
+    // repeats anything in them. That check used to guard the record file, and
+    // moving the prose into the commit message left it behind — a commit
+    // message is *more* exposed than a record was, not less: it is in
+    // `git log`, in the pull request and on GitHub, and rewriting history to
+    // remove one is not something this app can offer afterwards.
+    match writer::gauntlet(project, &summary) {
+        Ok(clean) => PushContent {
+            message: writer::commit_message(&clean),
             agent: Some(agent),
         },
         Err(error) => {
-            // The gauntlet refused. The *commit message* is still the agent's
-            // summary, because it went through the same checks — what is lost
-            // is the structured record, not the explanation.
-            tracing::warn!(%error, "team record rejected; committing without one");
-            PushContent {
-                message,
-                update_id: None,
-                agent: Some(agent),
-            }
+            // Never partially published: the whole summary is dropped and the
+            // push continues with a plain message. A push that cannot happen
+            // is worse than one that explains itself poorly.
+            tracing::warn!(%error, "summary rejected; committing without one");
+            plain()
         }
     }
 }
 
-/// A summary with nothing written to `.shipstudio-team/`.
-async fn plain(project: &std::path::Path) -> PushContent {
-    match super::summarise_working_tree(project).await {
-        Ok((summary, agent)) => PushContent {
-            message: writer::commit_message(&summary),
-            update_id: None,
-            agent: Some(agent),
-        },
-        Err(_) => PushContent {
-            message: crate::commands::ai::DEFAULT_COMMIT_MESSAGE.to_string(),
-            update_id: None,
-            agent: None,
-        },
+/// The fallback when there is no agent, or it had nothing to say.
+fn plain() -> PushContent {
+    PushContent {
+        message: crate::commands::ai::DEFAULT_COMMIT_MESSAGE.to_string(),
+        agent: None,
     }
-}
-
-/// Run the gauntlet and write the file.
-async fn write(
-    project: &std::path::Path,
-    summary: &TeamSummary,
-    branch: &str,
-    agent: &str,
-) -> Result<String, CommandError> {
-    // Who is pushing. The GitHub login is preferred because it is the only
-    // handle that means the same thing on everyone else's machine; the git name
-    // is the fallback so a record is never anonymous.
-    let login =
-        crate::commands::github::get_github_username(Some(project.to_string_lossy().into_owned()))
-            .await
-            .ok();
-    let name = git_config(project, "user.name")
-        .await
-        .or_else(|| login.clone())
-        .unwrap_or_else(|| "Unknown".to_string());
-
-    writer::write_record(
-        project,
-        summary,
-        branch,
-        login.as_deref(),
-        &name,
-        Some(agent),
-    )
-}
-
-async fn git_config(project: &std::path::Path, key: &str) -> Option<String> {
-    let mut cmd = crate::utils::git_command_in(project).ok()?;
-    cmd.args(["config", key]);
-    let output = crate::external_command::run_with_timeout(
-        tokio::process::Command::from(cmd),
-        format!("git config {key}"),
-        10,
-    )
-    .await
-    .ok()?;
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!value.is_empty()).then_some(value)
 }
 
 #[cfg(test)]
@@ -172,10 +117,30 @@ mod tests {
 
         let content = prepare(&dir, "main", Some("  Fix the nav  ".to_string())).await;
         assert_eq!(content.message, "Fix the nav");
-        // No record, and no attribution: a person wrote this, not an agent.
-        assert_eq!(content.update_id, None);
+        // No attribution: a person wrote this, not an agent.
         assert_eq!(content.agent, None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_summary_repeating_a_secret_never_reaches_the_commit_message() {
+        // The regression this guards: moving the explanation out of a record
+        // file and into the commit message left the redaction check behind, on
+        // a surface that is *more* exposed — `git log`, the pull request,
+        // GitHub — and one this app cannot retract afterwards.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "API_KEY=sk-live-abc123def456\n").unwrap();
+
+        let leaked = writer::TeamSummary {
+            headline: "Wire up the client".to_string(),
+            why: Some("Used sk-live-abc123def456 for the call.".to_string()),
+            changes: Vec::new(),
+            asks: None,
+        };
+        assert!(
+            writer::gauntlet(dir.path(), &leaked).is_err(),
+            "a summary quoting .env must be refused before it is committed"
+        );
     }
 
     #[tokio::test]
@@ -187,7 +152,7 @@ mod tests {
 
         let content = prepare(&dir, "main", None).await;
         assert!(!content.message.is_empty());
-        assert_eq!(content.update_id, None);
+        assert_eq!(content.agent, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

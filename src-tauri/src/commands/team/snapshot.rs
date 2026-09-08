@@ -1,41 +1,35 @@
 //! `get_team_snapshot` — the one read the whole feature hangs off.
 //!
-//! Folds the derived half ([`super::derive`], from git and `gh`) together with
-//! the authored half ([`super::records`], from `.shipstudio-team/`) into the
-//! shape `src/lib/team.ts` already describes.
+//! Builds the feed out of what the repository already holds: commits and pull
+//! requests from [`super::derive`], comment threads from [`super::records`].
 //!
-//! ## The join, and which side wins
-//!
-//! A stint of commits and a record find each other through the
-//! `Ship-Studio-Update` trailer. When they meet:
+//! ## Where a row's prose comes from
 //!
 //! | Field | From |
 //! |-------|------|
-//! | `headline`, `why`, `changes`, `asks` | the **record** — only the agent knows these |
-//! | everything else | **git** — commits, files, branch, PR, status, URL |
+//! | `headline` | the commit **subject**, verbatim |
+//! | `why` | the commit **body**, verbatim |
+//! | everything else | git — commits, files, branch, PR, status, URL |
 //!
-//! The record never supplies a fact and git never supplies a sentence. That is
-//! not a style preference: it is what makes a fabricated record harmless. An
-//! agent that claims it touched forty files produces a row showing the four it
-//! actually touched, because the file list was never read from the record.
+//! Nothing is rewritten. A subject reading "wip" produces a row reading "wip",
+//! which is an honest report of a bad commit message; paraphrasing it with a
+//! model would invent the only thing the row cannot know. A commit with no body
+//! produces a row with a headline and nothing under it, drawn as the lesser
+//! thing it is.
 //!
-//! A stint with no record still becomes a row — a thin one, `writtenBy: "app"`,
-//! carrying the commit subject verbatim and nothing else. That is the row for
-//! the teammate who pushes from the terminal, and it is the reason this works
-//! before anyone adopts anything.
-//!
-//! A record with no commits **also** becomes a row. An agent that wrote its
-//! summary before committing, or whose commits have not been fetched yet, is
-//! not silently dropped.
+//! That is also what makes this safe. Every *fact* — the files, the line counts,
+//! the PR number, the status — is recomputed from git on every read, so no
+//! amount of creative prose in a commit message can make a row claim something
+//! the repository does not support.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::commands::github::parse_github_repo;
 use crate::errors::CommandError;
 use crate::utils::validate_project_path;
 
 use super::derive::{self, People, PrSummary, Stint};
-use super::records::{self, RecordKind, TeamRecord};
+use super::records;
 use super::{
     TeamActor, TeamMember, TeamSnapshot, TeamSyncStatus, TeamUpdate, TeamUpdateAuthor,
     TeamUpdateStatus,
@@ -47,16 +41,22 @@ const MAX_UPDATES: usize = 120;
 
 /// Everything the Team surfaces read, for one project.
 ///
-/// Never fails on an unconfigured repo. No remote, no `gh`, not signed in, no
-/// commits — all of them are states the UI already renders honestly, so they
-/// come back as a thin snapshot rather than an error dialog. The single
-/// exception is a directory that is not a git repository at all, which is worth
-/// saying out loud because nothing here can ever work there.
+/// Never fails. No remote, no `gh`, not signed in, no commits, not a git
+/// repository at all — every one of them is a state the UI renders honestly, so
+/// they come back as a thin snapshot rather than an error dialog.
+///
+/// A directory that is not a repository is the interesting one, because it is
+/// not an error and not a degraded mode: comments are files, so they work there
+/// in full. What is missing is only the half derived from history, and the
+/// empty states say which half and why. Someone using Ship Studio alone on a
+/// folder is a first-class user of this feature, not a misconfiguration of it.
 #[tauri::command]
 #[tracing::instrument(skip(project_path), fields(project = %project_path))]
 pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, CommandError> {
     let project = validate_project_path(&project_path)?;
-    derive::repo_guard(&project).await?;
+    if !derive::is_repo(&project).await {
+        return Ok(threads_only_snapshot(&project, &project_path));
+    }
 
     let project_name = project
         .file_name()
@@ -70,7 +70,6 @@ pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, Com
     // Local first, so a repo with records renders even when the network half
     // times out. Reading files cannot fail in a way worth reporting.
     let stored = records::read_records(&project);
-    let adopters = records::logins_with_records(&stored);
 
     // Three independent lookups, so they run as three. Sequentially this was
     // a local history walk *plus* a `gh pr list` *plus* three GitHub API calls,
@@ -83,9 +82,7 @@ pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, Com
     );
     let stints = derive::group_into_stints(commits);
 
-    let by_id = records::updates_by_id(&stored);
     let mut updates: Vec<TeamUpdate> = Vec::new();
-    let mut claimed: HashSet<String> = HashSet::new();
     // What each person is up to, captured here rather than recovered later:
     // this is the one place a row and the git identity behind it are both in
     // hand. Matching them up afterwards means matching on a display name, and
@@ -93,17 +90,9 @@ pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, Com
     let mut doing: HashMap<String, String> = HashMap::new();
 
     for stint in &stints {
-        let record = stint
-            .update_id
-            .as_ref()
-            .and_then(|id| by_id.get(id.as_str()).copied());
-        if let Some(record) = record {
-            claimed.insert(record.id.clone());
-        }
         let update = build_update(
             &project,
             stint,
-            record,
             prs.get(&stint.branch),
             repo.as_deref(),
             base.as_deref(),
@@ -124,22 +113,6 @@ pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, Com
         updates.push(update);
     }
 
-    // Records whose commits are not here — written before the commit, or on a
-    // branch this clone has not fetched. Shown with the prose they have and no
-    // evidence, which is honest and is still the useful half.
-    for record in stored
-        .iter()
-        .filter(|record| record.kind == RecordKind::Update && !claimed.contains(&record.id))
-    {
-        updates.push(orphan_update(
-            record,
-            &people,
-            repo.as_deref(),
-            &project_name,
-            &project_path_str,
-        ));
-    }
-
     updates.sort_by(|a, b| b.at.cmp(&a.at));
     updates.truncate(MAX_UPDATES);
 
@@ -148,24 +121,82 @@ pub async fn get_team_snapshot(project_path: String) -> Result<TeamSnapshot, Com
         &doing,
         &prs,
         &people,
-        &adopters,
         &project_name,
         base.as_deref(),
     );
 
     Ok(TeamSnapshot {
-        threads: records::fold_threads(&stored, &project_name, &project_path_str),
+        // Comment authors get the same picture their commits do: GitHub's, when
+        // GitHub knows them, and their initials on a colour when it does not.
+        threads: records::fold_threads(&stored, &project_name, &project_path_str, &|login| {
+            people
+                .collaborators
+                .get(&login.to_lowercase())
+                .and_then(|(avatar, _)| avatar.clone())
+        }),
         updates,
         members,
         sync: TeamSyncStatus {
             repo,
+            last_synced_at: None,
+            // Counted from the repository rather than tracked, so a record an
+            // agent wrote behind our back is included the moment it exists.
+            pending_count: super::transport::pending_count(&project).await,
+            error: None,
+            syncing: false,
+        },
+        seen_ids: Vec::new(),
+        commit_guidance_installed: super::instructions::is_installed(&project),
+    })
+}
+
+/// What a folder that is not a repository has: its comments, and nothing
+/// invented.
+///
+/// `repo: None` already means "single-player" everywhere downstream, so this
+/// needs no new state — the People and What's new tabs read it and explain
+/// themselves rather than spinning on a history that does not exist.
+fn threads_only_snapshot(project: &std::path::Path, project_path: &str) -> TeamSnapshot {
+    let project_name = project
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| project_path.to_string());
+    let stored = records::read_records(project);
+
+    TeamSnapshot {
+        // Nobody to ask about avatars without a repository, so initials it is.
+        threads: records::fold_threads(&stored, &project_name, project_path, &records::no_avatars),
+        updates: Vec::new(),
+        members: Vec::new(),
+        sync: TeamSyncStatus {
+            repo: None,
             last_synced_at: None,
             pending_count: 0,
             error: None,
             syncing: false,
         },
         seen_ids: Vec::new(),
-    })
+        commit_guidance_installed: super::instructions::is_installed(project),
+    }
+}
+
+/// Whether the project has an `origin` at all.
+///
+/// Separate from [`repo_slug`] on purpose: comments sync over any git remote,
+/// including one that is not GitHub, so requiring an `owner/repo` here would
+/// refuse to carry comments for a self-hosted repository that works fine.
+pub async fn has_origin(project: &std::path::Path) -> bool {
+    let Ok(mut cmd) = crate::utils::git_command_in(project) else {
+        return false;
+    };
+    cmd.args(["remote", "get-url", "origin"]);
+    crate::external_command::run_with_timeout(
+        tokio::process::Command::from(cmd),
+        "git remote get-url".to_string(),
+        10,
+    )
+    .await
+    .is_ok_and(|out| out.status.success())
 }
 
 /// `owner/repo` for the project's origin, or `None`.
@@ -227,7 +258,6 @@ async fn resolve_people(project: &std::path::Path, repo: Option<&str>) -> People
 async fn build_update(
     project: &std::path::Path,
     stint: &Stint,
-    record: Option<&TeamRecord>,
     pr: Option<&PrSummary>,
     repo: Option<&str>,
     base: Option<&str>,
@@ -237,35 +267,35 @@ async fn build_update(
 ) -> TeamUpdate {
     let tip = stint.tip();
 
-    // The record's actor is preferred when there is one: it carries the GitHub
-    // login the writer was actually signed in as, where git only has whatever
-    // `user.email` happens to be set to on that machine.
-    let actor = match record {
-        Some(record) => merge_actor(record.actor(), people),
-        None => derive::actor_for(&stint.author_name, &stint.author_email, people),
-    };
+    let actor = derive::actor_for(&stint.author_name, &stint.author_email, people);
 
     TeamUpdate {
-        id: record
-            .map(|record| record.id.clone())
-            .unwrap_or_else(|| format!("commit:{}", tip.sha)),
-        at: record.map_or(stint.at, |record| record.at),
+        // The tip commit is the row's identity: stable across re-reads, unique
+        // without coordination, and the same on every machine — which is what
+        // makes "new since you last looked" survive a refetch.
+        id: format!("commit:{}", tip.sha),
+        at: stint.at,
         actor,
-        written_by: record.map_or(TeamUpdateAuthor::App, TeamRecord::written_by),
-        agent_name: record.and_then(|record| record.agent.clone()),
+        // A row is "written" when somebody wrote a commit body. That is the
+        // only signal, and it is the right one: an explanation exists or it
+        // does not, and where it came from is the trailer's business.
+        written_by: if tip.body.is_some() {
+            match stint.made_with {
+                Some(_) => TeamUpdateAuthor::Agent,
+                None => TeamUpdateAuthor::Person,
+            }
+        } else {
+            TeamUpdateAuthor::App
+        },
+        agent_name: stint.made_with.clone(),
 
-        // The one place prose comes from. With no record, the commit subject
-        // stands as written — bad ones included. It is an honest report of a
-        // bad commit message, and rewriting it would invent the only thing
-        // this row cannot know.
-        headline: record
-            .and_then(|record| record.headline.clone())
-            .unwrap_or_else(|| headline_from_commit(tip)),
-        why: record.and_then(|record| record.why.clone()),
-        changes: record
-            .map(|record| record.changes.clone())
-            .unwrap_or_default(),
-        asks: record.and_then(|record| record.asks.clone()),
+        // Prose comes from the commit, verbatim. A bad subject stands as
+        // written — that is an honest report of a bad commit message, and
+        // rewriting it would invent the only thing this row cannot know.
+        headline: headline_from_commit(tip),
+        why: tip.body.clone(),
+        changes: Vec::new(),
+        asks: None,
 
         branch: stint.branch.clone(),
         status: status_for(stint, pr, base),
@@ -279,62 +309,6 @@ async fn build_update(
         // which asks a provider. Never inferred here from a red-looking commit.
         build_error: None,
         github_url: derive::github_url_for(repo, pr, &tip.sha),
-    }
-}
-
-/// A record whose commits this clone does not have.
-fn orphan_update(
-    record: &TeamRecord,
-    people: &People,
-    repo: Option<&str>,
-    project_name: &str,
-    project_path: &str,
-) -> TeamUpdate {
-    TeamUpdate {
-        id: record.id.clone(),
-        at: record.at,
-        actor: merge_actor(record.actor(), people),
-        written_by: record.written_by(),
-        agent_name: record.agent.clone(),
-        headline: record
-            .headline
-            .clone()
-            .unwrap_or_else(|| "Update".to_string()),
-        why: record.why.clone(),
-        changes: record.changes.clone(),
-        asks: record.asks.clone(),
-        branch: record.branch.clone().unwrap_or_default(),
-        // No commits reached this clone, so nothing about where the work got to
-        // is observable. "In progress" is the only claim available.
-        status: TeamUpdateStatus::Working,
-        project_name: project_name.to_string(),
-        project_path: project_path.to_string(),
-        commits: Vec::new(),
-        files: Vec::new(),
-        pr_number: None,
-        build_error: None,
-        // Deliberately no commit URL: there is no commit to point at, and a
-        // branch URL for a branch that may not exist on the remote is a 404
-        // with a confident label on it.
-        github_url: match (repo, record.branch.as_deref()) {
-            (Some(repo), Some(branch)) if !branch.is_empty() => {
-                Some(format!("https://github.com/{repo}/tree/{branch}"))
-            }
-            _ => None,
-        },
-    }
-}
-
-/// Fill in the avatar GitHub knows about, keeping the record's own identity.
-fn merge_actor(actor: TeamActor, people: &People) -> TeamActor {
-    let avatar = actor
-        .login
-        .as_ref()
-        .and_then(|login| people.collaborators.get(&login.to_lowercase()))
-        .and_then(|(avatar, _)| avatar.clone());
-    TeamActor {
-        avatar_url: avatar,
-        ..actor
     }
 }
 
@@ -393,7 +367,6 @@ fn build_members(
     doing: &HashMap<String, String>,
     prs: &HashMap<String, PrSummary>,
     people: &People,
-    adopters: &HashSet<String>,
     project_name: &str,
     base: Option<&str>,
 ) -> Vec<TeamMember> {
@@ -412,7 +385,8 @@ fn build_members(
                     .as_ref()
                     .and_then(|login| people.collaborators.get(login))
                     .and_then(|(_, role)| *role),
-                uses_ship_studio: login.as_ref().is_some_and(|login| adopters.contains(login)),
+                // Filled in below, once every commit of theirs has been seen.
+                explains_work: false,
                 is_self: match (login.as_deref(), people.me.as_deref()) {
                     (Some(login), Some(me)) => login == me,
                     _ => false,
@@ -426,6 +400,13 @@ fn build_members(
                 pr_number: None,
             }
         });
+
+        // One commit that explains itself is enough to say this person writes
+        // them. The note this feeds is a nudge, not an audit, and holding
+        // somebody to *every* commit having a body would flag everyone forever.
+        if stint.commits.iter().any(|commit| commit.body.is_some()) {
+            entry.explains_work = true;
+        }
 
         // Stints arrive newest-first, so the first one seen for a person is
         // their most recent — that is the branch and time worth showing.
@@ -463,11 +444,12 @@ mod tests {
             sha: "abcdef1234".to_string(),
             short_sha: "abcdef1".to_string(),
             subject: subject.to_string(),
+            body: None,
             at: 1_000_000,
             author_name: "Theo Vance".to_string(),
             author_email: "theo@x.com".to_string(),
             branch: "main".to_string(),
-            update_id: None,
+            made_with: None,
             is_merge: merge,
             files: Vec::new(),
         }
@@ -478,7 +460,7 @@ mod tests {
             at: commits[0].at,
             author_name: commits[0].author_name.clone(),
             author_email: commits[0].author_email.clone(),
-            update_id: commits.iter().find_map(|c| c.update_id.clone()),
+            made_with: commits.iter().find_map(|c| c.made_with.clone()),
             branch: branch.to_string(),
             commits,
         }
@@ -550,7 +532,6 @@ mod tests {
             doing,
             &HashMap::new(),
             &People::default(),
-            &HashSet::new(),
             "site",
             Some("main"),
         )
@@ -574,7 +555,7 @@ mod tests {
         let stints = vec![stint("feat/x", vec![commit("a", false)])];
         let members = members_of(&stints, &HashMap::new());
         assert_eq!(members[0].role, None);
-        assert!(!members[0].uses_ship_studio);
+        assert!(!members[0].explains_work);
     }
 
     #[test]
@@ -595,26 +576,62 @@ mod tests {
     }
 
     #[test]
-    fn uses_ship_studio_follows_the_records_not_a_declaration() {
-        let mut noreply = commit("a", false);
-        noreply.author_email = "9+theo@users.noreply.github.com".to_string();
-        let stints = vec![stint("feat/x", vec![noreply])];
-        let adopters: HashSet<String> = ["theo".to_string()].into_iter().collect();
+    fn explains_work_follows_the_commits_rather_than_which_tool_was_used() {
+        // The correction this replaced: the flag used to mean "has written a
+        // Ship Studio record", which called a teammate on plain git uncovered
+        // for using a different editor. What the feed needs to know is whether
+        // their commits say why — and that is in the commits.
+        let mut explained = commit("a", false);
+        explained.author_email = "9+theo@users.noreply.github.com".to_string();
+        explained.body = Some("The flex row could not hold three columns.".to_string());
+
         let people = People {
             me: Some("theo".to_string()),
             ..Default::default()
         };
         let members = build_members(
-            &stints,
+            &vec![stint("feat/x", vec![explained])],
             &HashMap::new(),
             &HashMap::new(),
             &people,
-            &adopters,
             "site",
             Some("main"),
         );
-        assert!(members[0].uses_ship_studio);
+        assert!(members[0].explains_work);
         assert!(members[0].is_self);
+    }
+
+    #[test]
+    fn a_person_whose_commits_have_no_body_is_the_one_the_note_is_about() {
+        let members = build_members(
+            &vec![stint("feat/x", vec![commit("wip", false)])],
+            &HashMap::new(),
+            &HashMap::new(),
+            &People::default(),
+            "site",
+            Some("main"),
+        );
+        assert!(!members[0].explains_work);
+    }
+
+    #[test]
+    fn one_explained_commit_is_enough_to_stop_nagging_someone() {
+        // A nudge, not an audit. Holding somebody to *every* commit having a
+        // body would flag the whole team forever.
+        let mut explained = commit("a", false);
+        explained.body = Some("because the tiers wrapped".to_string());
+        let members = build_members(
+            &vec![
+                stint("feat/x", vec![commit("wip", false)]),
+                stint("feat/x", vec![explained]),
+            ],
+            &HashMap::new(),
+            &HashMap::new(),
+            &People::default(),
+            "site",
+            Some("main"),
+        );
+        assert!(members[0].explains_work);
     }
 
     #[test]

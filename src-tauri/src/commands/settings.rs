@@ -222,18 +222,19 @@ pub fn get_element_breadcrumb_enabled() -> Result<bool, CommandError> {
     Ok(state.element_breadcrumb_enabled.unwrap_or(true))
 }
 
-/// Whether pushing from Ship Studio writes a team record.
+/// Whether pushing from Ship Studio asks an agent to write the commit message.
 #[tauri::command]
 #[tracing::instrument]
 pub fn get_team_sharing_enabled() -> Result<bool, CommandError> {
     Ok(crate::commands::team::sharing_enabled())
 }
 
-/// Turn team records on or off.
+/// Turn the written commit message on or off.
 ///
-/// Off still gets you the agent's commit message, which is a private, local
-/// improvement either way. What it stops is anything being written into
-/// `.shipstudio-team/` for teammates to read.
+/// Off falls back to Ship Studio's plain default message, so a push still
+/// works and still commits — it simply arrives with a subject and no reason.
+/// Comments are unaffected: they are written when somebody leaves one, which
+/// is already an explicit act.
 #[tauri::command]
 #[tracing::instrument]
 pub fn set_team_sharing_enabled(enabled: bool) -> Result<(), CommandError> {
@@ -252,8 +253,8 @@ pub fn get_commit_attribution_enabled() -> Result<bool, CommandError> {
 /// Turn the `Made-With` commit trailer on or off.
 ///
 /// One switch for the whole thing, per the design: attribution is either in the
-/// history or it is not. It never affects `Ship-Studio-Update`, which is the
-/// feature's join key rather than advertising.
+/// history or it is not. It does not touch the commit body, which is the
+/// change's explanation rather than advertising for the tool that wrote it.
 #[tauri::command]
 #[tracing::instrument]
 pub fn set_commit_attribution_enabled(enabled: bool) -> Result<(), CommandError> {

@@ -202,13 +202,8 @@ pub async fn publish_branch(
     // discarded `git add -A`'s result entirely, so a staging failure surfaced
     // later as an inexplicable "Uncommitted changes" on switch (issue #273);
     // the helper also handles sparse-checkout (#275) and empty commits (#274).
-    crate::commands::git::git_stage_and_commit_tracked(
-        &validated_path,
-        &message,
-        content.agent,
-        content.update_id.as_deref(),
-    )
-    .map_err(CommandError::from)?;
+    crate::commands::git::git_stage_and_commit_authored(&validated_path, &message, content.agent)
+        .map_err(CommandError::from)?;
 
     // Push to origin
     let push_output =

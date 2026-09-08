@@ -591,13 +591,13 @@ export function SettingsModal({
                 <div className="settings-row">
                   <div className="settings-row-info">
                     <span className="settings-row-label">
-                      Share what you changed with your team
+                      Let your agent write the commit message
                     </span>
                     <span className="settings-row-description">
-                      When you push, your agent writes a short summary of the change and why you
-                      made it into <code>.shipstudio-team/</code> in the repo, so teammates see more
-                      than a commit subject. Never your prompts, your conversation or your terminal.
-                      Anyone who can read the repository can read these.
+                      When you push, your agent writes the subject and a short paragraph on why you
+                      made the change, and that becomes the commit message. Never your prompts, your
+                      conversation or your terminal. It is permanent history — anyone who can read
+                      the repository, now or later, can read it.
                     </span>
                   </div>
                   <button
@@ -605,7 +605,7 @@ export function SettingsModal({
                     onClick={handleTeamSharingToggle}
                     disabled={loading}
                     role="switch"
-                    aria-label="Share what you changed with your team"
+                    aria-label="Let your agent write the commit message"
                     aria-checked={teamSharingEnabled}
                   >
                     <span className="settings-toggle-track">

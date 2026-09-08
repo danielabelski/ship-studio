@@ -101,6 +101,9 @@ export function TeamUpdateCard({
 
       <h4 className="team-update-headline">{update.headline}</h4>
 
+      {/* The commit body, as written. Paragraph breaks are preserved because
+          the author put them there — a body is prose, and collapsing it into
+          one block is a different document from the one they wrote. */}
       {update.why && <p className="team-update-why">{update.why}</p>}
 
       {update.changes.length > 0 && (
@@ -111,15 +114,21 @@ export function TeamUpdateCard({
         </ul>
       )}
 
-      {/* A row Ship Studio did not write. One line saying where to go for the
-          rest, and nothing else: it was briefly a sentence naming the person
-          and explaining what their push was missing, which read as a complaint
-          about a teammate for using a different tool. Half the team will always
-          be on a different tool. */}
+      {/* A row with no written summary behind it. One line saying where to go
+          for the rest, and nothing else: it was briefly a sentence naming the
+          person and explaining what their push was missing, which read as a
+          complaint about a teammate for using a different tool. Half the team
+          will always be on a different tool.
+
+          It also used to say "not pushed from Ship Studio", which is a claim
+          about *how* someone pushed — and it was wrong for the common case of
+          pushing from an agent terminal inside Ship Studio. What this row
+          actually knows is narrower: no summary was written, so the commit
+          subject is all there is. */}
       {thin && (
         <p className="team-update-source-note">
           <GitHubIcon size={11} />
-          <span>Not pushed from Ship Studio. Full details are on GitHub.</span>
+          <span>No summary was written for this one. The full diff is on GitHub.</span>
         </p>
       )}
 

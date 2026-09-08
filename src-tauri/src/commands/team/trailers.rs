@@ -1,8 +1,8 @@
 //! What Ship Studio leaves behind in git history.
 //!
 //! Every commit the app makes goes through `git_stage_and_commit`, and every one
-//! of them passes through here first. Two trailers, both machine-readable, both
-//! out of the subject line:
+//! of them passes through here first. One trailer, machine-readable, out of the
+//! subject line:
 //!
 //! ```text
 //! Rebuild the pricing tiers as a CSS grid
@@ -11,16 +11,15 @@
 //! wrapping under the first two.
 //!
 //! Made-With: Claude Code in Ship Studio
-//! Ship-Studio-Update: 01K4J8Q20001ABCDEFGHJKMNPQ
 //! ```
 //!
 //! `Made-With` is attribution — the same idea as Claude Code's `Co-Authored-By`,
 //! and the same restraint: a trailer, never the subject, so `git log --oneline`
 //! reads exactly as it did before. On by default, one setting to turn off.
 //!
-//! `Ship-Studio-Update` is the join key ([`super`]). It is what lets the whole
-//! feed be rebuilt from `git log` alone by someone who never fetched
-//! `.shipstudio-team/`, and it is why the trail outlives the app.
+//! There was briefly a second one, `Ship-Studio-Update`, joining a commit to a
+//! record file that explained it. Both halves of that are gone: the explanation
+//! is the commit body now, so there is nothing left to join to.
 //!
 //! ## Why git formats these and not us
 //!
@@ -71,25 +70,14 @@ pub fn agent_label(agent: Option<&str>) -> String {
 
 /// Add Ship Studio's trailers to a commit message.
 ///
-/// Returns the message unchanged when there is nothing to add, when the user
-/// has turned attribution off and there is no join key, or when git cannot run
-/// `interpret-trailers` — a commit must never fail because of its own footer.
-pub fn with_trailers(
-    repo: &std::path::Path,
-    message: &str,
-    agent: Option<&str>,
-    update_id: Option<&str>,
-) -> String {
-    let mut trailers: Vec<String> = Vec::new();
-    if attribution_enabled() {
-        trailers.push(format!("{MADE_WITH_TRAILER}: {}", agent_label(agent)));
-    }
-    if let Some(id) = update_id.filter(|id| !id.is_empty()) {
-        trailers.push(format!("{}: {id}", super::UPDATE_TRAILER));
-    }
-    if trailers.is_empty() {
+/// Returns the message unchanged when the user has turned attribution off, or
+/// when git cannot run `interpret-trailers` — a commit must never fail because
+/// of its own footer.
+pub fn with_trailers(repo: &std::path::Path, message: &str, agent: Option<&str>) -> String {
+    if !attribution_enabled() {
         return message.to_string();
     }
+    let trailers = [format!("{MADE_WITH_TRAILER}: {}", agent_label(agent))];
 
     match interpret_trailers(repo, message, &trailers) {
         Ok(out) => out,
@@ -272,20 +260,20 @@ mod tests {
     }
 
     #[test]
-    fn both_trailers_land_in_one_block_and_git_reads_them_back() {
+    fn two_trailers_land_in_one_block_and_git_reads_them_back() {
+        // Ship Studio writes one trailer, but never into an empty footer: an
+        // agent's commit usually already carries `Co-Authored-By`, and the
+        // block rules are exactly where hand-rolled concatenation goes wrong.
         let dir = repo("roundtrip");
         let message = run(
             &dir,
-            "Rebuild the pricing tiers\n",
-            &[
-                "Made-With: Claude Code in Ship Studio",
-                "Ship-Studio-Update: 01K4J8Q20001",
-            ],
+            "Rebuild the pricing tiers\n\nCo-Authored-By: Someone <s@example.com>\n",
+            &["Made-With: Claude Code in Ship Studio"],
         );
 
         // The half that matters: git's own reader, the one `derive.rs` uses,
-        // finds what this wrote. A trailer git cannot parse is worse than no
-        // trailer — it is a join key that silently never joins.
+        // finds what this wrote — and finds the trailer that was already there
+        // too. A footer git cannot parse costs the attribution silently.
         let out = std::process::Command::new("git")
             .args(["interpret-trailers", "--parse"])
             .current_dir(&dir)
@@ -308,7 +296,7 @@ mod tests {
             "{parsed}"
         );
         assert!(
-            parsed.contains("Ship-Studio-Update: 01K4J8Q20001"),
+            parsed.contains("Co-Authored-By: Someone <s@example.com>"),
             "{parsed}"
         );
         let _ = std::fs::remove_dir_all(&dir);

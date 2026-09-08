@@ -1,18 +1,18 @@
-//! Writing a record, and everything that has to be true before one is written.
+//! Checking what an agent wrote, before it becomes permanent.
 //!
-//! This is the only code in the feature that puts words into a repository, so
-//! it is the only code where being wrong is permanent. Everything here is
-//! committed history: unpublishing means rewriting published history, there is
-//! no server to scrub, and a leak that reaches one teammate's clone has reached
+//! This is the last thing between a model's sentence and a commit message, so
+//! it is the only code here where being wrong is permanent. A commit message
+//! is published history: unpublishing means rewriting history, there is no
+//! server to scrub, and a leak that reaches one teammate's clone has reached
 //! everyone's. The human is the last filter, not the first.
 //!
 //! ## The agent writes four fields and nothing else
 //!
 //! `headline`, `why`, `changes`, `asks`. Not a branch, not a file list, not a
-//! timestamp, not a status. Those are computed from git when the feed is read
-//! ([`super::snapshot`]), so a record physically cannot carry evidence that
-//! disagrees with the repo, and a model that invents a fact produces a row that
-//! shows the real one.
+//! timestamp, not a status. Those are read back out of git when the feed is
+//! built ([`super::snapshot`]), so a summary physically cannot carry evidence
+//! that disagrees with the repo, and a model that invents a fact produces a
+//! row that shows the real one.
 //!
 //! ## What is enforced, and what is only asked for
 //!
@@ -340,35 +340,12 @@ pub fn ulid() -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The record as it is written to disk. Mirrors what [`super::records`] reads.
-#[derive(Debug, Serialize)]
-struct RecordFile<'a> {
-    v: u32,
-    kind: &'a str,
-    id: &'a str,
-    at: i64,
-    actor: RecordActor<'a>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    agent: Option<&'a str>,
-    headline: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    why: Option<&'a str>,
-    #[serde(skip_serializing_if = "<[String]>::is_empty")]
-    changes: &'a [String],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    asks: Option<&'a str>,
-    branch: &'a str,
-}
-
-#[derive(Debug, Serialize)]
-struct RecordActor<'a> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    login: Option<&'a str>,
-    name: &'a str,
-}
-
-/// Where a record for today goes.
-fn record_path(project: &Path, id: &str, login: &str) -> std::path::PathBuf {
+/// Today as `YYYY-MM-DD`, the day directory every record is filed under.
+///
+/// Used by [`super::threads`], the only writer left: bucketing by day keeps a
+/// long-lived project's comments off one enormous directory listing, and the
+/// date is already the leading sort key, so it costs nothing to read back.
+pub fn today() -> String {
     let days = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() / 86_400)
@@ -376,11 +353,7 @@ fn record_path(project: &Path, id: &str, login: &str) -> std::path::PathBuf {
     // Days since the epoch to a calendar date, without pulling in chrono for
     // one line. Civil-from-days, Howard Hinnant's algorithm.
     let (y, m, d) = civil_from_days(days);
-    project
-        .join(super::TEAM_DIR)
-        .join("updates")
-        .join(format!("{y:04}-{m:02}-{d:02}"))
-        .join(format!("{id}-{login}.json"))
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -396,60 +369,12 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// Write one record. Returns its id, which is what the commit trailer carries.
-///
-/// Writes the file and nothing else: staging and committing are the caller's,
-/// because the push flow is already about to `git add -A` and one commit
-/// holding the work *and* its explanation is atomic in a way two commits are
-/// not. A record whose commit never landed is a row about nothing.
-#[allow(clippy::too_many_arguments)]
-pub fn write_record(
-    project: &Path,
-    summary: &TeamSummary,
-    branch: &str,
-    login: Option<&str>,
-    name: &str,
-    agent: Option<&str>,
-) -> Result<String, CommandError> {
-    let clean = gauntlet(project, summary)?;
-    let id = ulid();
-    let path = record_path(project, &id, login.unwrap_or("local"));
-
-    let record = RecordFile {
-        v: 1,
-        kind: "update",
-        id: &id,
-        at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0),
-        actor: RecordActor { login, name },
-        agent,
-        headline: &clean.headline,
-        why: clean.why.as_deref(),
-        changes: &clean.changes,
-        asks: clean.asks.as_deref(),
-        branch,
-    };
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(CommandError::from)?;
-    }
-    let json = serde_json::to_string_pretty(&record).map_err(|e| CommandError::Other {
-        message: format!("could not serialise team record: {e}"),
-    })?;
-    std::fs::write(&path, format!("{json}\n")).map_err(CommandError::from)?;
-
-    tracing::info!(id = %id, path = %path.display(), "wrote team record");
-    Ok(id)
-}
-
 /// The commit message a summary becomes.
 ///
-/// The same content, written once, in both places it belongs. This is the
-/// half that survives without the app: someone who never fetches
-/// `.shipstudio-team/` still gets an explanation, and so does anyone reading
-/// the repository in ten years.
+/// The only place this prose is written. It survives without the app: someone
+/// who has never installed Ship Studio still gets the explanation, from
+/// `git log`, from the pull request, from GitHub's blame view — and so does
+/// anyone reading the repository in ten years.
 pub fn commit_message(summary: &TeamSummary) -> String {
     let mut message = summary.headline.clone();
     if let Some(why) = &summary.why {
@@ -640,56 +565,5 @@ mod tests {
         // `asks` is addressed to a reader of the feed, not to a reader of the
         // history. It is the one field that does not belong in a commit.
         assert!(!message.contains("Worth a look"));
-    }
-
-    #[test]
-    fn writes_a_record_the_reader_can_read_back() {
-        let dir = tmp("roundtrip");
-        let id = write_record(
-            &dir,
-            &TeamSummary {
-                headline: "Rebuild the pricing tiers as a CSS grid".to_string(),
-                why: Some("The flex row could not hold three columns.".to_string()),
-                changes: vec!["Replace the flex row with a grid".to_string()],
-                asks: None,
-            },
-            "feat/pricing",
-            Some("mayareed"),
-            "Maya Reed",
-            Some("Claude Code"),
-        )
-        .expect("writes");
-
-        // The half that matters: the reader on the other side of this feature
-        // finds it, and finds it readable.
-        let records = super::super::records::read_records(&dir);
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].id, id);
-        assert_eq!(
-            records[0].headline.as_deref(),
-            Some("Rebuild the pricing tiers as a CSS grid")
-        );
-        assert_eq!(records[0].agent.as_deref(), Some("Claude Code"));
-        assert!(records[0].is_readable());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn nothing_is_written_when_the_gauntlet_refuses() {
-        let dir = tmp("nowrite");
-        let err = write_record(
-            &dir,
-            &summary("Key is ghp_AAAABBBBCCCCDDDDEEEE"),
-            "main",
-            None,
-            "You",
-            None,
-        );
-        assert!(err.is_err());
-        assert!(
-            super::super::records::read_records(&dir).is_empty(),
-            "a refused record must leave no file behind"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

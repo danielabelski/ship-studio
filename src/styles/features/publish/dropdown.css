@@ -27,9 +27,18 @@
   border-color: var(--accent-active);
 }
 
-.publish-dropdown .button.publishing {
+/* Busy is drawn as a flat, darker fill rather than as `opacity`. The button
+   sits over the workspace's edit-main banner, and a translucent one showed that
+   banner's orange border straight through the middle of it. */
+.publish-dropdown .button.publishing,
+.publish-dropdown .button.publishing:hover:not(:disabled) {
   cursor: wait;
-  opacity: 0.7;
+  background: var(--button-surface-busy);
+}
+
+.publish-dropdown .button--primary.publishing,
+.publish-dropdown .button--primary.publishing:hover:not(:disabled) {
+  background: var(--button-primary-busy);
 }
 
 .publish-dropdown-menu {

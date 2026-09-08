@@ -5,56 +5,61 @@
 //! `git push`. `docs/team-multiplayer.md` is the design; this module is the
 //! half of it that runs.
 //!
-//! ## Two halves, and only one of them needs anybody to adopt anything
+//! ## Two halves, and they need different things
 //!
 //! | Half | Source | Needs |
 //! |------|--------|-------|
-//! | **Derived** ([`derive`]) | `git log`, `gh pr list` | nothing — works on any repo, today |
-//! | **Authored** ([`records`]) | `.shipstudio-team/updates/**` | someone using Ship Studio |
+//! | **What people did** ([`derive`]) | `git log`, `gh pr list` | a good commit message |
+//! | **Comments** ([`records`], [`threads`]) | `.shipstudio-team/threads/**` | Ship Studio |
 //!
-//! [`snapshot`] folds the two together. The derived half is the floor: a
-//! teammate pushing from the terminal, from Cursor, from a CI bot or from
-//! GitHub's web editor still shows up, because their commits are in the repo
-//! whatever wrote them. The authored half is the ceiling: when a record exists
-//! for a piece of work, it replaces the bare commit subject with a sentence
-//! that says *why*.
+//! The first half reads git's own fields. A commit subject is the headline and
+//! **the commit body is the why** — which is where "why" has always belonged,
+//! and which `git log`, GitHub and code review already display. An earlier
+//! version of this module wrote a second copy of that prose into a record file
+//! joined back to its commit by a trailer: a format only this app could read,
+//! describing something git already knew, and giving every writer two chances
+//! to get one sentence recorded. What survived was the worst case — a silently
+//! empty row whenever the second chance was missed.
 //!
-//! **Derived rows are never dressed up.** A commit with no record produces a
-//! `writtenBy: "app"` row saying only what git can prove, and the UI draws it as
-//! the lesser thing it is. Guessing a `why` back out of a diff is exactly the
-//! mistake `generate_commit_message_for_path` already makes.
+//! So the job is not to collect explanations somewhere else. It is to make
+//! writing a legible commit the default: [`push`] asks the agent for one and
+//! puts it in the message, [`skill`] and [`instructions`] teach an agent to
+//! write one unprompted, and the feed makes the difference visible. Everything
+//! that produces is a better `git log` for people who have never opened this
+//! app, which is the test of whether it was worth doing.
 //!
-//! ## The join key
+//! **A commit with no body is never dressed up.** It produces a row saying only
+//! what git can prove, drawn as the lesser thing it is. Guessing a `why` back
+//! out of a diff would invent the one thing the row cannot know.
 //!
-//! A record and its commits find each other through a git trailer:
+//! ## Comments are the part that needs a format
 //!
-//! ```text
-//! Ship-Studio-Update: 01K4J8Q20001ABCDEFGHJKMNPQ
-//! ```
-//!
-//! That is why the record on disk holds prose and nothing factual. Commits,
-//! files, line counts and PR numbers are recomputed from git on every read, so
-//! a record physically cannot carry evidence that disagrees with the repo —
-//! "Never Assume Data" applied to the agent as a source.
-//!
-//! It also means the trail outlives the app: someone who never fetches
-//! `.shipstudio-team/` still gets the feed's factual skeleton from `git log`.
+//! A note pinned to an element, on a page, at a viewport has no equivalent in
+//! git or GitHub, so that structure is ours: one write-once record per file,
+//! folded at read time, carried on a ref of its own by [`transport`].
 //!
 //! ## Reading is lenient, writing is strict
 //!
 //! These files arrive over git from other people's machines running other
 //! people's versions. So on the way **in**, an unknown field is ignored and an
 //! unknown record kind is skipped — one teammate upgrading must never blank the
-//! feed for everyone who hasn't. On the way **out** the same shape is
-//! `deny_unknown_fields` with hard caps, because that is the moment an agent
-//! could put something in the repo permanently.
+//! feed for everyone who hasn't. On the way **out** the same shape is checked
+//! with hard caps, because that is the moment an agent could put something in
+//! the repository permanently.
 
+pub(crate) mod bridge;
 mod derive;
+pub(crate) mod instructions;
 mod push;
 pub(crate) mod records;
+pub(crate) mod skill;
 mod snapshot;
 mod summarise;
+pub(crate) mod threads;
 mod trailers;
+pub(crate) mod transport;
+#[cfg(test)]
+mod transport_tests;
 pub(crate) mod writer;
 
 pub use push::{prepare as prepare_push, sharing_enabled, PushContent};
@@ -71,9 +76,6 @@ use serde::{Deserialize, Serialize};
 /// whole directory, so anything written there would never be committed and no
 /// teammate would ever see it.
 pub const TEAM_DIR: &str = ".shipstudio-team";
-
-/// The trailer that links a commit to the record explaining it.
-pub const UPDATE_TRAILER: &str = "Ship-Studio-Update";
 
 /// Who did the thing. Resolved from git and GitHub — never typed by a user.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -194,9 +196,15 @@ pub struct TeamMember {
     pub pr_number: Option<i64>,
     /// One line on what they are up to, from their most recent update.
     pub doing: Option<String>,
-    /// Derived, never declared: true when any record under `.shipstudio-team/`
-    /// carries their login. Nobody registers and nobody is asked to.
-    pub uses_ship_studio: bool,
+    /// Whether their recent commits carry a body — the "why" a row shows.
+    ///
+    /// Derived from the commits themselves, never from which tool they use. A
+    /// teammate on plain `git` who writes a real commit message produces a row
+    /// exactly as good as one written here. The earlier version of this field
+    /// asked "has this person written a Ship Studio record", which called them
+    /// uncovered for using a different editor — a question about our adoption
+    /// wearing the costume of a question about their work.
+    pub explains_work: bool,
     pub is_self: bool,
 }
 
@@ -211,6 +219,10 @@ pub struct TeamThread {
     pub route: String,
     pub target: String,
     pub pin: u32,
+    /// What the preview needs to draw the pin on the element again. `None` on a
+    /// thread written before anchors existed, or by a build that has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<threads::ThreadAnchor>,
     pub resolved: bool,
     pub resolved_by: Option<TeamActor>,
     pub messages: Vec<TeamMessage>,
@@ -250,4 +262,12 @@ pub struct TeamSnapshot {
     pub threads: Vec<TeamThread>,
     pub sync: TeamSyncStatus,
     pub seen_ids: Vec<String>,
+    /// Whether this project's `CLAUDE.md`/`AGENTS.md` already carries the
+    /// commit-message block ([`instructions`]).
+    ///
+    /// On the snapshot rather than behind a command of its own because the one
+    /// surface that asks is already rendering from it, and a second round trip
+    /// to read one file the same tick would be a second chance to disagree
+    /// with itself.
+    pub commit_guidance_installed: bool,
 }

@@ -257,12 +257,17 @@
   font-weight: var(--font-weight-body);
 }
 
+/* The commit body, verbatim. `pre-wrap` because the author's paragraph breaks
+   are part of what they wrote — a body collapsed into one block is a different
+   document from the one they committed. */
 .team-update-why {
   margin: 0;
   max-width: 76ch;
   color: var(--text-secondary);
   font-size: var(--font-size-body-md);
   line-height: var(--line-height-reading);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .team-update-changes {
@@ -524,6 +529,14 @@
 /* Deliberately not a banner. It sits after the feed, states what is missing
    and from whom, offers one action, and removes itself once nobody is
    missing — see TeamCoverageNote for why that matters. */
+/* The icon stands in for the avatar stack the teammate-coverage note has, so
+   both notes read as the same kind of footnote rather than two designs. */
+.team-coverage-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-faint);
+}
+
 .team-coverage {
   display: flex;
   align-items: center;

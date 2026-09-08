@@ -30,10 +30,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::commands::github::get_gh_command_for_project;
-use crate::errors::CommandError;
 use crate::external_command::run_with_timeout;
 use crate::utils::git_command_in;
 
+use super::transport::TEAM_BRANCH;
 use super::{TeamActor, TeamCommit, TeamUpdateStatus};
 
 /// How long a walk of local history may take. Generous: a cold `git log` on a
@@ -87,8 +87,11 @@ pub struct RawCommit {
     pub author_name: String,
     pub author_email: String,
     pub branch: String,
-    /// The `Ship-Studio-Update` trailer, when the commit carries one.
-    pub update_id: Option<String>,
+    /// The commit body — everything under the subject, trailers stripped. This
+    /// is the "why", written where every other tool can already read it.
+    pub body: Option<String>,
+    /// Which agent wrote it, from a `Made-With` trailer.
+    pub made_with: Option<String>,
     /// True for a commit with more than one parent. Merges are real work
     /// landing, but their subject ("Merge pull request #139 from …") describes
     /// the merge rather than the change.
@@ -108,9 +111,8 @@ pub struct Stint {
     pub author_email: String,
     /// Newest commit's timestamp — a stint is dated by when it finished.
     pub at: i64,
-    /// The trailer, if any commit in the stint carried one. This is what joins
-    /// the stint to an authored record.
-    pub update_id: Option<String>,
+    /// Which agent wrote the work, if any commit in the stint said so.
+    pub made_with: Option<String>,
 }
 
 impl Stint {
@@ -258,11 +260,53 @@ async fn branches(project: &std::path::Path, cutoff_secs: i64) -> Vec<String> {
             break;
         }
         let short = raw.strip_prefix("origin/").unwrap_or(raw);
+        // The ref comments travel on is this feature's own plumbing, not
+        // anybody's work. Left in, every comment sync appears in the feed as
+        // "Ship Studio comments from …" — the machinery reporting on itself,
+        // pushing the actual work down the page.
+        //
+        // Checked after the prefix is stripped so it covers both forms. In
+        // practice the ref is `origin/shipstudio-team`, since no local branch
+        // is ever created — matching only the bare name would have looked
+        // right and caught nothing.
+        if short == TEAM_BRANCH {
+            continue;
+        }
         if seen.insert(short.to_string()) {
             names.push(raw.to_string());
         }
     }
     names
+}
+
+/// The trailer naming the agent behind a commit. Conventional, and already
+/// written by Ship Studio's own push.
+const MADE_WITH_TRAILER: &str = "Made-With";
+
+/// A commit body worth showing.
+///
+/// Trailers are stripped. `Co-Authored-By`, `Made-With` and friends are
+/// metadata *about* the commit rather than the explanation *of* it, and
+/// rendering them as prose drops an email address into the middle of someone's
+/// reasoning.
+fn clean_body(body: &str) -> Option<String> {
+    let is_trailer = |line: &str| {
+        let trimmed = line.trim();
+        trimmed.split_once(": ").is_some_and(|(key, _)| {
+            !key.is_empty()
+                && !key.contains(' ')
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+    };
+
+    let text = body
+        .lines()
+        .filter(|line| !is_trailer(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 /// Parse one `git log` record produced by [`log_format`].
@@ -279,19 +323,19 @@ fn parse_commit(chunk: &str, branch: &str) -> Option<RawCommit> {
     let author_email = parts.next()?.trim().to_lowercase();
     let parents = parts.next()?.trim().to_string();
     let subject = parts.next()?.trim().to_string();
-    // `%(trailers:key=…)` yields an empty string when the trailer is absent,
-    // and `key: value` when it is present.
-    let trailer = parts.next().unwrap_or("").trim().to_string();
+    let body = parts.next().unwrap_or("").to_string();
+    // `%(trailers:…,valueonly=true)` yields an empty string when the trailer is
+    // absent and the bare value when it is present.
+    let made_with = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let numstat = parts.next().unwrap_or("");
 
     if sha.is_empty() {
         return None;
     }
-
-    let update_id = trailer
-        .split_once(':')
-        .map(|(_, value)| value.trim().to_string())
-        .filter(|value| !value.is_empty());
 
     Some(RawCommit {
         sha,
@@ -302,8 +346,9 @@ fn parse_commit(chunk: &str, branch: &str) -> Option<RawCommit> {
         // A merge has two or more parents, so the parent list has a space in it.
         is_merge: parents.split_whitespace().count() > 1,
         subject,
+        body: clean_body(&body),
         branch: branch.to_string(),
-        update_id,
+        made_with,
         files: parse_numstat(numstat),
     })
 }
@@ -336,8 +381,11 @@ fn parse_numstat(block: &str) -> Vec<super::TeamFileTouch> {
 /// leave every commit's file list stranded in the next commit's chunk.
 fn log_format() -> String {
     format!(
-        "{RECORD}%H{FIELD}%h{FIELD}%at{FIELD}%an{FIELD}%ae{FIELD}%P{FIELD}%s{FIELD}%(trailers:key={key},valueonly=false){FIELD}",
-        key = super::UPDATE_TRAILER,
+        // `%b` is the commit body — the paragraph under the subject, where
+        // "why" has always belonged. Reading it is the whole reason updates
+        // need no record format of their own.
+        "{RECORD}%H{FIELD}%h{FIELD}%at{FIELD}%an{FIELD}%ae{FIELD}%P{FIELD}%s{FIELD}%b{FIELD}%(trailers:key={key},valueonly=true){FIELD}",
+        key = MADE_WITH_TRAILER,
     )
 }
 
@@ -461,8 +509,8 @@ pub fn group_into_stints(commits: Vec<RawCommit>) -> Vec<Stint> {
 
         match joined {
             Some(stint) => {
-                if stint.update_id.is_none() {
-                    stint.update_id = commit.update_id.clone();
+                if stint.made_with.is_none() {
+                    stint.made_with = commit.made_with.clone();
                 }
                 stint.commits.push(commit);
             }
@@ -471,7 +519,7 @@ pub fn group_into_stints(commits: Vec<RawCommit>) -> Vec<Stint> {
                 author_name: commit.author_name.clone(),
                 author_email: commit.author_email.clone(),
                 at: commit.at,
-                update_id: commit.update_id.clone(),
+                made_with: commit.made_with.clone(),
                 commits: vec![commit],
             }),
         }
@@ -789,6 +837,25 @@ pub async fn own_git_email(project: &std::path::Path) -> Option<String> {
     (!email.is_empty()).then_some(email)
 }
 
+/// The branch that is checked out, or `None` on a detached HEAD.
+#[allow(dead_code)]
+pub async fn current_branch(project: &std::path::Path) -> Option<String> {
+    let out = git_stdout(project, &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
+    let name = out.trim().to_string();
+    (!name.is_empty() && name != "HEAD").then_some(name)
+}
+
+/// The name git would put on a commit from here.
+///
+/// Read from config rather than invented, and read even outside a repository —
+/// `git config` answers from the global file, which is what makes a comment on
+/// a plain folder carry a real name instead of a placeholder.
+pub async fn own_git_name(project: &std::path::Path) -> Option<String> {
+    let out = git_stdout(project, &["config", "user.name"]).await?;
+    let name = out.trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
 /// The web URL for a commit or a PR on the project's remote.
 pub fn github_url_for(repo: Option<&str>, pr: Option<&PrSummary>, sha: &str) -> Option<String> {
     if let Some(pr) = pr {
@@ -841,19 +908,14 @@ pub fn actor_for(name: &str, email: &str, people: &People) -> TeamActor {
     }
 }
 
-/// Surface a git failure that is worth telling the user about.
+/// Whether there is any history here to read.
 ///
-/// Only one is: the project is not a git repository at all. Everything else
-/// this module can hit — no commits, no remote, no `gh`, no auth — is a state
-/// the feed renders honestly on its own.
-pub async fn repo_guard(project: &std::path::Path) -> Result<(), CommandError> {
-    if project.join(".git").exists() {
-        return Ok(());
-    }
-    Err(CommandError::expected(
-        "This project isn't a git repository yet, so there's no history for the team feed to \
-         read. Create one, and anything you or your teammates push will show up here.",
-    ))
+/// A question, not a guard. Everything this module derives comes from history,
+/// so a folder without it gets no updates and no members — but comments are
+/// files and work regardless, which is why the caller branches on this instead
+/// of failing on it.
+pub async fn is_repo(project: &std::path::Path) -> bool {
+    project.join(".git").exists()
 }
 
 /// Tests that build a real repository and walk it.
@@ -922,16 +984,52 @@ mod repo_tests {
     }
 
     #[tokio::test]
+    async fn the_comment_ref_never_shows_up_as_somebody_s_work() {
+        // Comments travel on their own branch, and every sync commits to it.
+        // Walked like any other ref, the feed filled with "Ship Studio comments
+        // from …" rows — the machinery reporting on itself and pushing the
+        // actual work down the page.
+        let repo = Repo::new("team-ref-hidden");
+        repo.commit("a.txt", "one\n", "Real work");
+        repo.git(&["checkout", "-q", "-b", TEAM_BRANCH]);
+        repo.commit("b.txt", "records\n", "Ship Studio comments from Maya Reed");
+        repo.git(&["checkout", "-q", "main"]);
+
+        // The form this actually takes in a real clone: no local branch is ever
+        // created, only the remote-tracking ref. A check against the bare name
+        // would pass the local case above and miss every real one.
+        let tip = repo.git(&["rev-parse", TEAM_BRANCH]);
+        repo.git(&[
+            "update-ref",
+            &format!("refs/remotes/origin/{TEAM_BRANCH}"),
+            tip.trim(),
+        ]);
+        repo.git(&["branch", "-D", TEAM_BRANCH]);
+
+        let subjects: Vec<String> = walk_commits(&repo.dir, Some("main"))
+            .await
+            .into_iter()
+            .map(|commit| commit.subject)
+            .collect();
+
+        assert!(
+            subjects.iter().any(|subject| subject == "Real work"),
+            "the actual work went missing"
+        );
+        assert!(
+            !subjects.iter().any(|s| s.contains("Ship Studio comments")),
+            "the transport's own commits leaked into the feed: {subjects:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn reads_back_what_git_actually_wrote() {
         let repo = Repo::new("walk");
         repo.commit("a.txt", "one\n", "Add the first thing");
         repo.commit(
             "b.txt",
             "two\n",
-            &format!(
-                "Rebuild the pricing tiers\n\n{}: 01K4J8Q20001",
-                super::super::UPDATE_TRAILER
-            ),
+            "Rebuild the pricing tiers\n\nThe flex row could not hold three columns.\n\nMade-With: Claude Code",
         );
 
         let commits = walk_commits(&repo.dir, Some("main")).await;
@@ -945,10 +1043,16 @@ mod repo_tests {
         assert!(!tip.is_merge);
         assert!(tip.at > 1_600_000_000_000, "milliseconds, not seconds");
 
-        // The join key survives the round trip through git's own trailer
-        // machinery — the one thing the whole feature hangs off.
-        assert_eq!(tip.update_id.as_deref(), Some("01K4J8Q20001"));
-        assert_eq!(commits[1].update_id, None);
+        // The body survives the round trip through git's own formatting, with
+        // the trailer kept out of the prose. This is the row's "why", so a
+        // format string that mangles it silently empties the feed.
+        assert_eq!(
+            tip.body.as_deref(),
+            Some("The flex row could not hold three columns.")
+        );
+        assert_eq!(tip.made_with.as_deref(), Some("Claude Code"));
+        assert_eq!(commits[1].body, None, "a subject-only commit has no body");
+        assert_eq!(commits[1].made_with, None);
 
         // And the noreply address still yields the login.
         assert_eq!(
@@ -1051,7 +1155,7 @@ mod repo_tests {
             author_name: merge.author_name.clone(),
             author_email: merge.author_email.clone(),
             at: merge.at,
-            update_id: None,
+            made_with: None,
             commits,
         };
 
@@ -1092,12 +1196,13 @@ mod repo_tests {
     }
 
     #[tokio::test]
-    async fn a_directory_that_is_not_a_repo_says_so_once_and_clearly() {
+    async fn a_directory_that_is_not_a_repo_is_answered_rather_than_refused() {
         let dir = std::env::temp_dir().join(format!("ss-team-norepo-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
-        let error = repo_guard(&dir).await.expect_err("refuses");
-        assert!(matches!(error, CommandError::Expected { .. }));
-        assert!(error.to_string().contains("git repository"));
+
+        // A question with an answer, not an error. Comments live in files and
+        // work here; only the history-derived half is missing.
+        assert!(!is_repo(&dir).await);
 
         // And everything else degrades to empty rather than erroring.
         assert!(walk_commits(&dir, None).await.is_empty());
@@ -1116,11 +1221,12 @@ mod tests {
             sha: sha.to_string(),
             short_sha: sha[..7.min(sha.len())].to_string(),
             subject: format!("work {sha}"),
+            body: None,
             at: at_secs * 1000,
             author_name: "Maya Reed".to_string(),
             author_email: email.to_string(),
             branch: branch.to_string(),
-            update_id: None,
+            made_with: None,
             is_merge: false,
             files: Vec::new(),
         }
@@ -1171,13 +1277,13 @@ mod tests {
     #[test]
     fn a_stint_inherits_the_trailer_from_whichever_commit_carried_it() {
         let mut second = commit("bbb", 9_000, "maya@x.com", "feat/pricing");
-        second.update_id = Some("01K4J8Q2".to_string());
+        second.made_with = Some("01K4J8Q2".to_string());
         let stints = group_into_stints(vec![
             commit("aaa", 10_000, "maya@x.com", "feat/pricing"),
             second,
         ]);
         assert_eq!(stints.len(), 1);
-        assert_eq!(stints[0].update_id.as_deref(), Some("01K4J8Q2"));
+        assert_eq!(stints[0].made_with.as_deref(), Some("01K4J8Q2"));
     }
 
     #[test]
@@ -1199,9 +1305,13 @@ mod tests {
     }
 
     #[test]
-    fn parses_a_log_record_including_its_trailer() {
+    fn parses_a_log_record_including_its_body_and_trailer() {
+        // The body is the row's "why", so it has to survive the round trip
+        // through the format string intact — and the trailer under it has to
+        // stay out of the prose.
+        let body = "The flex row could not hold three columns.\n\nMade-With: Claude Code";
         let chunk = format!(
-            "abcdef1234{FIELD}abcdef1{FIELD}1757251200{FIELD}Maya Reed{FIELD}Maya@X.com{FIELD}parent1{FIELD}Rebuild the pricing tiers{FIELD}Ship-Studio-Update: 01K4J8Q2"
+            "abcdef1234{FIELD}abcdef1{FIELD}1757251200{FIELD}Maya Reed{FIELD}Maya@X.com{FIELD}parent1{FIELD}Rebuild the pricing tiers{FIELD}{body}{FIELD}Claude Code"
         );
         let commit = parse_commit(&chunk, "feat/pricing").expect("parses");
         assert_eq!(commit.sha, "abcdef1234");
@@ -1209,8 +1319,23 @@ mod tests {
         // Emails are compared, so they are normalised on the way in.
         assert_eq!(commit.author_email, "maya@x.com");
         assert_eq!(commit.subject, "Rebuild the pricing tiers");
-        assert_eq!(commit.update_id.as_deref(), Some("01K4J8Q2"));
+        assert_eq!(
+            commit.body.as_deref(),
+            Some("The flex row could not hold three columns."),
+            "the trailer leaked into the prose"
+        );
+        assert_eq!(commit.made_with.as_deref(), Some("Claude Code"));
         assert!(!commit.is_merge);
+    }
+
+    #[test]
+    fn a_commit_with_only_a_subject_has_no_body_rather_than_an_empty_one() {
+        let chunk = format!(
+            "abc{FIELD}abc{FIELD}1757251200{FIELD}Theo{FIELD}t@x.com{FIELD}p1{FIELD}wip{FIELD}{FIELD}"
+        );
+        let commit = parse_commit(&chunk, "main").expect("parses");
+        assert_eq!(commit.body, None);
+        assert_eq!(commit.made_with, None);
     }
 
     #[test]
@@ -1220,7 +1345,7 @@ mod tests {
         );
         let commit = parse_commit(&chunk, "main").expect("parses");
         assert!(commit.is_merge);
-        assert_eq!(commit.update_id, None);
+        assert_eq!(commit.made_with, None);
     }
 
     #[test]
