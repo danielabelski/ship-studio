@@ -49,11 +49,23 @@ export interface TeamFixtureOptions {
   projectPath?: string;
   /** The signed-in user's real display name, when we know it. */
   selfName?: string;
+  /**
+   * Make the user's own recent rows the thin kind — a commit subject and no
+   * body. The state `TeamSelfCoverageNote` exists for, and one that is
+   * otherwise slow to reach: it takes three pushes in a row with no summary.
+   */
+  selfRowsAreThin?: boolean;
 }
 
 /** Builds the snapshot relative to a `now`, so ages read correctly on open. */
 export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot {
-  const { now = Date.now(), projectName = 'your project', projectPath = '', selfName } = options;
+  const {
+    now = Date.now(),
+    projectName = 'your project',
+    projectPath = '',
+    selfName,
+    selfRowsAreThin = false,
+  } = options;
 
   const self: TeamActor = selfName
     ? { ...FIXTURE_ACTORS.self, name: selfName }
@@ -280,7 +292,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 0,
       prNumber: null,
       doing: null,
-      usesShipStudio: true,
+      explainsWork: true,
       isSelf: true,
     },
     {
@@ -292,7 +304,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 3,
       prNumber: 142,
       doing: 'Rebuilt the pricing tiers as a CSS grid',
-      usesShipStudio: true,
+      explainsWork: true,
       isSelf: false,
     },
     {
@@ -304,7 +316,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 2,
       prNumber: 141,
       doing: 'Made the mobile nav usable one-handed',
-      usesShipStudio: true,
+      explainsWork: true,
       isSelf: false,
     },
     {
@@ -316,7 +328,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 0,
       prNumber: null,
       doing: 'Pushed to main — the build is failing',
-      usesShipStudio: false,
+      explainsWork: false,
       isSelf: false,
     },
     {
@@ -328,7 +340,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 0,
       prNumber: null,
       doing: 'Merged #139 — copy tweaks',
-      usesShipStudio: false,
+      explainsWork: false,
       isSelf: false,
     },
     {
@@ -340,7 +352,7 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
       commitsAhead: 0,
       prNumber: null,
       doing: 'Pulled the launch banner until legal sign-off',
-      usesShipStudio: true,
+      explainsWork: true,
       isSelf: false,
     },
   ];
@@ -417,6 +429,30 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
     },
   ];
 
+  // Three of your own pushes with a subject and nothing under it. Newest, so
+  // they are the rows you are looking at when the note appears beneath them.
+  if (selfRowsAreThin) {
+    updates.unshift(
+      ...[2, 40, 90].map((minutes, i) =>
+        update(minutes * MINUTE, {
+          actor: self,
+          writtenBy: 'app',
+          agentName: null,
+          headline: ['Update the footer links', 'Fix the nav on mobile', 'Bump the deps'][i],
+          why: null,
+          changes: [],
+          asks: null,
+          branch: 'main',
+          status: 'working',
+          commits: [{ sha: `a${i}f39b2`, message: 'chore: update' }],
+          files: [],
+          prNumber: null,
+          buildError: null,
+        })
+      )
+    );
+  }
+
   return {
     updates,
     members,
@@ -431,5 +467,6 @@ export function buildTeamFixture(options: TeamFixtureOptions = {}): TeamSnapshot
     // Everything older than the two most recent counts as already seen, so
     // "new since you were here" has something to show on first open.
     seenIds: updates.slice(2).map((u) => u.id),
+    commitGuidanceInstalled: false,
   };
 }

@@ -7,10 +7,10 @@
  * that one command from `harness/fixtures/team`, which is the only invented
  * data left anywhere in the feature.
  *
- * Each reaches its surface through the palette rather than through `steps`,
- * because the harness runs scripted steps *before* `command` — a step cannot
- * click a control that only exists after the command has navigated. Every
- * command landing on its own tab is the right product behaviour anyway.
+ * Every scenario opens the workspace panel, because that is the only place
+ * Team exists. There was briefly a home-level screen reading across eight
+ * projects at once; what it answered from outside a project was worth less
+ * than the hundreds of git processes it cost.
  *
  * `requires` names something only the intended surface renders, so a capture
  * that lands somewhere else fails the run instead of quietly photographing the
@@ -18,20 +18,19 @@
  */
 
 import type { Scenario } from '../types';
+import { buildTeamFixture } from '../fixtures/team';
 import { teamSnapshotCommand, workspaceCommands, WORKSPACE_PROJECT } from './workspace';
 
 /**
  * What the Team screens read.
  *
- * The home-level screen opens outside a workspace, so it gets no workspace
- * fixtures at all and needs the snapshot command in its own right — plus the
- * project list, since it reads across the ones you opened most recently.
+ * `install_commit_guidance` is here because the coverage note offers it: an
+ * unmocked command fails the run rather than being given a plausible default,
+ * and the whole point of that note is the button.
  */
 const teamCommands = {
   get_team_snapshot: teamSnapshotCommand,
-  get_dashboard_projects: [
-    { name: 'acme-marketing', path: WORKSPACE_PROJECT, thumbnail: null, last_opened: null },
-  ],
+  install_commit_guidance: `${WORKSPACE_PROJECT}/CLAUDE.md`,
 };
 
 export const teamScenarios: Scenario[] = [
@@ -58,6 +57,58 @@ export const teamScenarios: Scenario[] = [
     commands: { ...workspaceCommands, ...teamCommands },
   },
   {
+    id: 'team-in-workspace-comments',
+    title: 'Team — the comments on this project, in the workspace panel',
+    looksRightWhen:
+      'The Comments tab lists the open threads with their pin number, what they are about and who is in them. An empty body under a filter that says "Open (2)" is the bug this exists to catch.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.team-presence',
+    steps: [{ click: '[data-tab-value="comments"]' }],
+    requires: '.team-thread-item',
+    commands: { ...workspaceCommands, ...teamCommands },
+  },
+  {
+    id: 'team-comments-selected',
+    title: 'Team — comments ticked for an agent',
+    looksRightWhen:
+      'Ticking a comment reveals the send button naming how many are going, and the wording is singular for one. Nothing is ticked until someone ticks it.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.team-presence',
+    steps: [
+      { click: '[data-tab-value="comments"]' },
+      { click: '.team-thread-item .checkbox__input' },
+    ],
+    requires: '.team-threads-send',
+    commands: { ...workspaceCommands, ...teamCommands },
+  },
+  {
+    id: 'team-in-workspace-pinned',
+    title: 'Team — pinned to the window rather than floating',
+    looksRightWhen:
+      'The panel takes a column of the workspace and the preview reflows beside it, instead of hovering over it. A blank column is the failure this exists to catch: a docked panel whose placeholder has no size never gets positioned.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.team-presence',
+    steps: [{ click: '.team-float-header .panel-pin-toggle' }],
+    // The handle is the panel's right edge and the thing you drag to resize it.
+    // Its absence is the bug: a pinned column you cannot size.
+    requires: '.team-panel-dock__resize',
+    commands: { ...workspaceCommands, ...teamCommands },
+  },
+  {
+    id: 'team-pinned-then-closed',
+    title: 'Team — closed while pinned leaves no gap',
+    looksRightWhen:
+      'Closing a pinned panel gives its column back to the workspace. An empty band where the panel used to be is the bug: the dock slot reserves width whether or not the surface is visible.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.team-presence',
+    steps: [
+      { click: '.team-float-header .panel-pin-toggle' },
+      { click: '.team-float-header [aria-label="Close"]' },
+    ],
+    requires: '.workspace-content',
+    commands: { ...workspaceCommands, ...teamCommands },
+  },
+  {
     id: 'team-in-workspace-people',
     title: 'Team — who is on what, without leaving the project',
     looksRightWhen:
@@ -70,40 +121,21 @@ export const teamScenarios: Scenario[] = [
   },
 
   {
-    id: 'team-activity',
-    title: 'Team — what everyone did',
+    id: 'team-self-coverage',
+    title: 'Team \u2014 your own pushes are not writing summaries',
     looksRightWhen:
-      'Every row leads with a sentence you can act on, with the reasoning underneath and the commits collapsed behind one line. The single row Ship Studio wrote itself — a push with no agent summary attached — is visibly the lesser thing, which is the argument for the skill made in the UI rather than in a doc.',
-    command: 'team.updates',
-    requires: '.team-update-headline',
-    commands: { ...teamCommands },
-  },
-  {
-    id: 'team-people',
-    title: 'Team — who is on what',
-    looksRightWhen:
-      'Each person shows a branch, how far ahead it is, and when they last pushed — never an "online" dot, because no remote can report that. The collaborator who has pushed nothing says so instead of being hidden, and the footnote names what a git remote cannot see.',
-    command: 'team.people',
-    requires: '.team-person',
-    commands: { ...teamCommands },
-  },
-  {
-    id: 'team-comments',
-    title: 'Team — comment threads',
-    looksRightWhen:
-      'A list driving a reader beside it, the same geometry as the Inbox. A thread shows its pin number, its participants and its route; the reader shows the conversation and a composer whose hint says replies are pushed on the next sync.',
-    command: 'team.comments',
-    requires: '.team-message',
-    commands: { ...teamCommands },
-  },
-  {
-    id: 'team-how-it-works',
-    title: 'Team — how this works',
-    looksRightWhen:
-      'The disclosure panel that replaces an onboarding step: the exact path written into the repo, the three writers ranked by how much each can be relied on, and the three limits — not live, not an audit log, not private.',
-    command: 'team.howItWorks',
-    requires: '.team-how-limits',
-    commands: { ...teamCommands },
+      'The note says the app can see the push but only the agent knows why, and offers to write the guidance into this project\u2019s agent instructions — a file every future session reads, not a prompt that fixes one. It must not appear at all once that block is in place.',
+    project: WORKSPACE_PROJECT,
+    openSelector: '.team-presence',
+    requires: '.team-coverage',
+    clipSelector: '.team-coverage',
+    commands: {
+      ...workspaceCommands,
+      ...teamCommands,
+      // Thin rows of your own, and no guidance installed: the one state this
+      // note exists for.
+      get_team_snapshot: buildTeamFixture({ selfRowsAreThin: true }),
+    },
   },
 
   {

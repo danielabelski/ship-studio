@@ -62,21 +62,23 @@ export function TeamHowItWorks({ onClose }: TeamHowItWorksProps) {
       </header>
 
       <p className="team-how-lead">
-        There is no Ship Studio server, no account and no database. Team activity is a folder of
-        small files in your own repo, and the network is <code>git fetch</code>. Everyone who can
-        see the repository on GitHub can see this; everyone who cannot, cannot.
+        There is no Ship Studio server, no account and no database. What people did is read out of
+        your git history, comments are small files in your own repo, and the network is{' '}
+        <code>git fetch</code>. Everyone who can see the repository on GitHub can see this; everyone
+        who cannot, cannot.
       </p>
 
       <div className="team-how-grid">
         <div className="team-how-block">
           <h4 className="team-how-block-title">What gets written</h4>
           <pre className="team-how-path">
-            <code>{'.shipstudio-team/updates/2026-09-07/\n  01K4J8Q2-mayareed.json'}</code>
+            <code>{'.shipstudio-team/threads/2026-09-07/\n  01K4J8Q2-mayareed.json'}</code>
           </pre>
           <p className="team-how-note">
-            One file per event, named by its own id, never edited after it is written. Two people
-            acting at once write two different files, so this never produces a merge conflict.
-            Resolving a comment appends a new file rather than changing the old one.
+            Only comments need a file — a note pinned to an element, on a page, at a viewport has no
+            equivalent in git. What people <em>did</em> is your commit messages, read straight out
+            of the history. One file per event, named by its own id, never edited afterwards, so two
+            people acting at once never produce a merge conflict.
           </p>
         </div>
 

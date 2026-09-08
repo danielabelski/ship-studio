@@ -176,4 +176,8 @@ export const workspaceCommands: CommandMap = {
   // states included -- is badged incomplete, and by this harness's own rule an
   // incomplete screenshot is not evidence.
   get_team_snapshot: teamSnapshotCommand,
+  // Opening a project exchanges comments with the remote, so every workspace
+  // capture reaches this. A capture machine has no remote; the honest fixture
+  // is a sync that found nothing to do, which is also the common real answer.
+  sync_team_threads: { pulled: 0, pushed: 0, pending: 0, error: null, hasRemote: false },
 };
