@@ -12,6 +12,7 @@ vi.mock('./logger', () => ({
 import {
   executeBridgeTool,
   isValidPreviewPath,
+  overlayFraction,
   registerPreviewMcpServer,
   type BridgeToolContext,
 } from './agentBridge';
@@ -29,11 +30,42 @@ const makeCtx = (overrides: Partial<BridgeToolContext> = {}): BridgeToolContext 
   reload: vi.fn(),
   setViewport: vi.fn(),
   getViewportWidth: () => null,
+  canvasMode: false,
+  getOverlayFrameSize: () => null,
   ...overrides,
 });
 
 beforeEach(() => {
   invokeMock.mockReset();
+});
+
+describe('overlayFraction', () => {
+  const rect = { x: 100, y: 4000, w: 200, h: 100, fx: 0.5, fy: 1 };
+
+  it('trusts the page when the host has no frame size (focus mode)', () => {
+    expect(overlayFraction(rect, null)).toEqual({ fx: 0.5, fy: 1 });
+  });
+
+  it('re-derives from raw pixels against the canvas frame', () => {
+    // The page reported fy: 1 — clamped, because on the canvas its own
+    // viewport is a 900px device fiction while the frame is 6000px of page.
+    // The cursor belongs two thirds down, not pinned to the bottom edge.
+    expect(overlayFraction(rect, { w: 1200, h: 6000 })).toEqual({
+      fx: 200 / 1200,
+      fy: 4050 / 6000,
+    });
+  });
+
+  it('falls back to the page fractions before the stage has been measured', () => {
+    expect(overlayFraction(rect, { w: 1200, h: 0 })).toEqual({ fx: 0.5, fy: 1 });
+  });
+
+  it('clamps a rect that sits outside the frame', () => {
+    expect(overlayFraction({ ...rect, y: -500 }, { w: 1200, h: 6000 })).toEqual({
+      fx: 200 / 1200,
+      fy: 0,
+    });
+  });
 });
 
 describe('isValidPreviewPath', () => {
@@ -147,6 +179,35 @@ describe('executeBridgeTool', () => {
       ctx
     );
     expect(bad.isError).toBe(true);
+  });
+
+  it('preview_status tells the agent the breakpoint canvas is open', async () => {
+    const result = await executeBridgeTool(
+      { requestId: 24, tool: 'preview_status' },
+      makeCtx({ canvasMode: true, getViewportWidth: () => 1024 })
+    );
+    const report = (result.content[0] as { text: string }).text;
+    // Without this the agent reads a plain width, calls preview_set_viewport
+    // to "test a breakpoint", and silently collapses the user's canvas.
+    expect(report).toContain('breakpoint canvas is open');
+    expect(report).toContain('1024px frame active');
+    expect(report).toContain('CLOSES the canvas');
+  });
+
+  it('preview_set_viewport says so when it closed the canvas', async () => {
+    const onCanvas = await executeBridgeTool(
+      { requestId: 33, tool: 'preview_set_viewport', arguments: { preset: 'mobile' } },
+      makeCtx({ canvasMode: true })
+    );
+    expect((onCanvas.content[0] as { text: string }).text).toContain(
+      'closed the breakpoint canvas'
+    );
+
+    const offCanvas = await executeBridgeTool(
+      { requestId: 34, tool: 'preview_set_viewport', arguments: { width: 900 } },
+      makeCtx()
+    );
+    expect((offCanvas.content[0] as { text: string }).text).not.toContain('breakpoint canvas');
   });
 
   it('screenshot captures at the preview viewport width', async () => {

@@ -4,9 +4,19 @@
  * scrolling, and element queries inside the preview page, on behalf of the
  * agent preview bridge.
  *
- * Requests broadcast to every preview iframe (there's one in practice);
- * responses match on a unique request id.
+ * The request goes to ONE frame: the active one the inspector is pinned to
+ * (`getInspectSource`), or — in focus mode, where the store has no pin because
+ * there is only ever one preview frame — every preview iframe. Broadcasting
+ * unconditionally was fine while "every preview iframe" meant one; on the
+ * breakpoint canvas it meant a single `preview_click` clicked in all four
+ * frames, navigated four pages independently of the host's idea of where the
+ * preview is, and then resolved from whichever frame answered first — so the
+ * rect and match count could describe a frame the user was not in.
+ *
+ * Responses still match on a unique request id.
  */
+
+import { getInspectSource } from './inspectStore';
 
 const HOST_CHANNEL = 'shipstudio-inspect-host';
 const SHIM_CHANNEL = 'shipstudio-inspect';
@@ -88,13 +98,21 @@ export function execPreviewAction(
 
     window.addEventListener('message', onMessage);
 
+    const message = { source: HOST_CHANNEL, type: 'exec-action', id, ...action };
+    const target = getInspectSource();
+    if (target) {
+      try {
+        target.postMessage(message, '*');
+      } catch {
+        // The frame went away between selection and send; the timeout below
+        // turns that into an agent-readable answer.
+      }
+      return;
+    }
     const iframes = document.querySelectorAll('iframe');
     iframes.forEach((iframe) => {
       try {
-        iframe.contentWindow?.postMessage(
-          { source: HOST_CHANNEL, type: 'exec-action', id, ...action },
-          '*'
-        );
+        iframe.contentWindow?.postMessage(message, '*');
       } catch {
         // Cross-origin frames that refuse postMessage are not the preview.
       }

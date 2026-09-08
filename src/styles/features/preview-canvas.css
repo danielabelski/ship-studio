@@ -196,6 +196,15 @@
   pointer-events: none;
 }
 
+/* Same exception, same reason: the agent activity layer is a full-bleed
+   `inset: 0` overlay that informs and must never block. Its own
+   `pointer-events: none` ties with the blanket rule above on specificity, and
+   this file loads later — so without this it would win and swallow every
+   click meant for the active frame while the agent was working. */
+.preview-canvas-outline > .agent-activity-overlay {
+  pointer-events: none;
+}
+
 /* Inactive frames sit behind a transparent target: one click makes the frame
    active (and interactive) rather than reaching a link in a page the user is
    only reviewing. */
