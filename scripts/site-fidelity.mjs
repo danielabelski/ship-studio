@@ -399,13 +399,28 @@ async function capture(url, width, settleMs, extraCss) {
  * Kept inside the project rather than a temp directory, so it is obvious what
  * it is, it is cleaned up with the project, and a stale one can be deleted.
  *
- * One level above the runs, deliberately. Anything sitting *among* them gets
- * read as one — the panel skips it for having no report, but every tool that
- * lists runs has to know to ignore it, and one already did not.
+ * Anchored to `.shipstudio/` by searching upward rather than by counting
+ * directories up from `--out`. An earlier version went two levels up, which
+ * assumed every run sits at `<fidelity>/<run>` — and agents batch pages, so a
+ * real run wrote to `<fidelity>/<batch>/<page>` and put the cache straight
+ * back among the runs it was moved out of. Depth is not something to assume
+ * about a path someone else chose.
  */
 function referenceCachePath(outDir, url, width) {
   const key = createHash('sha1').update(`${url}@${width}`).digest('hex').slice(0, 12);
-  return path.join(path.dirname(outDir), '..', '.reference-cache', `${key}.png`);
+
+  let dir = path.resolve(outDir);
+  for (let i = 0; i < 12; i += 1) {
+    if (path.basename(dir) === '.shipstudio') {
+      return path.join(dir, '.reference-cache', `${key}.png`);
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Outside a project — a bare comparison run by hand. Beside the output is
+  // the only place that is certainly writable.
+  return path.join(path.resolve(outDir), '..', '.reference-cache', `${key}.png`);
 }
 
 /**

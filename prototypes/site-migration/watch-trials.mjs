@@ -19,6 +19,37 @@ if (roots.length === 0) {
   process.exit(2);
 }
 
+/**
+ * Every comparison under `dir`, however deeply it was nested.
+ *
+ * A run is a directory holding a `report.json`, and where that sits is the
+ * agent's choice: batching pages under one `--out` produces
+ * `<batch>/<page>/report.json`. Listing only the top level showed a batch as
+ * one "pending" entry and hid every measurement inside it.
+ */
+async function findRuns(dir, root = dir, depth = 0) {
+  if (depth > 4) return [];
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const found = [];
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    const child = path.join(dir, e.name);
+    try {
+      const report = JSON.parse(await readFile(path.join(child, 'report.json'), 'utf8'));
+      found.push({ name: path.relative(root, child), report });
+    } catch {
+      found.push(...(await findRuns(child, root, depth + 1)));
+    }
+  }
+  return found;
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const seen = new Map();
 
@@ -33,27 +64,10 @@ async function snapshot(root) {
     /* not written yet */
   }
 
-  let runs = [];
-  try {
-    for (const e of await readdir(path.join(root, '.shipstudio/fidelity'), {
-      withFileTypes: true,
-    })) {
-      if (!e.isDirectory()) continue;
-      // A run is a directory the capture tool wrote; anything else living
-      // beside them is not one.
-      if (e.name.startsWith('.')) continue;
-      try {
-        const r = JSON.parse(
-          await readFile(path.join(root, '.shipstudio/fidelity', e.name, 'report.json'), 'utf8')
-        );
-        runs.push(`${e.name}:${r.score}%`);
-      } catch {
-        runs.push(`${e.name}:pending`);
-      }
-    }
-  } catch {
-    /* none yet */
-  }
+  const found = await findRuns(path.join(root, '.shipstudio/fidelity'));
+  const runs = found
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(({ name, report }) => `${name}:${report.score}%`);
 
   return `${phases} | runs ${runs.join(' ') || 'none'} | ${doing}`;
 }

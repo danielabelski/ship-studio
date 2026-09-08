@@ -400,37 +400,12 @@ pub async fn read_fidelity_runs(
 
 fn runs_at(root: &Path) -> Result<Vec<FidelityReportFile>, CommandError> {
     let fidelity = root.join(FIDELITY_DIR);
-    let Ok(entries) = std::fs::read_dir(&fidelity) else {
+    if !fidelity.is_dir() {
         return Ok(Vec::new());
-    };
+    }
 
     let mut runs: Vec<(String, FidelityReportFile)> = Vec::new();
-    for entry in entries.flatten() {
-        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
-            continue;
-        }
-        // A run is a directory the capture tool wrote. Anything hidden beside
-        // them — a cache, an editor's leavings — is not one, and is skipped by
-        // name rather than only by failing to hold a report.
-        if entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
-        let dir = entry.path();
-        let Ok(raw) = std::fs::read_to_string(dir.join("report.json")) else {
-            continue;
-        };
-        let Ok(report) = serde_json::from_str::<serde_json::Value>(&raw) else {
-            continue;
-        };
-        let name = entry.file_name().to_string_lossy().to_string();
-        runs.push((
-            name,
-            FidelityReportFile {
-                dir: dir.to_string_lossy().to_string(),
-                report,
-            },
-        ));
-    }
+    collect_runs(&fidelity, &fidelity, 0, &mut runs);
 
     // Natural order, not lexicographic: the agent names these, and it will
     // reach `pass-10` eventually. Sorting that before `pass-2` would draw the
@@ -438,6 +413,67 @@ fn runs_at(root: &Path) -> Result<Vec<FidelityReportFile>, CommandError> {
     // things worse when the passes simply came in a different order.
     runs.sort_by(|a, b| natural_key(&a.0).cmp(&natural_key(&b.0)));
     Ok(runs.into_iter().map(|(_, run)| run).collect())
+}
+
+/// Find every comparison under `dir`, however deeply the agent nested it.
+///
+/// A run is a directory holding a `report.json`. Which directory that is, is
+/// not fixed: the tool writes wherever `--out` points, and agents batch pages
+/// — one wrote `<fidelity>/<batch>/<page>/report.json`, so a reader that only
+/// looked one level down found nothing and the panel showed no comparison for
+/// work that had actually been done.
+///
+/// The run's name is its path relative to the fidelity directory, so a batched
+/// page reads as `batch/page` rather than colliding with every other page in
+/// the batch.
+fn collect_runs(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    out: &mut Vec<(String, FidelityReportFile)>,
+) {
+    // Runs are shallow in practice. The bound is here so a symlink loop or a
+    // stray node_modules cannot turn opening the panel into a filesystem walk.
+    if depth > 4 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        // Anything hidden beside the runs — a cache, an editor's leavings — is
+        // not one, and is skipped by name rather than by lacking a report.
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+
+        let child = entry.path();
+        match std::fs::read_to_string(child.join("report.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        {
+            Some(report) => {
+                let name = child
+                    .strip_prefix(root)
+                    .unwrap_or(&child)
+                    .to_string_lossy()
+                    .to_string();
+                out.push((
+                    name,
+                    FidelityReportFile {
+                        dir: child.to_string_lossy().to_string(),
+                        report,
+                    },
+                ));
+            }
+            // Not a run itself — but it may hold some.
+            None => collect_runs(root, &child, depth + 1, out),
+        }
+    }
 }
 
 /// A sort key that reads digit runs as numbers.
@@ -693,6 +729,55 @@ mod tests {
             .map(|r| r.report["name"].as_str().unwrap())
             .collect();
         assert_eq!(order, vec!["pass-1", "pass-2", "pass-10"]);
+    }
+
+    #[test]
+    fn a_batched_run_is_still_found() {
+        // Agents batch pages under one --out, so a real run wrote
+        // `<fidelity>/<batch>/<page>/report.json`. A reader that only looked one
+        // level down found nothing, and the panel showed no comparison for work
+        // that had been done and measured.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let batch = dir.path().join(FIDELITY_DIR).join("pillar1440");
+
+        for page in ["about", "industries-retail"] {
+            let run = batch.join(page);
+            std::fs::create_dir_all(&run).unwrap();
+            std::fs::write(
+                run.join("report.json"),
+                format!(r#"{{"label":"{page}","score":90}}"#),
+            )
+            .unwrap();
+        }
+
+        // And a plain run beside the batch still reads as one.
+        let flat = dir.path().join(FIDELITY_DIR).join("home-pass1");
+        std::fs::create_dir_all(&flat).unwrap();
+        std::fs::write(flat.join("report.json"), r#"{"label":"home","score":80}"#).unwrap();
+
+        let runs = runs_at(dir.path()).expect("reads");
+        let names: Vec<String> = runs
+            .iter()
+            .map(|r| r.report["label"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(runs.len(), 3, "found {names:?}");
+        assert!(names.contains(&"about".to_string()));
+        assert!(names.contains(&"industries-retail".to_string()));
+        assert!(names.contains(&"home".to_string()));
+    }
+
+    #[test]
+    fn a_batch_directory_is_not_itself_a_run() {
+        // The container holds no report, so it must not appear as a comparison
+        // nobody ran — which is how it showed up before: "pending", forever.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let run = dir.path().join(FIDELITY_DIR).join("batch").join("page");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::write(run.join("report.json"), r#"{"label":"page","score":1}"#).unwrap();
+
+        let runs = runs_at(dir.path()).expect("reads");
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].dir.ends_with("batch/page"));
     }
 
     #[test]
