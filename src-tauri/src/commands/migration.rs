@@ -39,6 +39,14 @@ use std::path::Path;
 const FIDELITY_MAIN: &str = include_str!("../../../scripts/site-fidelity.mjs");
 const FIDELITY_COMPARE: &str = include_str!("../../../scripts/site-fidelity-compare.mjs");
 
+/// The other half of the loop: what is different, rather than how much.
+///
+/// Shipped beside the comparison because on its own a score cannot be acted
+/// on. A container sixty pixels narrow turns a tenth of the page magenta and
+/// names nothing; this reads both pages' computed styles and says which width,
+/// which type size, which colour.
+const STRUCTURE: &str = include_str!("../../../scripts/site-structure.mjs");
+
 /// Where a project keeps its migration state, relative to the project root.
 const MIGRATION_DIR: &str = ".shipstudio";
 const FIDELITY_DIR: &str = ".shipstudio/fidelity";
@@ -318,6 +326,7 @@ fn scaffold_migration(root: &Path, source_url: &str) -> Result<(), CommandError>
         &fidelity.join("site-fidelity-compare.mjs"),
         FIDELITY_COMPARE,
     )?;
+    write_file(&fidelity.join("site-structure.mjs"), STRUCTURE)?;
 
     let status_path = root.join(MIGRATION_DIR).join("migration.json");
     if !status_path.exists() {
@@ -580,6 +589,10 @@ mod tests {
         let compare = fidelity.join("site-fidelity-compare.mjs");
         assert!(entry.exists(), "the engine is missing");
         assert!(compare.exists(), "the comparison module is missing");
+        assert!(
+            fidelity.join("site-structure.mjs").exists(),
+            "the diagnostic is missing — a score with nothing to explain it"
+        );
 
         // The entry point imports its sibling by relative path, so the two
         // names have to agree. This is the assertion that would have caught
@@ -763,5 +776,6 @@ mod tests {
         // migrating rather than as a missing file.
         assert!(FIDELITY_MAIN.contains("captureBeyondViewport"));
         assert!(FIDELITY_COMPARE.contains("PIXEL_THRESHOLD_SQ"));
+        assert!(STRUCTURE.contains("getComputedStyle"));
     }
 }

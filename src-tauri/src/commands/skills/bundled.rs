@@ -163,7 +163,9 @@ This is the part that matters most, so it comes first.
 
 1. **You lead.** Do not ask the user what to do next. You know the order — it
    is written below. Propose, then proceed. Ask only about things that are
-   genuinely theirs to decide.
+   genuinely theirs to decide — and when you do, ask early, ask once, and bring
+   the answer you would choose. A migration that stops for a question every
+   twenty minutes is not being careful, it is refusing to lead.
 2. **Nothing is done until it is verified**, and verified means *measured*, not
    glanced at. A page you have not compared against the original is not
    finished, however good it looks to you.
@@ -223,6 +225,39 @@ original. The score will be terrible and that is fine; it is not the point. The
 point is that the loop you are about to depend on works, at a moment when
 nothing is invested in it. Finding out at the end of the homepage that you
 cannot measure is how a migration turns into a rewrite nobody checked.
+
+### Then settle the decisions, in one go
+
+The survey is the first moment you know enough to ask well, and the last moment
+asking is cheap. Every one of these shapes code you are about to write, and
+discovering one halfway through the third template means unpicking the first
+two.
+
+Ask them **together, once**, each with a recommendation and what it would mean.
+The survey tells you which are even relevant — a brochure site with no
+collections does not need a content model, and asking anyway is noise:
+
+- **Content.** Where should it live? Files in the repo (Markdown or MDX), a
+  CMS, or the one the site already uses. If the source has collections, say how
+  many and how big, because that changes the answer. If it is already on a CMS,
+  connecting to the same data and rebuilding only the front end is usually
+  right, and is worth saying so.
+- **Forms.** Where should submissions go? You cannot see the current backend
+  from outside, so this is always a question when a form exists.
+- **Fonts.** Name any face that cannot be self-hosted, and what you would use
+  instead. This one changes every page, so it is worth settling first.
+- **Anything the survey found that has no obvious home** — search, accounts,
+  checkout, a third-party embed, a locale switcher.
+- **Anything you would otherwise have to guess.**
+
+Write them into `migration.json` under `needsYou`, each with your
+recommendation, so they are visible rather than buried in a message.
+
+You are leading, not interrogating. Every question carries the answer you would
+choose, and if the user says "you pick" you proceed on your own recommendations
+without asking again. What you must not do is guess silently, or ask these one
+at a time as you trip over them — a decision arriving in the middle of the
+third template is a decision that arrives too late to be cheap.
 
 `MIGRATION.md` is not a document you write once. It is the state of the work,
 and you keep it current — it is what survives the conversation ending.
@@ -298,12 +333,18 @@ build → capture both sides → score → diagnose → fix one thing → re-mea
 2. **Score** the match at each. The score for the page is the **worst**
    breakpoint, never the average — an average is exactly the number that hides
    a broken phone layout behind a good desktop one.
-3. **Diagnose from structure, not from the picture.** Compare element positions
-   and sizes, and computed styles, between the two. A pixel diff tells you
-   *that* something is wrong and roughly where; it is bad at telling you *what*,
-   because one wrong container width shifts every image on the page and lights
-   up a third of it. The finding you want is "the container is 1140px and should
-   be 1200px", not "there is a lot of red here".
+3. **Diagnose from structure, not from the picture.** The score says how far
+   off you are; it cannot say what is off, because one wrong container width
+   shifts every image on the page and lights up a third of it. Read the two
+   pages' computed styles instead and compare the design itself — the widths
+   content is constrained to, the type sizes and line-heights in use, the
+   colours actually painted, the section padding. The finding you want is "the
+   container is 1140px and should be 1200px", not "there is a lot of red here".
+
+   Where this project provides a tool for that, use it rather than writing your
+   own. Aggregate comparisons are what you want: two pages written by different
+   people cannot be aligned element by element, but "the widest content box is
+   1140 here and 1200 there" is true regardless of how either is structured.
 4. **Fix one named thing per pass**, so the next measurement attributes the
    change to it.
 5. **Re-measure.**
