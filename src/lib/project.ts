@@ -18,6 +18,13 @@ import { readProjectFile } from './code';
 import { asCommandError, formatCommandError, isProjectFolderGoneError } from './errors';
 import { trackError } from './analytics';
 import { isWindows } from './setup';
+import { detectPackageManager } from './github';
+import {
+  PackageManager,
+  execScriptCommand,
+  normalizePackageManager,
+  runScriptCommand,
+} from './package-manager';
 
 /** Basic project information */
 export interface Project {
@@ -231,21 +238,22 @@ function hasShellSyntax(script: string): boolean {
 }
 
 /**
- * Parse a dev script command and return args for npx to run it with correct port.
- * Handles scripts like "vite dev --port 3000" or "next dev -p 3000".
- * Uses npx to ensure local node_modules/.bin executables are found.
+ * Parse a dev script command and return its tokens, with any hardcoded port
+ * replaced. Handles scripts like "vite dev --port 3000" or "next dev -p 3000".
+ * The caller executes the tokens through the project's own package manager
+ * (see execScriptCommand) so local node_modules/.bin executables are found.
  *
- * Falls back to returning null for complex shell scripts (with &&, ||, |, ;, or env vars)
- * which should be run via npm instead.
+ * Returns null for complex shell scripts (with &&, ||, |, ;, or env vars)
+ * which should be run via the package manager's script runner instead.
  *
  * @param script - The npm script command (e.g., "vite dev --port 3000")
  * @param desiredPort - The port we want to use
- * @returns Args array for npx command, with port replaced, or null if shell syntax detected
+ * @returns Tokens [binary, ...args] with the port replaced, or null if shell syntax detected
  */
-function parseDevScriptForNpx(script: string, desiredPort: number): string[] | null {
+function parseDevScriptCommand(script: string, desiredPort: number): string[] | null {
   // Check for shell syntax that can't be safely parsed
   if (hasShellSyntax(script)) {
-    logger.info('[DevServer] Dev script contains shell syntax, falling back to npm run dev', {
+    logger.info('[DevServer] Dev script contains shell syntax, falling back to script runner', {
       script,
     });
     return null;
@@ -342,8 +350,31 @@ export async function startDevServer(
   const homeNormalized = home.endsWith('/') ? home : `${home}/`;
   const fullPath = await getShellPath();
 
-  let command = 'npm';
-  let args: string[] = ['run', 'dev', '--', '--port', port.toString()];
+  // Spawn the dev server with the project's own package manager. npm's
+  // runners parse npm-only manifest fields before anything runs — a project
+  // with an `overrides` block npm rejects dies with EOVERRIDE at launch even
+  // though it installs with bun — and `npx bash …` fails outright because
+  // npx never falls back to PATH. Detection walks up from the cwd, so
+  // monorepo workspace subpaths resolve to the repo-root lockfile.
+  let packageManager: PackageManager = 'npm';
+  try {
+    packageManager = normalizePackageManager(await detectPackageManager(projectPath));
+    if (packageManager !== 'npm') {
+      logger.info('[DevServer] Detected non-npm package manager', {
+        projectPath,
+        packageManager,
+      });
+    }
+  } catch (e) {
+    logger.warn('[DevServer] detectPackageManager failed; assuming npm', {
+      projectPath,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  const fallbackRunner = runScriptCommand(packageManager, 'dev', ['--port', port.toString()]);
+  let command = fallbackRunner.command;
+  let args = fallbackRunner.args;
 
   if (customCommand) {
     // Custom command provided — split into command + args, bypass package.json parsing
@@ -359,7 +390,7 @@ export async function startDevServer(
     }
   } else {
     // Try to read package.json to get the dev script and parse it to use correct port
-    // We use npx to run the command so that local node_modules/.bin executables are found
+    // We run it through the project's package manager so local binaries are found
     try {
       logger.info('[DevServer] Reading package.json', { projectPath, desiredPort: port });
       // Read through the backend rather than plugin-fs: validate_project_path
@@ -372,11 +403,11 @@ export async function startDevServer(
         // An unresolved git merge conflict in package.json: JSON.parse would
         // throw "Unrecognized token '<'" and telemetry recorded an app bug
         // for what is a user-actionable repo state (issue #577). Surface the
-        // real cause in the dev-server log instead — the npm fallback below
-        // still spawns (and prints npm's own EJSONPARSE), so the user sees
-        // both messages where they're looking.
+        // real cause in the dev-server log instead — the script-runner
+        // fallback below still spawns (and prints the manager's own
+        // EJSONPARSE), so the user sees both messages where they're looking.
         logger.warn(
-          '[DevServer] package.json contains unresolved merge conflict markers; falling back to npm run dev',
+          '[DevServer] package.json contains unresolved merge conflict markers; falling back to script runner',
           { projectPath }
         );
         onOutput?.(
@@ -387,13 +418,17 @@ export async function startDevServer(
         const devScript = pkg.scripts?.dev;
 
         if (devScript) {
-          // Parse the dev script and replace any hardcoded port with our desired port
-          // Use npx to run the command so local binaries are found
-          // Returns null if the script contains shell syntax (&&, ||, |, ;, or env vars)
-          const npxArgs = parseDevScriptForNpx(devScript, port);
-          if (npxArgs) {
-            command = 'npx';
-            args = npxArgs;
+          // Parse the dev script and replace any hardcoded port with our desired port.
+          // Returns null if the script contains shell syntax (&&, ||, |, ;, or env vars).
+          const scriptTokens = parseDevScriptCommand(devScript, port);
+          if (scriptTokens) {
+            const runner = execScriptCommand(
+              packageManager,
+              scriptTokens[0],
+              scriptTokens.slice(1)
+            );
+            command = runner.command;
+            args = runner.args;
             logger.info('[DevServer] Parsed dev script successfully', {
               original: devScript,
               command,
@@ -401,43 +436,49 @@ export async function startDevServer(
               port,
             });
           } else {
-            // Script has shell syntax - use npm run dev which respects the PORT env var
-            logger.info('[DevServer] Using npm run dev for shell script', {
+            // Script has shell syntax - use the package manager's script
+            // runner, which respects the PORT env var
+            logger.info('[DevServer] Using script runner for shell script', {
+              packageManager,
               original: devScript,
               port,
             });
           }
         } else {
-          logger.warn('[DevServer] No dev script found in package.json, using npm run dev');
+          logger.warn('[DevServer] No dev script found in package.json, using script runner');
         }
       }
     } catch (e) {
-      // Fall back to npm run dev with port forwarded via -- --port
-      // (e.g. package.json genuinely missing, or not valid JSON)
-      // CommandError rejections are plain objects — String() renders them as
-      // "[object Object]" (issue #332); format them like the toasts do.
+      // Fall back to the package manager's script runner with the port
+      // forwarded as an argument (e.g. package.json genuinely missing, or
+      // not valid JSON). CommandError rejections are plain objects —
+      // String() renders them as "[object Object]" (issue #332); format
+      // them like the toasts do.
       const errorMessage = formatCommandError(asCommandError(e));
       if (errorMessage.includes('File not found: package.json')) {
         // A project with no package.json at all (framework detected from its
         // config file alone) is a known project state, not an app bug —
         // useDevServer skips the spawn for the common case (issue #593), and
         // remaining paths (restarts, monorepo cwd) must not page telemetry.
-        logger.warn('[DevServer] No package.json found; falling back to npm run dev', {
+        logger.warn('[DevServer] No package.json found; falling back to script runner', {
           projectPath,
         });
       } else if (isProjectFolderGoneError(e)) {
         // The project folder was moved, renamed, or deleted outside Ship Studio
         // while its session stayed open — an environment state, not an app bug
         // (issue #822). Same treatment as the missing-package.json case.
-        logger.warn('[DevServer] Project folder is gone; falling back to npm run dev', {
+        logger.warn('[DevServer] Project folder is gone; falling back to script runner', {
           projectPath,
         });
       } else {
         trackError('devserver_package_json', e, 'Workspace');
-        logger.error('[DevServer] Failed to read/parse package.json, falling back to npm run dev', {
-          error: errorMessage,
-          projectPath,
-        });
+        logger.error(
+          '[DevServer] Failed to read/parse package.json, falling back to script runner',
+          {
+            error: errorMessage,
+            projectPath,
+          }
+        );
       }
     }
   }
