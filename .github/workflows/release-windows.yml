@@ -247,11 +247,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
+          set -euo pipefail
           mkdir -p carry-forward
-          MAC_TAG=$(gh release list --repo ship-studio/releases --limit 50 \
-            --json tagName --jq '[.[] | select(.tagName | endswith("-win") | not)][0].tagName // empty')
+          # Pick the newest PUBLISHED macOS release. `gh release list` returns
+          # drafts first, so a plain `[0]` can select a draft that has no
+          # assets at all — the same bug that shipped a stale Windows manifest
+          # from release.yml. Exclude drafts and take the most recently
+          # published non -win tag.
+          MAC_TAG=$(gh release list --repo ship-studio/releases --limit 100 \
+            --json tagName,isDraft,publishedAt \
+            --jq '[.[] | select(.isDraft == false) | select(.tagName | endswith("-win") | not)]
+                  | sort_by(.publishedAt) | last | .tagName // empty')
           if [ -z "$MAC_TAG" ]; then
-            echo "No macOS release found to carry forward" >&2
+            echo "::error::No published macOS release found to carry forward" >&2
             exit 1
           fi
           echo "Carrying forward macOS assets from $MAC_TAG"
@@ -261,6 +269,27 @@ jobs:
             --pattern "ShipStudio_darwin-*.dmg" \
             --dir carry-forward
           ls -la carry-forward/
+
+          # Gate: every asset the site and the docs link to under the
+          # /releases/latest/download/ alias must be present before this
+          # release is allowed to become "latest". ShipStudio_darwin-universal.dmg
+          # is the one the marketing site's "Download for Mac" button resolves
+          # to; it was missing from the upload list below, so v1.2.0-win flipped
+          # the alias and 404'd every Mac download from the web. The site now
+          # falls back to the legacy arch-named copies rather than 404ing, but
+          # that serves the universal build under a misleading name and hides
+          # this bug — so the gate below stays strict.
+          missing=()
+          for f in latest.json \
+                   ShipStudio_darwin-universal.dmg \
+                   ShipStudio_darwin-aarch64.dmg \
+                   ShipStudio_darwin-x86_64.dmg; do
+            [ -f "carry-forward/$f" ] || missing+=("$f")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::macOS assets missing from $MAC_TAG: ${missing[*]}. Publishing would 404 the site's Mac download."
+            exit 1
+          fi
 
       - name: Upload artifacts to main repo draft release
         uses: softprops/action-gh-release@v2
@@ -296,5 +325,6 @@ jobs:
             artifacts/ShipStudio_windows-x86_64-setup.exe.sig \
             latest-windows.json \
             carry-forward/latest.json \
+            carry-forward/ShipStudio_darwin-universal.dmg \
             carry-forward/ShipStudio_darwin-aarch64.dmg \
             carry-forward/ShipStudio_darwin-x86_64.dmg
