@@ -65,6 +65,14 @@ describe('HomeSidebar', () => {
     expect(screen.getByRole('button', { name: 'Inbox' })).toBeInTheDocument();
   });
 
+  it('has no Team destination — Team lives inside a project', () => {
+    // It was briefly a home-level screen reading across eight projects at once.
+    // What it answered from out here was worth less than it cost, and comments
+    // in particular cannot be acted on without opening the project anyway.
+    renderSidebar(<HomeSidebar {...props} activeNav="home" />);
+    expect(screen.queryByRole('button', { name: 'Team' })).not.toBeInTheDocument();
+  });
+
   it('badges the Inbox with the unread count', () => {
     renderSidebar(<HomeSidebar {...props} inboxUnreadCount={3} activeNav="home" />);
     expect(screen.getByRole('button', { name: 'Inbox — 3 unread' })).toBeInTheDocument();

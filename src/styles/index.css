@@ -25,6 +25,7 @@
 @import './components/progress.css';
 @import './components/pixel-loader.css';
 @import './components/text-field.css';
+@import './components/checkbox.css';
 @import './components/modal.css';
 @import './components/command-palette.css';
 @import './components/code-overlay.css';
@@ -121,6 +122,11 @@
 @import './features/workflows.css';
 @import './features/workflow-templates.css';
 @import './features/inbox.css';
+@import './features/team/base.css';
+@import './features/team/updates.css';
+@import './features/team/people.css';
+@import './features/team/threads.css';
+@import './features/team/workspace.css';
 
 /* Modes */
 @import './modes/education-mode.css';

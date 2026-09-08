@@ -9,8 +9,6 @@
 //! about a URL nobody knew. Nothing called them. Deployment status now comes
 //! from asking the provider about the commit (`commands::hosting`).
 
-use crate::commands::ai::resolve_commit_message;
-use crate::commands::git::git_stage_and_commit;
 // Network git ops (pull/push) go through the workspace-scoped helper so a
 // publish authenticates as the project's workspace GitHub login, matching the
 // gh-based repo-create path.
@@ -163,7 +161,6 @@ pub async fn publish_branch(
     commit_message: Option<String>,
 ) -> Result<PublishResult, CommandError> {
     let validated_path = validate_project_path(&project_path).map_err(CommandError::from)?;
-    let message = resolve_commit_message(&validated_path, commit_message).await;
 
     // Get current branch name
     let branch_output = crate::utils::git_command_in(&validated_path)?
@@ -188,6 +185,14 @@ pub async fn publish_branch(
              branch first, then publish.",
         ));
     }
+    // Ask the agent what this push is, and write the record *before* staging,
+    // so `git add -A` picks it up and the work and its explanation land in one
+    // commit. Everything about this step is optional and none of it can fail
+    // the push: no agent, no headless mode, a timeout, an unreadable reply or a
+    // summary the gauntlet refuses all fall back to a plain commit message.
+    let content =
+        crate::commands::team::prepare_push(&validated_path, &branch, commit_message).await;
+    let message = content.message;
     info!(branch = %branch, message = %message, "Publishing branch");
 
     // Ensure git identity matches GitHub account before committing
@@ -197,7 +202,8 @@ pub async fn publish_branch(
     // discarded `git add -A`'s result entirely, so a staging failure surfaced
     // later as an inexplicable "Uncommitted changes" on switch (issue #273);
     // the helper also handles sparse-checkout (#275) and empty commits (#274).
-    git_stage_and_commit(&validated_path, &message).map_err(CommandError::from)?;
+    crate::commands::git::git_stage_and_commit_authored(&validated_path, &message, content.agent)
+        .map_err(CommandError::from)?;
 
     // Push to origin
     let push_output =

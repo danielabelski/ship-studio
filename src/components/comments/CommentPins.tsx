@@ -37,7 +37,8 @@ interface Props {
   bounds: { w: number; h: number } | null;
   openId: string | null;
   onOpen: (id: string | null) => void;
-  excluded: Set<string>;
+  /** Threads ticked for the next handoff, from the shared team store. */
+  selectedIds: string[];
   toggle: (id: string) => void;
   onEdit: (comment: CanvasComment) => void;
   onDelete: (comment: CanvasComment) => void;
@@ -108,7 +109,7 @@ export function CommentPins(props: Props) {
               <input
                 type="checkbox"
                 aria-label={`Include comment: ${open.body}`}
-                checked={!props.excluded.has(open.id)}
+                checked={props.selectedIds.includes(open.id)}
                 onChange={() => props.toggle(open.id)}
               />
             )}

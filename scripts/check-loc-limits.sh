@@ -105,9 +105,12 @@ echo "CSS (limit 1200 per file):"
 check_file src/styles/features/preview.css 1300
 # sidebar.css owns the whole workspace rail: project rows, session/terminal
 # tabs, worktree groups, section headers, and the compact variants. The v0.19
-# redesign pushed it past 1200. Raised deliberately; splitting the worktree and
-# session-tab blocks into their own stylesheets is the follow-up.
-check_file src/styles/features/workspace/sidebar.css 1300
+# redesign pushed it past 1200. Team then added the top-row sizing rule that
+# stops the sidebar toggle rendering larger than its neighbours, which needs a
+# :not(.is-hidden) scope to lose to the collapsed rail — four lines of selector
+# for one box. Raised deliberately, twice now; splitting the worktree and
+# session-tab blocks into their own stylesheets is overdue, not optional.
+check_file src/styles/features/workspace/sidebar.css 1320
 # Files with their own explicit ceiling above are matched by exact path so a
 # same-named stylesheet elsewhere still gets the general 1200 limit.
 while IFS= read -r f; do

@@ -127,6 +127,7 @@ interface Props {
   onGoWorkflows?: () => void;
   /** Open the Inbox. Hides the nav button when omitted. */
   onGoInbox?: () => void;
+  /** Home-level Team screen. Absent where there is no nav row. */
   /** Unread findings, rendered as a badge on the Inbox button. */
   inboxUnreadCount?: number;
 

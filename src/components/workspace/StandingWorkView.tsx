@@ -1,5 +1,5 @@
 /**
- * The two home-level screens that aren't the project list: Workflows and Inbox.
+ * The home-level screens that aren't the project list: Workflows and Inbox.
  *
  * Extracted from App.tsx so the shell stays a router rather than growing a
  * third full screen body. They share the home sidebar and the same

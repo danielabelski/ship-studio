@@ -255,8 +255,7 @@ async function newPage(url) {
   return { page: await Page.attach(target.webSocketDebuggerUrl), targetId: target.id };
 }
 
-const closeTarget = (id) =>
-  fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${id}`).catch(() => {});
+const closeTarget = (id) => fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${id}`).catch(() => {});
 
 /**
  * Load one harness URL, wait for it to settle, capture it, and report what the
@@ -329,9 +328,15 @@ async function capture({ url, file, clipSelector, identity, label, requires }) {
     let clip;
     let missingClip;
     if (clipSelector) {
+      // Scroll it into view before measuring. `captureBeyondViewport` is off
+      // below, so a clip rect outside the viewport is photographed as a black
+      // rectangle — a clean image of nothing, captioned with the scenario's
+      // name, which is exactly the silent wrong answer `requires` exists to
+      // prevent. Anything worth clipping to is worth scrolling to first.
       const box = await page.eval(`(() => {
         const el = document.querySelector(${JSON.stringify(clipSelector)});
         if (!el) return null;
+        el.scrollIntoView({ block: 'center', inline: 'nearest' });
         const r = el.getBoundingClientRect();
         const pad = 12;
         return JSON.stringify({
@@ -353,7 +358,9 @@ async function capture({ url, file, clipSelector, identity, label, requires }) {
     // scenario whose surface has vanished still yields a clean screenshot of
     // whatever else was rendered, under this scenario's name.
     const missingRequired = requires
-      ? !(await page.eval(`!!document.querySelector(${JSON.stringify(requires)})`).catch(() => false))
+      ? !(await page
+          .eval(`!!document.querySelector(${JSON.stringify(requires)})`)
+          .catch(() => false))
       : false;
 
     // Capture a *stable* frame rather than whichever frame happened to be on
@@ -405,11 +412,7 @@ async function capture({ url, file, clipSelector, identity, label, requires }) {
 }
 
 const mark = (r) =>
-  r.crashed || !r.ready || r.missingRequired || r.stepMissed
-    ? '✗'
-    : r.unmocked.length
-      ? '!'
-      : '✓';
+  r.crashed || !r.ready || r.missingRequired || r.stepMissed ? '✗' : r.unmocked.length ? '!' : '✓';
 
 function renderReport({ scenarios, commands, skipped, meta }) {
   const lines = [
@@ -455,9 +458,7 @@ function renderReport({ scenarios, commands, skipped, meta }) {
     );
     lines.push('| | command | context | title | image |', '| - | - | - | - | - |');
     for (const r of commands) {
-      lines.push(
-        `| ${mark(r)} | \`${r.id}\` | ${r.context} | ${r.title} | \`${r.file}\` |`
-      );
+      lines.push(`| ${mark(r)} | \`${r.id}\` | ${r.context} | ${r.title} | \`${r.file}\` |`);
     }
     lines.push('');
     const noChange = commands.filter((r) => r.noVisibleChange);
@@ -530,7 +531,9 @@ function renderReport({ scenarios, commands, skipped, meta }) {
 async function main() {
   if (!CHROME) throw new Error('No Chrome/Chromium found. Install Google Chrome.');
   await waitForServer(`${HARNESS_ORIGIN}/harness.html`).catch(() => {
-    throw new Error(`The harness is not running on ${HARNESS_ORIGIN}. Start it with:  pnpm harness`);
+    throw new Error(
+      `The harness is not running on ${HARNESS_ORIGIN}. Start it with:  pnpm harness`
+    );
   });
   // Before anything is captured: prove the server belongs to this checkout.
   const identity = await assertHarnessIsThisCheckout();
@@ -622,9 +625,7 @@ async function main() {
       );
       await waitFor(listPage.page, 'window.__harnessReady', 25_000, 'the app to settle');
       const cmds = JSON.parse(
-        await listPage.page.eval(
-          'window.__harness.commandsWhenReady().then(c=>JSON.stringify(c))'
-        )
+        await listPage.page.eval('window.__harness.commandsWhenReady().then(c=>JSON.stringify(c))')
       );
       listPage.page.close();
       await closeTarget(listPage.targetId);

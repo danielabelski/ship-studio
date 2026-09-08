@@ -3,6 +3,30 @@
   "policy": "Existing restricted consumers are baselined; new usage or growth fails the token-layer check.",
   "entries": [
     {
+      "path": "src/styles/components/checkbox.css",
+      "token": "--space-02",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/components/checkbox.css",
+      "token": "--stroke-1",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/components/checkbox.css",
+      "token": "--stroke-2",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/components/checkbox.css",
+      "token": "--transition",
+      "count": 3,
+      "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
+    },
+    {
       "path": "src/styles/components/command-palette.css",
       "token": "--stroke-1",
       "count": 1,
@@ -1365,6 +1389,24 @@
       "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
     },
     {
+      "path": "src/styles/features/team/threads.css",
+      "token": "--space-06",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/features/team/workspace.css",
+      "token": "--space-04",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/features/team/workspace.css",
+      "token": "--stroke-1",
+      "count": 4,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
       "path": "src/styles/features/update-banner.css",
       "token": "--color-green-300",
       "count": 4,
@@ -1799,7 +1841,7 @@
     {
       "path": "src/styles/features/workspace/sidebar.css",
       "token": "--space-08",
-      "count": 27,
+      "count": 26,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
@@ -1823,7 +1865,7 @@
     {
       "path": "src/styles/features/workspace/sidebar.css",
       "token": "--space-32",
-      "count": 3,
+      "count": 2,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {

@@ -164,6 +164,11 @@
   --button-primary-start: var(--color-green-700);
   --button-primary-mid: var(--color-green-600);
   --button-primary-end: var(--color-green-500);
+  /* Busy fill for a control that is mid-action. Flat and darker than the
+     idle gradient, and opaque: dimming with `opacity` let whatever sat
+     behind the button show through it. */
+  --button-primary-busy: var(--color-green-800);
+  --button-surface-busy: var(--color-gray-900);
   --button-variable-surface: var(--color-purple-700);
   --button-variable-hover: var(--color-purple-600);
   --button-warning-surface: var(--surface-warning);
@@ -179,6 +184,11 @@
   --control-height-standard: var(--size-control-standard);
   --control-height-large: var(--size-control-large);
   --control-height-compact: var(--size-control-compact);
+  /* The drawn checkbox. Sized to sit level with a line of body text. */
+  --control-checkbox-size: 14px;
+  /* The Team panel when pinned. Matches its floating width, so pinning is a
+     change of position rather than a resize. */
+  --team-panel-docked-w: 420px;
 
   --text-field-height: var(--size-control-medium);
   --text-field-height-compact: var(--size-control-compact);
@@ -311,6 +321,8 @@
   --editor-panel-spacing-padding-side-hover: var(--surface-selected);
   --editor-panel-spacing-padding-bottom: var(--surface-selected);
   --editor-panel-spacing-padding-bottom-hover: var(--color-gray-700);
+  /* A band that stays put while its own container scrolls under it. */
+  --z-sticky-band: 1;
   --z-editor-spacing-band: 1;
   --z-editor-spacing-surface: 2;
   --z-editor-spacing-field: 3;

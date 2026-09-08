@@ -12,8 +12,30 @@
 
 import type { CommandMap } from '../types';
 import { HARNESS_ROOT } from './base';
+import { buildTeamFixture } from '../fixtures/team';
 
 export const WORKSPACE_PROJECT = `${HARNESS_ROOT}/acme-marketing`;
+
+/**
+ * `get_team_snapshot`, which reads a real repository — git history, `gh pr
+ * list`, and any records under `.shipstudio-team/`. A capture machine has none
+ * of those, so this stands in for it.
+ *
+ * Answered per invocation rather than as a frozen literal, so the fixture
+ * adopts whichever project the scenario opened. The screens are about *your*
+ * project with people in it, and a fixture naming a repo nobody has heard of
+ * photographs the wrong idea.
+ *
+ * Exported because the home-level Team screen reads the same command for
+ * several projects at once, and two copies of this would drift.
+ */
+export const teamSnapshotCommand = (args: Record<string, unknown>) => {
+  const projectPath = typeof args.projectPath === 'string' ? args.projectPath : WORKSPACE_PROJECT;
+  return buildTeamFixture({
+    projectPath,
+    projectName: projectPath.split('/').pop() || 'your project',
+  });
+};
 
 export const workspaceCommands: CommandMap = {
   // ---- project identity & registration ----------------------------------
@@ -146,4 +168,16 @@ export const workspaceCommands: CommandMap = {
 
   // ---- plugins -----------------------------------------------------------
   list_plugins: [],
+
+  // ---- team --------------------------------------------------------------
+  // Read on every workspace open, because the header's presence cluster mounts
+  // with the workspace. It lives here rather than in the Team scenarios for
+  // exactly that reason: without it every workspace capture -- all ten hosting
+  // states included -- is badged incomplete, and by this harness's own rule an
+  // incomplete screenshot is not evidence.
+  get_team_snapshot: teamSnapshotCommand,
+  // Opening a project exchanges comments with the remote, so every workspace
+  // capture reaches this. A capture machine has no remote; the honest fixture
+  // is a sync that found nothing to do, which is also the common real answer.
+  sync_team_threads: { pulled: 0, pushed: 0, pending: 0, error: null, hasRemote: false },
 };

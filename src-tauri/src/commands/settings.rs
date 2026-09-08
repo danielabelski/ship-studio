@@ -222,6 +222,47 @@ pub fn get_element_breadcrumb_enabled() -> Result<bool, CommandError> {
     Ok(state.element_breadcrumb_enabled.unwrap_or(true))
 }
 
+/// Whether pushing from Ship Studio asks an agent to write the commit message.
+#[tauri::command]
+#[tracing::instrument]
+pub fn get_team_sharing_enabled() -> Result<bool, CommandError> {
+    Ok(crate::commands::team::sharing_enabled())
+}
+
+/// Turn the written commit message on or off.
+///
+/// Off falls back to Ship Studio's plain default message, so a push still
+/// works and still commits — it simply arrives with a subject and no reason.
+/// Comments are unaffected: they are written when somebody leaves one, which
+/// is already an explicit act.
+#[tauri::command]
+#[tracing::instrument]
+pub fn set_team_sharing_enabled(enabled: bool) -> Result<(), CommandError> {
+    let mut state = read_app_state();
+    state.team_sharing_enabled = Some(enabled);
+    write_app_state(&state).map_err(CommandError::from)
+}
+
+/// Whether commits Ship Studio makes carry the `Made-With` attribution trailer.
+#[tauri::command]
+#[tracing::instrument]
+pub fn get_commit_attribution_enabled() -> Result<bool, CommandError> {
+    Ok(crate::commands::team::attribution_enabled())
+}
+
+/// Turn the `Made-With` commit trailer on or off.
+///
+/// One switch for the whole thing, per the design: attribution is either in the
+/// history or it is not. It does not touch the commit body, which is the
+/// change's explanation rather than advertising for the tool that wrote it.
+#[tauri::command]
+#[tracing::instrument]
+pub fn set_commit_attribution_enabled(enabled: bool) -> Result<(), CommandError> {
+    let mut state = read_app_state();
+    state.commit_attribution_enabled = Some(enabled);
+    write_app_state(&state).map_err(CommandError::from)
+}
+
 /// Persist whether the selected element's DOM breadcrumb is shown in the preview.
 #[tauri::command]
 #[tracing::instrument]

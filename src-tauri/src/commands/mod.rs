@@ -44,6 +44,7 @@ pub mod skills;
 pub mod snapshots;
 pub mod spotify;
 pub mod static_server;
+pub mod team;
 pub mod templates;
 pub mod window;
 pub mod workflows;

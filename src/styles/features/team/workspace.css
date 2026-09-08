@@ -1,0 +1,357 @@
+/* Team — multiplayer Ship Studio (vision prototype).
+
+   Split by surface rather than kept as one sheet, matching how `branches/` and
+   `workspace/` are laid out: the feature spans a home screen, a floating panel
+   inside the workspace and a header control, and those get edited separately.
+*/
+
+/* -------------------------------------------------- presence, in the header */
+
+/* The button itself is `ToggleButton` with `workspace-panel-toggle`, so every
+   border, shadow, hover and pressed state comes from the button family — the
+   same as Agent, Elements, Variables and Comments beside it. What is left here
+   is only the geometry the face stack needs. */
+.team-presence-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.team-presence-faces {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Every face gets the ring, not just the overlapped ones. Ringing only
+   `+ .team-avatar` left the first face bare and the rest outlined, which reads
+   as one avatar being a different kind of thing to its neighbours. */
+.team-presence-faces > .team-avatar {
+  box-shadow: 0 0 0 var(--border-width-default) var(--surface-panel);
+}
+
+.team-presence-faces > .team-avatar + .team-avatar {
+  margin-left: -6px;
+}
+
+/* The open-comment count, shown instead of faces when you are the only person
+   on the repository. Inline rather than badged: with no avatars beside it there
+   is room in the row, and a corner badge on an otherwise empty button reads as
+   an alert rather than as a count of your own notes. */
+.team-presence-count {
+  min-width: 16px;
+  padding: 0 var(--space-04);
+  border-radius: var(--radius-pill);
+  background: var(--surface-control);
+  color: var(--text-secondary);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-label);
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* On the corner rather than in the row: the face stack is already wide, and a
+   count inline would push it past the space the header has. Sits outside the
+   button so the button's padding does not push it inward — the arrangement
+   the Comments toggle uses for its pending badge. */
+.team-presence-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--accent-active);
+  color: var(--text-on-accent);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-label);
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* The column a pinned panel takes.
+ *
+ * `.workspace-content` is already a flex row, so the placeholder only has to
+ * claim a width and refuse to be squeezed; `DockablePanel` measures it and puts
+ * the real surface over it. Floating, the placeholder is `display: none` and
+ * this rule never applies — which is why the panel can live inside the row
+ * unconditionally instead of being moved between parents. */
+.team-panel-dock {
+  flex: 0 0 var(--team-panel-docked-w);
+  width: var(--team-panel-docked-w);
+  min-width: var(--team-panel-docked-w);
+}
+
+/* The handle sits in the row beside the slot, not over the panel: dragging the
+   panel's own edge would fight the surface's drag-to-move. */
+.team-panel-dock__resize {
+  flex: none;
+}
+
+/* No border on the docked surface: the resize handle beside it *is* the edge,
+   the same way it is for the docked Variables and element-tree panels. Drawing
+   both put two lines a pixel apart and made the draggable one impossible to
+   pick out from the one that does nothing. */
+
+/* ------------------------------------------- the panel inside the workspace */
+
+/* The surface supplies border, radius and shadow; the consumer supplies the
+   background and the layout — same division canvas comments uses. */
+.team-panel-float {
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* The single child the surface stretches to 100%. Everything else hangs off
+   this, so the header stays a header instead of becoming a third of a panel. */
+.team-float-inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Same height and the same rule as the Agent panel's header, from the shared
+   token rather than from padding that happened to land near it. A panel pinned
+   beside another panel has to agree with it about where a header ends. */
+.team-float-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  flex: none;
+  height: var(--panel-header-h);
+  padding: 0 var(--spacing-md);
+  border-bottom: var(--stroke-1) solid var(--border-default);
+  cursor: grab;
+}
+
+.team-float-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-primary);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-label);
+}
+
+.team-float-count {
+  padding: var(--spacing-2xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--accent-active-rgb), 0.12);
+  color: var(--accent-active);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-body);
+}
+
+.team-float-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+/* A rule under the tabs, because the body scrolls beneath them: without an
+   edge the top card slides up into the tab row and the two read as one
+   collided block. `flex: none` keeps the strip out of the scroll. */
+.team-float-tabs {
+  flex: none;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: var(--border-width-default) solid var(--border-subtle);
+}
+
+/* Vertical padding only: horizontal insets belong to whatever is inside.
+ *
+ * Padding here is what forced every banded child to bleed back out with a
+ * negative margin, and a child that was missed then drew a rule that stopped
+ * short at both ends — which is where the half-width dividers came from. One
+ * child inset, the next full-bleed, three different left edges in one column.
+ * Moving the inset onto the bands makes a full-width rule the default and an
+ * inset one the thing you have to ask for. */
+.team-float-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--spacing-md) 0;
+  scrollbar-width: none;
+}
+
+/* Content that is prose rather than a banded list keeps the inset. */
+.team-float-body > .team-float-day,
+.team-float-body > .empty-state {
+  padding-inline: var(--spacing-md);
+}
+
+/* The coverage notes are cards, like the rows above them, so they are inset by
+   a *margin* rather than padding. Padding made their border box span the full
+   panel while every card in the feed sat inside the day section's inset, so the
+   footnote came out visibly wider than the thing it is a footnote to. */
+.team-float-body .team-coverage {
+  margin-inline: var(--spacing-md);
+}
+
+.team-float-body > .team-people {
+  padding-inline: var(--spacing-md);
+}
+
+.team-float-body::-webkit-scrollbar {
+  display: none;
+}
+
+.team-float-day + .team-float-day {
+  margin-top: var(--spacing-md);
+}
+
+.team-float-day-heading {
+  margin: 0 0 var(--spacing-sm);
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-compact);
+}
+
+/* At 420px a two-pane reader and the wide people rows do not fit, so both
+   collapse to a single column rather than being squeezed into unreadability. */
+/* Content-sized, not flex-sized.
+ *
+ * The two-pane version is a grid that fills a page, so it carries `flex: 1 1 0`
+ * and a 340px floor. Dropping that floor here to let the panel be short is what
+ * broke it: `.team-float-body` is a scroll container with no height to
+ * distribute, so a `flex: 1 1 0` child resolves to zero, and the base
+ * `overflow: hidden` then clipped every row out of sight. The filter above it
+ * still read "Open (2)", which is exactly what made it look like missing data
+ * rather than a collapsed box. */
+.team-threads.is-compact .team-threads-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: visible;
+  border: none;
+  background: none;
+}
+
+/* The threads column fills the panel, so the composer sits on the bottom edge
+   instead of floating halfway up with dead space beneath it. Safe to flex now
+   that this has a height to divide: `min-height: 100%` is what supplies it, and
+   its absence is what collapsed this to zero the first time. */
+.team-float-body > .team-threads.is-compact {
+  min-height: 100%;
+  /* Reaches the bottom edge, so the sticky composer sits on it. Every other tab
+     is a feed and wants the body's bottom padding; this one ends in a control
+     that has to be flush, so it cancels the padding rather than the body
+     dropping it for everybody — which is what left the What's new feed running
+     off the bottom of the panel. */
+  margin-bottom: calc(-1 * var(--spacing-md));
+}
+
+.team-threads.is-compact .team-thread-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.team-threads.is-compact .team-thread-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Rules separate *sections*; rows separate themselves by highlight.
+ *
+ * A line between every row said the same thing the hover and selected states
+ * already say, and it said it permanently — three weights of horizontal rule in
+ * one 420px column, none of which meant anything different from the others. So
+ * the only rules left are the ones that divide the list from the reader, and
+ * the reader's own bands.
+ *
+ * Everything bleeds back out over `.team-float-body`'s padding, but the padding
+ * moves onto the row rather than the list: that is what lets a hovered or
+ * selected row reach both edges of the panel instead of floating in a channel
+ * with a gap at each end. */
+/* Every band insets itself, so every rule between bands is full width and no
+   negative margins are involved anywhere. */
+.team-threads.is-compact .team-threads-picker-hint,
+.team-threads.is-compact .team-threads-controls,
+.team-threads.is-compact .team-thread-item,
+.team-threads.is-compact .team-thread-header,
+.team-threads.is-compact .team-thread-messages,
+.team-threads.is-compact .team-thread-composer {
+  padding-inline: var(--spacing-md);
+}
+
+.team-threads.is-compact .team-threads-send {
+  margin-inline: var(--spacing-md);
+}
+
+.team-threads.is-compact .team-thread-list {
+  gap: 0;
+  padding: 0;
+  max-height: 190px;
+  border-right: none;
+  border-top: var(--stroke-1) solid var(--border-default);
+  border-bottom: var(--stroke-1) solid var(--border-default);
+}
+
+/* Square and edge-to-edge: a rounded highlight inside a full-width column
+   reads as a card that has come loose from its container. */
+.team-threads.is-compact .team-thread-item {
+  border-radius: 0;
+  border-width: 0;
+  padding-inline: var(--spacing-md);
+}
+
+.team-threads.is-compact .team-thread-pane {
+  padding-top: 0;
+}
+
+.team-threads.is-compact .team-thread-header {
+  padding-block: var(--spacing-sm);
+}
+
+/* The composer is its own band, so the rule above it is the panel's full width
+   and the space inside it is weighted toward the input.
+ *
+ * The actions row sat tight under the textarea with a wide gap beneath it,
+ * which reads as the buttons belonging to whatever comes next rather than to
+ * the thing they act on. More air above them, less below. */
+/* Stuck to the bottom of the panel, with the conversation scrolling under it.
+   A reply box that scrolls away is one you have to hunt for after reading the
+   thing you are replying to, which is exactly when you want it. The background
+   is opaque for the same reason — messages pass behind it, not through it. */
+.team-threads.is-compact .team-thread-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky-band);
+  gap: var(--spacing-md);
+  padding-block: var(--spacing-md) var(--spacing-sm);
+  border-top: var(--stroke-1) solid var(--border-default);
+  background: var(--surface-panel);
+}
+
+.team-people.is-compact .team-person {
+  padding: var(--spacing-sm);
+}
+
+.team-people.is-compact .team-people-footnote {
+  font-size: var(--font-size-micro);
+}
+
+/* What they are actually doing — the line that makes this more useful than
+   `git branch -r`. */
+.team-person-doing {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-md);
+  line-height: var(--line-height-compact);
+  overflow-wrap: anywhere;
+}
+
+.team-person-when {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--font-size-body-sm);
+  white-space: nowrap;
+}

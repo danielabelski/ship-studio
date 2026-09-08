@@ -11,6 +11,23 @@ import { stripStylesheetCrossorigin } from './scripts/strip-stylesheet-crossorig
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+/**
+ * Dev server port, overridable for parallel checkouts.
+ *
+ * `strictPort` below means a busy port is a hard failure rather than a silent
+ * bump — which is correct, because Tauri is pointed at a fixed URL and a
+ * silently-moved Vite would leave the window on the static boot fallback. But
+ * it also means two worktrees cannot run at once on the default.
+ *
+ * `SHIPSTUDIO_DEV_PORT` moves both this and the HMR socket together. Whatever
+ * launches Tauri has to point `build.devUrl` at the same port:
+ *
+ *   SHIPSTUDIO_DEV_PORT=1445 pnpm tauri dev \
+ *     --config '{"build":{"devUrl":"http://127.0.0.1:1445"}}'
+ */
+// @ts-expect-error process is a nodejs global
+const devPort = Number(process.env.SHIPSTUDIO_DEV_PORT ?? 1420);
+
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')) as {
   version: string;
 };
@@ -104,7 +121,7 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port: devPort,
     strictPort: true,
     // Bind local development explicitly to IPv4. WebKit can resolve
     // `localhost` to 127.0.0.1 before trying ::1, while Node/Vite's default
@@ -115,7 +132,7 @@ export default defineConfig(async () => ({
       ? {
           protocol: 'ws',
           host,
-          port: 1420,
+          port: devPort,
         }
       : undefined,
     watch: {

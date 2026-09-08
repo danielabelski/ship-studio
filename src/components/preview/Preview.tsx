@@ -168,7 +168,6 @@ interface PreviewProps {
   /** Comments open state lives in the workspace header, which owns the toggle. */
   commentsOpen?: boolean;
   onCommentsOpenChange?: (open: boolean) => void;
-  onCommentsPendingCountChange?: (count: number) => void;
   /** Dev server port (default: 3000) */
   port?: number;
   /** Absolute path to the project directory */
@@ -320,7 +319,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     activeCommentAgentId,
     commentsOpen = false,
     onCommentsOpenChange,
-    onCommentsPendingCountChange,
     port = 3000,
     projectPath,
     onServerReady,
@@ -842,7 +840,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     activeAgentId: activeCommentAgentId,
     open: commentsOpen,
     onOpenChange: onCommentsOpenChange ?? (() => undefined),
-    onPendingCountChange: onCommentsPendingCountChange,
     currentPage: conn.currentPage,
     navigate: conn.handlePageSelect,
     available: conn.serverReady && !isBranchSwitching && !isCropMode,
@@ -1522,7 +1519,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   if (conn.isLoading || conn.isStopped || conn.hasError) {
     return (
       <>
-        {comments.bar}
         <DevServerStatus
           // A known-dead process escalates straight to the error card — polling
           // a port nothing listens on can only end in the same place, minutes
@@ -1660,8 +1656,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                 </span>
               </Tooltip>
             )}
-
-            {comments.bar}
 
             {onToggleLogs && (
               <ToggleButton
