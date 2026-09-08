@@ -17,11 +17,10 @@ const noop = () => {};
 
 interface HomeSidebarProps {
   /** Which home destination is showing, so the nav row can mark it current. */
-  activeNav: 'home' | 'workflows' | 'inbox' | 'team';
+  activeNav: 'home' | 'workflows' | 'inbox';
   onGoHome: () => void;
   onGoWorkflows: () => void;
   onGoInbox: () => void;
-  onGoTeam: () => void;
   inboxUnreadCount: number;
   isSidebarHidden: boolean;
   onToggleSidebar: () => void;
@@ -43,7 +42,6 @@ export function HomeSidebar({
   onGoHome,
   onGoWorkflows,
   onGoInbox,
-  onGoTeam,
   inboxUnreadCount,
   isSidebarHidden,
   onToggleSidebar,
@@ -67,7 +65,6 @@ export function HomeSidebar({
       onGoHome={onGoHome}
       onGoWorkflows={onGoWorkflows}
       onGoInbox={onGoInbox}
-      onGoTeam={onGoTeam}
       inboxUnreadCount={inboxUnreadCount}
       onOpenProjectPicker={onOpenProjectPicker}
       isSidebarHidden={isSidebarHidden}

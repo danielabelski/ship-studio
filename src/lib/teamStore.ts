@@ -9,6 +9,12 @@
  * `.shipstudio-team/`. Nothing here folds, joins or derives — Rust owns every
  * claim about the repo, and this owns what is on screen.
  *
+ * **One project at a time.** There was briefly a home-level screen reading
+ * across the eight most recently opened projects at once, which is where the
+ * cap came from: each project is a walk of every active branch, so eight of
+ * them ran hundreds of git processes to answer a question nobody was asking
+ * from outside a project. Team belongs where the work is.
+ *
  * ## Two things live only here, and both are honest about it
  *
  * **Seen-ness** is per person, per machine. "New since you last looked" is not
@@ -25,7 +31,15 @@
  * @module lib/teamStore
  */
 
-import { getTeamSnapshot } from './teamApi';
+import {
+  addTeamComment,
+  syncTeamThreads,
+  editTeamMessage,
+  getTeamSnapshot,
+  replyToTeamThread,
+  retractTeamMessage,
+  setTeamThreadResolved,
+} from './teamApi';
 import { asCommandError, formatCommandError } from './errors';
 import { logger } from './logger';
 import {
@@ -35,6 +49,7 @@ import {
   type TeamMessage,
   type TeamSnapshot,
   type TeamThread,
+  type TeamThreadAnchor,
   type TeamUpdate,
 } from './team';
 
@@ -62,6 +77,16 @@ interface TeamUiState {
   expandedId: string | null;
   /** True until the first snapshot for the current project has arrived. */
   loading: boolean;
+  /**
+   * Threads ticked for handing to an agent.
+   *
+   * Empty to start, always. Pre-selecting everything makes the send button a
+   * loaded gun: the common case is "this one, now", and someone who wanted all
+   * six can tick all six. It also has to live here rather than in either
+   * component, because the pin on the page and the row in the panel are two
+   * views of one decision and must never disagree about it.
+   */
+  selectedThreadIds: string[];
 }
 
 const SEEN_PREFIX = 'shipstudio.team.seen:';
@@ -92,16 +117,23 @@ export function emptySnapshot(): TeamSnapshot {
     threads: [],
     sync: { repo: null, lastSyncedAt: null, pendingCount: 0, error: null, syncing: false },
     seenIds: [],
+    commitGuidanceInstalled: false,
   };
 }
 
 let state: TeamSnapshot = emptySnapshot();
-let ui: TeamUiState = { tab: 'updates', howItWorksOpen: false, expandedId: null, loading: false };
+let ui: TeamUiState = {
+  tab: 'updates',
+  howItWorksOpen: false,
+  expandedId: null,
+  loading: false,
+  selectedThreadIds: [],
+};
 let adoptedPath: string | null = null;
-/** What the home screen last read across, so `sync()` can re-read the same set. */
-let homeProjects: { path: string; name: string }[] = [];
 /** Replies typed before there is a writer. Keyed by thread id. */
 let pending = new Map<string, TeamMessage[]>();
+/** Whether the user has picked a tab themselves. See landOnSomethingUseful. */
+let tabChosen = false;
 
 const listeners = new Set<() => void>();
 
@@ -133,6 +165,8 @@ export function getUiSnapshot(): TeamUiState {
 }
 
 export function setTeamTab(tab: TeamTab): void {
+  // A tab the user picked is never moved out from under them again.
+  tabChosen = true;
   if (ui.tab === tab) return;
   setUi({ tab });
 }
@@ -144,6 +178,32 @@ export function setHowItWorksOpen(open: boolean): void {
 
 export function toggleExpanded(id: string): void {
   setUi({ expandedId: ui.expandedId === id ? null : id });
+}
+
+/** Tick or untick one thread for the next handoff. */
+export function toggleThreadSelected(id: string): void {
+  const selected = ui.selectedThreadIds.includes(id)
+    ? ui.selectedThreadIds.filter((candidate) => candidate !== id)
+    : [...ui.selectedThreadIds, id];
+  setUi({ selectedThreadIds: selected });
+}
+
+export function clearThreadSelection(): void {
+  if (ui.selectedThreadIds.length === 0) return;
+  setUi({ selectedThreadIds: [] });
+}
+
+/**
+ * Drop selections for threads that are no longer there.
+ *
+ * A thread someone else resolved, or one you withdrew, must not stay ticked and
+ * silently ride along in the next prompt.
+ */
+function pruneSelection(snapshot: TeamSnapshot): void {
+  if (ui.selectedThreadIds.length === 0) return;
+  const alive = new Set(snapshot.threads.filter((thread) => !thread.resolved).map((t) => t.id));
+  const kept = ui.selectedThreadIds.filter((id) => alive.has(id));
+  if (kept.length !== ui.selectedThreadIds.length) setUi({ selectedThreadIds: kept });
 }
 
 // ------------------------------------------------------------- persistence
@@ -234,10 +294,16 @@ export function adopt(projectPath: string, _projectName?: string, _repo?: string
       mergePending({ ...cached, seenIds, sync: { ...cached.sync, syncing: false, error: null } })
     : { ...emptySnapshot(), seenIds };
 
-  setUi({ loading: !cached, expandedId: null });
+  // Ticks belong to the project you made them in. Carrying them across would
+  // mean a send bar counting comments that are not on screen, and — once the
+  // ids happened to collide — handing an agent someone else's note.
+  setUi({ loading: !cached, expandedId: null, selectedThreadIds: [] });
   notify();
 
-  void refresh(projectPath);
+  // Opening a project is a trigger the user can see, so it ignores the floor.
+  // The first thing anyone wants on opening a workspace is to know what landed
+  // while they were away.
+  void sync(true);
 }
 
 /** Keep this snapshot for the next time the project opens. */
@@ -249,6 +315,21 @@ function cache(projectPath: string, snapshot: TeamSnapshot): void {
     // either here would give them two homes that disagree.
     seenIds: [],
   });
+}
+
+/**
+ * Open on the tab that has something on it.
+ *
+ * "What's new" is the right landing tab for a repo with a team on it, and the
+ * wrong one for a folder with no remote — there it is a permanent empty state,
+ * and the person has to find the only tab that works. This moves them once, on
+ * the first snapshot, and never fights a choice they have made themselves.
+ */
+function landOnSomethingUseful(snapshot: TeamSnapshot): void {
+  if (tabChosen || ui.tab !== 'updates') return;
+  if (snapshot.sync.repo === null && snapshot.updates.length === 0) {
+    setUi({ tab: 'comments' });
+  }
 }
 
 /** Re-read the snapshot for the adopted project. */
@@ -265,6 +346,8 @@ export async function refresh(projectPath = adoptedPath): Promise<void> {
       sync: { ...snapshot.sync, lastSyncedAt: Date.now(), error: null, syncing: false },
     });
     emit(fresh);
+    pruneSelection(fresh);
+    landOnSomethingUseful(fresh);
     cache(projectPath, fresh);
   } catch (error) {
     if (adoptedPath !== projectPath) return;
@@ -279,83 +362,113 @@ export async function refresh(projectPath = adoptedPath): Promise<void> {
 }
 
 /**
- * How many projects the home-level screen reads across.
+ * The floor under the comment sync.
  *
- * Each one is a full history walk plus a `gh pr list`, so this is a real cost
- * rather than a paranoid cap. Recently-opened is the right cut: a project you
- * have not touched in months is one whose team activity you are not waiting on.
+ * Everything worth syncing for is an event — opening a project, pushing,
+ * switching a branch — and those call `sync` directly. This is only the
+ * backstop for a session where nothing happens, so it is deliberately slow: a
+ * teammate's comment can wait ten minutes when neither of you is touching the
+ * repository, and a tighter loop would be reaching for someone's remote all day
+ * to learn nothing.
  */
-export const HOME_PROJECT_LIMIT = 8;
-
-/** Marks the home-level read, so a project's own `adopt` can supersede it. */
-const ALL_PROJECTS = ' all';
+export const TEAM_SYNC_FLOOR_MS = 10 * 60_000;
 
 /**
- * Read across several projects at once, for the home-level Team screen.
+ * The in-flight sync, and when the last one finished.
  *
- * Failures are per project: a repo that has been deleted, or was never a git
- * repo, drops out of the feed and the other seven still render. The alternative
- * — one bad project blanking the screen — is the worse failure by far, and the
- * project filter makes the absence visible anyway.
+ * Every trigger routes through here, so a branch switch during a project open
+ * during a push is one exchange rather than three. Coalescing on the promise
+ * rather than a boolean means a caller that wants to wait for the result still
+ * can.
  */
-export async function adoptAll(projects: { path: string; name: string }[]): Promise<void> {
-  const wanted = projects.slice(0, HOME_PROJECT_LIMIT);
-  adoptedPath = ALL_PROJECTS;
-  homeProjects = wanted;
-  setUi({ loading: true });
+let inFlightSync: Promise<void> | null = null;
+let lastSyncAt = 0;
 
-  const results = await Promise.allSettled(wanted.map((project) => getTeamSnapshot(project.path)));
-  // A project opened while this was in flight owns the store now.
-  if (adoptedPath !== ALL_PROJECTS) return;
+/**
+ * Exchange comments with the remote, then re-read.
+ *
+ * The only path in the feature that touches the network, and never automatic in
+ * the sense that matters: it runs on things the user did. A failed push is
+ * carried into the snapshot rather than thrown, because the comment is still on
+ * disk and the panel has to be able to say which half worked.
+ *
+ * @param force ignore the floor — for a trigger the user can see, such as
+ *   opening the project or asking for a sync themselves.
+ */
+export function sync(force = false): Promise<void> {
+  if (!adoptedPath) return Promise.resolve();
+  if (inFlightSync) return inFlightSync;
+  if (!force && Date.now() - lastSyncAt < TEAM_SYNC_FLOOR_MS) return refresh();
 
-  const merged = emptySnapshot();
-  const failures: string[] = [];
-  results.forEach((result, index) => {
-    // A resolved-but-shapeless answer counts as a failure, not as data. The
-    // spreads below would throw on it and take the whole screen with them,
-    // which is a blank page where seven working projects should be.
-    if (result.status === 'rejected' || !result.value?.updates) {
-      failures.push(wanted[index].name);
-      return;
+  const projectPath = adoptedPath;
+  emit({ ...state, sync: { ...state.sync, syncing: true, error: null } });
+
+  inFlightSync = (async () => {
+    try {
+      const outcome = await syncTeamThreads(projectPath);
+      // Leaving the project mid-sync must not write another project's state.
+      if (adoptedPath !== projectPath) return;
+      lastSyncAt = Date.now();
+      await refresh(projectPath);
+      if (adoptedPath !== projectPath) return;
+      emit({
+        ...state,
+        sync: {
+          ...state.sync,
+          syncing: false,
+          lastSyncedAt: Date.now(),
+          pendingCount: outcome.pending,
+          // A push that could not happen is reported. A project with no remote
+          // is not a failure and says nothing.
+          error: outcome.error,
+        },
+      });
+    } catch (error) {
+      if (adoptedPath !== projectPath) return;
+      const message = formatCommandError(asCommandError(error));
+      logger.warn('team sync failed', { projectPath, error: message });
+      emit({ ...state, sync: { ...state.sync, syncing: false, error: message } });
+    } finally {
+      inFlightSync = null;
     }
-    merged.updates.push(...result.value.updates);
-    merged.threads.push(...result.value.threads);
-    // Members are per project here: the same person on two repos is two rows,
-    // each with the branch and the "doing" line for *that* project. Collapsing
-    // them would have to pick one branch to show, and there is no honest way
-    // to pick.
-    merged.members.push(...result.value.members);
-    if (!merged.sync.repo) merged.sync.repo = result.value.sync.repo;
-  });
+  })();
 
-  merged.updates.sort((a, b) => b.at - a.at);
-  merged.seenIds = readJson<string[]>(`${SEEN_PREFIX}${ALL_PROJECTS}`, []);
-  merged.sync.lastSyncedAt = Date.now();
-  merged.sync.error =
-    failures.length > 0 ? `Couldn't read team activity for ${failures.join(', ')}` : null;
-
-  emit(merged);
-  setUi({ loading: false });
+  return inFlightSync;
 }
 
 /**
- * Fetch from the remote, then re-read.
+ * Ask the remote for comments, subject to the floor.
  *
- * The explicit-refresh path, and the only thing here that touches the network.
- * It is a plain `refresh` for now: Ship Studio does not run `git fetch` behind
- * the user's back, because a background fetch on someone's repo is a surprise
- * with bandwidth and credentials attached. Teammates' work appears when
- * something already in the app fetches — a branch switch, a pull, a PR check.
+ * For callers that are *already* doing something with the remote — a push, a
+ * branch switch, a pull — where the marginal cost of also exchanging a few KB
+ * of comments is nothing and the user plainly expects the app to be talking to
+ * the remote at that moment.
  */
-export function sync(): Promise<void> {
-  if (!adoptedPath || state.sync.syncing) return Promise.resolve();
-  emit({ ...state, sync: { ...state.sync, syncing: true, error: null } });
-  return adoptedPath === ALL_PROJECTS ? adoptAll(homeProjects) : refresh();
+export function syncAfterGitActivity(): void {
+  void sync();
+}
+
+/** Test seam: forget when the last sync ran. */
+export function __resetSyncClock(): void {
+  lastSyncAt = 0;
+  inFlightSync = null;
 }
 
 // -------------------------------------------------------------- seen / unseen
 
 /** The signed-in user, or the first member when nobody is identified. */
+/**
+ * The project this store is currently reading, or `null` before one is adopted.
+ *
+ * For the few callers that act on the project rather than on the snapshot —
+ * writing the commit-message block into its agent instructions, say. They must
+ * not keep their own copy of the path: the store already switches projects, and
+ * a second copy is a second thing that can be pointing at the last one.
+ */
+export function adoptedProject(): string | null {
+  return adoptedPath;
+}
+
 export function currentActor(): TeamActor | null {
   return state.members.find((member) => member.isSelf)?.actor ?? null;
 }
@@ -397,49 +510,107 @@ function nextId(prefix: string): string {
 }
 
 /**
+ * Leave a comment. Resolves with the new thread's id, or null if it failed.
+ *
+ * Optimism here is earned rather than assumed: the write is a file write with
+ * no network and no commit in it, so the wait between pressing save and the
+ * record existing is a disk write. The UI still gets the thread back before the
+ * refetch, because a re-read walks the repository and that is the slow part.
+ */
+export async function addComment(input: {
+  route: string;
+  target: string;
+  pin: number;
+  body: string;
+  branch?: string | null;
+  anchor?: TeamThreadAnchor | null;
+}): Promise<string | null> {
+  if (!adoptedPath) return null;
+  const text = input.body.trim();
+  if (!text) return null;
+
+  try {
+    const id = await addTeamComment({
+      projectPath: adoptedPath,
+      branch: input.branch ?? null,
+      route: input.route,
+      target: input.target,
+      pin: input.pin,
+      body: text,
+      anchor: input.anchor ?? null,
+    });
+    await refresh(adoptedPath);
+    return id;
+  } catch (error) {
+    reportThreadFailure(error, 'add a comment');
+    return null;
+  }
+}
+
+/**
  * Post a reply.
  *
- * Held locally and marked `pending` until there is a writer to commit it. The
- * UI says so — an unpushed reply is drawn as unpushed rather than as sent,
- * because "your teammate has not seen this" is the thing you need to know.
+ * Shown immediately and marked `pending`, then reconciled by the refetch. The
+ * pending flag is not decoration — it means "this is on your machine and not
+ * yet anywhere else", and it stays until the record is actually read back.
  */
-export function replyToThread(threadId: string, body: string): void {
+export async function replyToThread(threadId: string, body: string): Promise<void> {
   const text = body.trim();
-  if (!text) return;
+  if (!text || !adoptedPath) return;
   const thread = state.threads.find((candidate) => candidate.id === threadId);
   const me = currentActor();
-  if (!thread || !me) return;
+  if (!thread) return;
 
-  const message: TeamMessage = {
+  const local: TeamMessage = {
     id: nextId('m'),
-    actor: me,
+    actor: me ?? { login: null, name: 'You', avatarUrl: null },
     at: Date.now(),
     body: text,
     pending: true,
   };
-  pending.set(threadId, [...(pending.get(threadId) ?? []), message]);
-  if (adoptedPath) savePending(adoptedPath);
+  pending.set(threadId, [...(pending.get(threadId) ?? []), local]);
+  savePending(adoptedPath);
 
   emit({
     ...state,
     threads: state.threads.map((candidate) =>
       candidate.id === threadId
-        ? { ...candidate, messages: [...candidate.messages, message] }
+        ? { ...candidate, messages: [...candidate.messages, local] }
         : candidate
     ),
     sync: { ...state.sync, pendingCount: state.sync.pendingCount + 1 },
   });
+
+  try {
+    const id = await replyToTeamThread(adoptedPath, threadId, text);
+    // Re-key the buffered message to the id the record actually got, so the
+    // refetch below recognises it as landed and drops it. Without this the
+    // reply would show twice: once real, once forever pending.
+    const buffered = pending.get(threadId);
+    if (buffered) {
+      pending.set(
+        threadId,
+        buffered.map((message) => (message.id === local.id ? { ...message, id } : message))
+      );
+      savePending(adoptedPath);
+    }
+    await refresh(adoptedPath);
+  } catch (error) {
+    // The optimistic message stays, still marked pending, because it is: the
+    // person wrote it and it did not land. Dropping it would lose their words.
+    reportThreadFailure(error, 'post that reply');
+  }
 }
 
 /**
  * Resolve or reopen a thread.
  *
- * Local until there is a writer, like a reply. In the committed form it is an
- * append rather than a field flip, because that is the only shape that survives
- * two people doing it at once: both records land, the fold takes the later one,
- * and nobody's decision is lost to a merge.
+ * An append rather than a field flip, because that is the only shape that
+ * survives two people doing it at once: both records land, the fold takes the
+ * later one, and nobody's decision is lost to a merge.
  */
-export function setThreadResolved(threadId: string, resolved: boolean): void {
+export async function setThreadResolved(threadId: string, resolved: boolean): Promise<void> {
+  if (!adoptedPath) return;
   const thread = state.threads.find((candidate) => candidate.id === threadId);
   const me = currentActor();
   if (!thread || thread.resolved === resolved) return;
@@ -452,6 +623,64 @@ export function setThreadResolved(threadId: string, resolved: boolean): void {
         : candidate
     ),
   });
+
+  try {
+    await setTeamThreadResolved(adoptedPath, threadId, resolved);
+    await refresh(adoptedPath);
+  } catch (error) {
+    reportThreadFailure(error, resolved ? 'resolve that thread' : 'reopen that thread');
+    await refresh(adoptedPath);
+  }
+}
+
+/** Rewrite a message you wrote. */
+export async function editMessage(
+  threadId: string,
+  messageId: string,
+  body: string
+): Promise<boolean> {
+  if (!adoptedPath) return false;
+  const text = body.trim();
+  if (!text) return false;
+  try {
+    await editTeamMessage(adoptedPath, threadId, messageId, text);
+    await refresh(adoptedPath);
+    return true;
+  } catch (error) {
+    reportThreadFailure(error, 'save that edit');
+    return false;
+  }
+}
+
+/**
+ * Withdraw a message you wrote.
+ *
+ * The record stays on disk and in every clone that fetched it; this removes it
+ * from the feed. Copy that promises deletion would be a lie about git.
+ */
+export async function retractMessage(threadId: string, messageId: string): Promise<boolean> {
+  if (!adoptedPath) return false;
+  try {
+    await retractTeamMessage(adoptedPath, threadId, messageId);
+    await refresh(adoptedPath);
+    return true;
+  } catch (error) {
+    reportThreadFailure(error, 'remove that comment');
+    return false;
+  }
+}
+
+/**
+ * Surface a write failure.
+ *
+ * Written into the snapshot's `error` rather than thrown, because every caller
+ * is a click on a comment and none of them has anywhere to put an exception.
+ * The panel already renders this field.
+ */
+function reportThreadFailure(error: unknown, action: string): void {
+  const message = formatCommandError(asCommandError(error));
+  logger.error(`team: could not ${action}`, { error: message });
+  emit({ ...state, sync: { ...state.sync, error: `Couldn't ${action}. ${message}` } });
 }
 
 /** Test seam: replace the whole snapshot. */
@@ -464,7 +693,13 @@ export function __resetTeamState(): void {
   seq = 0;
   adoptedPath = null;
   pending = new Map();
-  ui = { tab: 'updates', howItWorksOpen: false, expandedId: null, loading: false };
+  ui = {
+    tab: 'updates',
+    howItWorksOpen: false,
+    expandedId: null,
+    loading: false,
+    selectedThreadIds: [],
+  };
   emit(emptySnapshot());
 }
 
