@@ -522,6 +522,13 @@ pub fn run() {
             // Team (multiplayer). Read-only: git and gh are the database, and
             // nothing here writes to either.
             commands::team::get_team_snapshot,
+            commands::team::threads::add_team_comment,
+            commands::team::threads::reply_to_team_thread,
+            commands::team::threads::set_team_thread_resolved,
+            commands::team::threads::edit_team_message,
+            commands::team::threads::retract_team_message,
+            commands::team::threads::sync_team_threads,
+            commands::team::instructions::install_commit_guidance,
             commands::projects::get_dashboard_projects,
             commands::projects::list_pages,
             commands::projects::open_in_finder,

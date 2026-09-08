@@ -47,6 +47,11 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
         body: super::super::workflows::skill::skill_markdown,
     },
     BundledSkill {
+        dir_name: "shipstudio-team",
+        version: "4",
+        body: super::super::team::skill::skill_markdown,
+    },
+    BundledSkill {
         dir_name: "shipstudio-brand-guidelines",
         version: "1",
         body: brand_guidelines_skill,

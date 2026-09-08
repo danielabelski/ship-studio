@@ -43,12 +43,14 @@ export function TeamCoverageNote({ members, repo }: TeamCoverageNoteProps) {
       ? names[0]
       : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 
-  const invite = [
-    `I've been using Ship Studio on ${repo ?? 'our repo'} and it writes up what changed and why straight into the repo, so the rest of us can see it.`,
+  // A nudge about commit messages, not a pitch for this app. What the feed
+  // needs from someone is a sentence in their commit body — which costs them
+  // nothing, works in whatever editor they already use, and helps everyone
+  // reading `git log` whether or not they ever open Ship Studio.
+  const nudge = [
+    `Could we start putting a line or two in commit bodies on ${repo ?? 'this repo'}? Just why the change was needed — the subject already says what changed.`,
     '',
-    'It is free and open source, and it keeps everything in git. No account, no server, nothing to sign up for.',
-    '',
-    'https://github.com/ship-studio/ship-studio',
+    'It shows up in `git log`, on GitHub, and in code review, so it helps whether or not you use any particular tool.',
   ].join('\n');
 
   return (
@@ -61,21 +63,21 @@ export function TeamCoverageNote({ members, repo }: TeamCoverageNoteProps) {
 
       <p className="team-coverage-text">
         <strong>
-          {coverage.onShipStudio} of {coverage.total} on Ship Studio.
+          {coverage.explaining} of {coverage.total} write commit bodies.
         </strong>{' '}
         {nameList}
-        {names.length === 1 ? ' pushes' : ' push'} straight to GitHub, so their rows show what
-        changed but not why.
+        {names.length === 1 ? "'s commits say" : "'s commits say"} what changed but not why, so
+        their rows have a headline and nothing under it.
       </p>
 
       <button
         type="button"
         className="team-coverage-invite"
-        onClick={() => void copy(invite)}
+        onClick={() => void copy(nudge)}
         title="Copies a short message you can paste anywhere"
       >
         <CopyIcon size={11} />
-        Copy an invite
+        Copy a nudge
       </button>
     </section>
   );
@@ -94,15 +96,22 @@ export function TeamCoverageComplete({ members }: { members: TeamMember[] }) {
   );
 }
 
-/** Marks a person whose pushes arrive without a summary. */
+/**
+ * Marks a person whose commits arrive with no body.
+ *
+ * Deliberately not "GitHub only", which is what this said when the feed read a
+ * Ship Studio record instead of the commit. That badge was about which tool
+ * somebody used; this one is about whether their work is legible, which is the
+ * only part that affects anyone else.
+ */
 export function TeamGitHubOnlyBadge() {
   return (
     <span
       className="team-github-only"
-      title="Pushes to GitHub without Ship Studio, so their updates carry no explanation"
+      title="Their commits have a subject but no body, so their rows show what changed and not why"
     >
       <GitHubIcon size={9} />
-      GitHub only
+      no context
     </span>
   );
 }
