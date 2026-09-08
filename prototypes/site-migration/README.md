@@ -28,12 +28,18 @@ from an empty Astro starter:
 ```
 trial 1   62.18%  →  77.72%  →  99.62%  →  99.87%
 trial 2   88.66%  →  88.66%  →  79.18%  →  76.30%  →  99.87%
+tiny      39.77%  →  98.78%  →  100.00%   (confirmed 100% across all four widths)
 ```
 
-Both reached the Matches band. Trial 2 is the more interesting one: it went
-backwards for two passes and recovered anyway — see "the score only goes up".
+All three reached the Matches band and one reached parity. Trial 2 is the more
+interesting: it went backwards for two passes and recovered anyway — see "the
+score only goes up".
 
-### Seven bugs the runs found
+Both arist runs then did the thing the worst-breakpoint rule exists for. Each
+scored ~99.9% at its widest width, ran the full set, found a mobile width at
+93.2%, and fixed *that* — a mean would have called both finished.
+
+### Eight bugs the runs found
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -44,6 +50,7 @@ backwards for two passes and recovered anyway — see "the score only goes up".
 | Agent chases a meaningless number | A failed navigation still screenshots — Chrome's error page. A TLS failure scored "39.77%". | Navigation errors are named, not scored |
 | Half of every pass wasted | The original was re-captured every iteration, though it never changes. | Reference captures cached for an hour, keyed by URL and width |
 | Four passes walking downhill | Nothing said what to do when a change makes the score worse, so the agent built on top of the damage. | The score only goes up: worse means undo, and the best score is a floor |
+| Confirmation runs vanish | The report was written only after *every* width. A four-width run takes ~4 min; an agent's shell call is killed before that, discarding work already done. | Report written after each breakpoint, carrying `complete` |
 
 ### The score cannot say what is wrong
 
