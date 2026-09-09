@@ -541,6 +541,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // per project open. Gating on disk-presence turns a ~1s miss into a
     // ~5ms file-exists check.
     let attemptResume = false;
+    // The disk probe below decides `attemptResume`, and it must run at most
+    // once per mount. It used to be gated on `retryCount === 0`, but both
+    // retry paths call `setupPty(0)`, so the probe re-ran and overwrote the
+    // `attemptResume = false` that the resume-failed path had just set —
+    // spawning a resume that could only fail again, forever.
+    let resumeProbed = false;
+    // The resume->fresh fallback is worth exactly one attempt per mount. If a
+    // fresh spawn also dies we let it die visibly rather than respawn: this is
+    // the loop that pinned the WebContent process at 100% CPU.
+    let resumeFallbackUsed = false;
     // One automatic respawn per mount for the spawned-but-silent case
     // (issue #158). Distinct from `maxRetries` (the spawn call threw) and
     // the resume-failed retry (the process exited) — this covers a PTY
@@ -551,7 +561,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     let respawnTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Open (or re-attach to) the backend PTY session for this tab.
-    // `retryCount` is used by the resume-failed-then-retry-fresh path.
+    // `retryCount` is the spawn-threw retry budget (see `maxRetries`). It does
+    // NOT gate the resume probe — `resumeProbed` does, because retry paths
+    // legitimately restart the count at 0.
     const setupPty = async (retryCount = 0) => {
       const maxRetries = 3;
 
@@ -571,9 +583,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       try {
         // Gate the optimistic resume on whether Claude CLI actually has a
         // conversation stored for this (projectPath, sessionId). Cheap
-        // filesystem check; only runs on the first setupPty call (retry=0)
-        // because a retry can't turn a missing session into an existing one.
-        if (retryCount === 0 && shouldResume && agent.id === 'claude-code' && sessionName) {
+        // filesystem check; runs once per mount because a retry can't turn a
+        // missing session into an existing one.
+        if (!resumeProbed && shouldResume && agent.id === 'claude-code' && sessionName) {
+          resumeProbed = true;
           try {
             const exists = await invoke<boolean>('claude_session_exists', {
               projectPath,
@@ -900,6 +913,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
           const retryFreshSession = () => {
             logger.info('[Terminal] Resume failed, retrying as fresh session');
+            resumeFallbackUsed = true;
             terminalRef.current?.write(
               '\r\n\x1b[33mSession not found, starting fresh...\x1b[0m\r\n'
             );
@@ -922,7 +936,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
           // Primary signal: non-zero exit code during a resume attempt means
           // the session is gone — retry without parsing output at all.
           // Secondary signal: output contains "no conversation found" etc.
-          if (attemptResume && agent.id === 'claude-code') {
+          if (attemptResume && !resumeFallbackUsed && agent.id === 'claude-code') {
             if (exitCode !== 0) {
               logger.info('[Terminal] Resume exited non-zero, retrying fresh', { exitCode });
               retryFreshSession();
