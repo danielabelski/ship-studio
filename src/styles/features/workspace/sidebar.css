@@ -84,19 +84,33 @@
   min-height: calc(var(--control-height-standard) + (var(--space-08) * 2));
   gap: 0;
   /* The left inset clears the traffic lights. The extra --space-08 gives the
-     nav row a little air off them now that it carries four buttons rather
-     than one. */
+     nav row a little air off them now that it carries four buttons. */
   padding: 0 var(--space-08) 0
     calc(
       var(--space-32) + var(--space-32) + var(--spacing-md) + var(--button-gap) + var(--space-08)
     );
 }
 
-/* Match the titlebar's icon-only Home control instead of stretching with the
- * resizable sidebar. */
-.app.workspace-home .workspace-sidebar-top-row .workspace-sidebar-home {
+/* Every control in this row is one icon-only box at the standard control
+   height, matching the titlebar's Home control instead of stretching with the
+   resizable sidebar. Four of them span 90px to 210px inside the 219px default
+   width, which is the width that default was chosen for.
+
+   They were briefly pinned to --size-sidebar-project-shortcut (24px) to make
+   room for a fifth destination that has since moved inside the project. The
+   fifth is gone; the shrunk boxes only left the group floating short of the
+   resize edge. The toggle is included here because it previously got just
+   `flex-shrink: 0` and kept the default width while its neighbours were pinned
+   — identical icons, so only the hover rectangle gave it away. Expanded only:
+   the collapsed rail sizes these itself. */
+.app.workspace-home
+  .workspace-sidebar:not(.is-hidden)
+  .workspace-sidebar-top-row
+  :is(.workspace-sidebar-toggle, .workspace-sidebar-home) {
   width: var(--button-height);
   min-width: var(--button-height);
+  height: var(--button-height);
+  min-height: var(--button-height);
   flex: 0 0 var(--button-height);
   padding-inline: 0;
 }

@@ -9,7 +9,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { mockIPC } from '@tauri-apps/api/mocks';
-import { createAttachGate, resizePtySessionLogged } from './ptySession';
+import {
+  ATTACH_GATE_MAX_PENDING_BYTES,
+  createAttachGate,
+  resizePtySessionLogged,
+} from './ptySession';
 import { logger } from './logger';
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s);
@@ -131,5 +135,65 @@ describe('resizePtySessionLogged (#646)', () => {
     // Flush the fire-and-forget promise chain.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Issue #910's other half: the queue the gate holds while the attach round
+ * trip is in flight. Normally that is one IPC hop, but a slow or failed
+ * attach in front of a chatty process turns it into a heap allocation that
+ * nothing ever frees.
+ */
+describe('createAttachGate memory ceiling', () => {
+  it('holds everything for a normal attach without shedding', () => {
+    const { gate, delivered } = gateWithLog();
+    gate.push(0, new Uint8Array(64 * 1024));
+    gate.push(65536, bytes('tail'));
+    gate.open(0);
+    expect(delivered).toHaveLength(2);
+  });
+
+  it('sheds the oldest chunks once the queue exceeds its ceiling', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const delivered: Uint8Array[] = [];
+    const gate = createAttachGate((b) => delivered.push(b));
+
+    // Six 1 MiB chunks against a 4 MiB ceiling.
+    const chunkSize = 1024 * 1024;
+    for (let i = 0; i < 6; i++) {
+      gate.push(i * chunkSize, new Uint8Array(chunkSize));
+    }
+    gate.open(0);
+
+    const held = delivered.reduce((sum, b) => sum + b.byteLength, 0);
+    expect(held).toBeLessThanOrEqual(ATTACH_GATE_MAX_PENDING_BYTES);
+    expect(held).toBeGreaterThan(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('shed output'),
+      expect.objectContaining({ droppedBytes: expect.any(Number) as number })
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('keeps the newest output when it sheds — that is the visible screen', () => {
+    const delivered: string[] = [];
+    const gate = createAttachGate((b) => delivered.push(text(b)));
+    const filler = new Uint8Array(ATTACH_GATE_MAX_PENDING_BYTES);
+
+    gate.push(0, bytes('OLDEST'));
+    gate.push(6, filler);
+    gate.push(6 + filler.byteLength, bytes('NEWEST'));
+    gate.open(0);
+
+    expect(delivered.join('')).toContain('NEWEST');
+    expect(delivered.join('')).not.toContain('OLDEST');
+  });
+
+  it('never sheds the only chunk it is holding, however large', () => {
+    const delivered: Uint8Array[] = [];
+    const gate = createAttachGate((b) => delivered.push(b));
+    gate.push(0, new Uint8Array(ATTACH_GATE_MAX_PENDING_BYTES * 2));
+    gate.open(0);
+    expect(delivered).toHaveLength(1);
   });
 });

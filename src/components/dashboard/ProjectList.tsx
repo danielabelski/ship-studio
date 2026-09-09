@@ -352,7 +352,7 @@ export function ProjectList({
       );
     } catch (error) {
       logger.error('Failed to toggle main branch warning', {
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(asCommandError(error)),
       });
       alert('Failed to update main branch warning: ' + formatCommandError(asCommandError(error)));
     }
@@ -404,7 +404,7 @@ export function ProjectList({
       // If result is null, user cancelled the dialog - no action needed
     } catch (error) {
       logger.error('Failed to export template', {
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(asCommandError(error)),
       });
       alert('Failed to export template: ' + formatCommandError(asCommandError(error)));
     }
@@ -431,7 +431,7 @@ export function ProjectList({
       await loadAll();
     } catch (error) {
       logger.error('Failed to delete folder', {
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(asCommandError(error)),
       });
       alert('Failed to delete folder: ' + formatCommandError(asCommandError(error)));
     } finally {

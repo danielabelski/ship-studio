@@ -157,13 +157,94 @@ pub async fn has_conflicts(project_path: String) -> Result<bool, CommandError> {
     // A repository that is not mid-merge answers successfully with nothing. A
     // failure means the question could not be asked, which is not the same as
     // "no conflicts" — report it rather than returning a comfortable `false`
-    // that would hide the palette entry exactly when it is needed.
+    // that would hide the palette entry exactly when it is needed. Unless the
+    // folder simply isn't a repository, which `unmerged_paths_failure` settles
+    // by asking git directly.
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err((format!("Failed to check for conflicted files: {stderr}")).into());
+        return match unmerged_paths_failure(&validated_path, &output, "check for conflicted files")
+        {
+            Some(err) => Err(err),
+            None => Ok(false),
+        };
     }
 
     Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
+/// Turn a failed `git diff --diff-filter=U` into either a diagnosable error or
+/// "this folder is not a git repository, so of course there are no unmerged
+/// paths".
+///
+/// `None` means the second: the caller should answer as if the working tree is
+/// clean. Both conflict commands are polled on a timer whenever a project is
+/// open, so a project that isn't a git repo used to file the same bug report
+/// over and over.
+///
+/// Deciding that by reading the message was a losing game. Most git subcommands
+/// say `fatal: not a git repository (…): .git`, and the skip in
+/// `error_reporting.rs` matches either the English phrase or the `.git` token —
+/// which is why it had to be patched for Spanish (#672) and Italian (#727) and
+/// still missed this one. `git diff` says something different in every locale
+/// ("avertissement : Pas un dépôt git…") and never mentions `.git` at all, it
+/// just dumps its entire `--no-index` usage text (#912). So we ask git the
+/// question directly instead, in a language nobody has to translate.
+///
+/// When it *is* a repository, the message carries the exit code if stderr came
+/// back empty — git can die silently (killed by the OS, an exec-level failure,
+/// antivirus interference), and "Failed to check for conflicted files: " with
+/// nothing after the colon is a dead end (#921). The exit code is what made the
+/// Windows NTSTATUS failures (#850/#853/#888) diagnosable for `git status`.
+fn unmerged_paths_failure(
+    project: &std::path::Path,
+    output: &std::process::Output,
+    what: &str,
+) -> Option<CommandError> {
+    if !is_git_repository(project) {
+        tracing::debug!(
+            "[conflicts] {} in a folder that is not a git repository — no unmerged paths",
+            what
+        );
+        return None;
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        return Some(
+            match output.status.code() {
+                Some(code) => format!("Failed to {what} (exit {code})"),
+                None => format!("Failed to {what} (terminated by signal)"),
+            }
+            .into(),
+        );
+    }
+    Some(
+        format!(
+            "Failed to {what}: {}",
+            crate::commands::git::truncate_stderr(stderr)
+        )
+        .into(),
+    )
+}
+
+/// Whether git itself considers this path to be inside a working tree.
+///
+/// Locale-independent by construction: the answer is git's own `true`/`false`
+/// on stdout, not a sentence we have to recognise. A failure to even run git
+/// is treated as "not a repository" — if git cannot be executed here, the
+/// caller's diff was never going to work either, and the honest answer to
+/// "are there unmerged paths" is still no.
+fn is_git_repository(project: &std::path::Path) -> bool {
+    crate::utils::git_command_in(project)
+        .ok()
+        .and_then(|mut cmd| {
+            cmd.args(["rev-parse", "--is-inside-work-tree"])
+                .output()
+                .ok()
+        })
+        .is_some_and(|out| {
+            out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true"
+        })
 }
 
 /// Message used for the commit that finishes a Ship Studio conflict merge.
@@ -222,8 +303,11 @@ pub async fn get_conflict_info(project_path: String) -> Result<Vec<ConflictedFil
         .map_err(|e| e.to_string())?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err((format!("Failed to get conflicted files: {stderr}")).into());
+        return match unmerged_paths_failure(&validated_path, &output, "get conflicted files") {
+            Some(err) => Err(err),
+            // Not a git repository: no merge, so nothing conflicted.
+            None => Ok(Vec::new()),
+        };
     }
 
     let file_list = String::from_utf8_lossy(&output.stdout);
@@ -682,5 +766,152 @@ mod tests {
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].current_content, "l1\nl2");
         assert_eq!(conflicts[0].incoming_content, "r1\nr2\nr3");
+    }
+
+    /// Issues #912 and #921. Both conflict commands are polled on a timer, so
+    /// a folder that isn't a repository used to file the same bug report on
+    /// every tick — in whatever language the user's git speaks.
+    mod failed_unmerged_paths_lookup {
+        use super::*;
+        use std::process::{Command, Output};
+
+        /// A non-zero `Output` with the given stderr. `None` for the code means
+        /// "no exit code at all", which on Unix is a signalled process; Windows
+        /// always has a code, so the signal case is Unix-only below.
+        #[cfg(unix)]
+        fn failed(stderr: &str, code: Option<i32>) -> Output {
+            use std::os::unix::process::ExitStatusExt;
+            Output {
+                status: match code {
+                    Some(c) => std::process::ExitStatus::from_raw(c << 8),
+                    None => std::process::ExitStatus::from_raw(9), // SIGKILL
+                },
+                stdout: Vec::new(),
+                stderr: stderr.as_bytes().to_vec(),
+            }
+        }
+
+        #[cfg(windows)]
+        fn failed(stderr: &str, code: Option<i32>) -> Output {
+            use std::os::windows::process::ExitStatusExt;
+            Output {
+                status: std::process::ExitStatus::from_raw(code.unwrap_or(1) as u32),
+                stdout: Vec::new(),
+                stderr: stderr.as_bytes().to_vec(),
+            }
+        }
+
+        fn repo(dir: &std::path::Path) {
+            Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(dir)
+                .status()
+                .unwrap();
+        }
+
+        /// The reported shape: git speaking French, never saying the English
+        /// phrase, never mentioning `.git`, and dumping its whole `--no-index`
+        /// usage text. Recognising it by wording was never going to work.
+        #[test]
+        fn a_folder_that_is_not_a_repository_is_not_a_failure() {
+            let dir = tempfile::tempdir().unwrap();
+            let out = failed(
+                "avertissement : Pas un dépôt git. Utilisez --no-index pour comparer \
+                 deux chemins hors d'un arbre de travail\nusage : git diff --no-index \
+                 [<options>] <chemin> <chemin> [<spéc-de-chemin>...]",
+                Some(129),
+            );
+            assert!(
+                unmerged_paths_failure(dir.path(), &out, "check for conflicted files").is_none(),
+                "a non-repository must answer 'no conflicts', not file a bug"
+            );
+        }
+
+        /// …and the language is irrelevant, because we never read the message.
+        #[test]
+        fn the_message_language_does_not_matter() {
+            let dir = tempfile::tempdir().unwrap();
+            for stderr in [
+                "fatal: not a git repository (or any of the parent directories): .git",
+                "致命的: gitリポジトリではありません",
+                "",
+            ] {
+                let out = failed(stderr, Some(128));
+                assert!(
+                    unmerged_paths_failure(dir.path(), &out, "check for conflicted files")
+                        .is_none(),
+                    "must not report from a non-repository, stderr: {stderr}"
+                );
+            }
+        }
+
+        /// Inside a real repository, a failure is a real failure — and it has
+        /// to carry something to diagnose it with.
+        #[test]
+        fn a_real_repository_failure_still_reports_its_stderr() {
+            let dir = tempfile::tempdir().unwrap();
+            repo(dir.path());
+            let out = failed("error: unable to read index file", Some(128));
+            let err = unmerged_paths_failure(dir.path(), &out, "check for conflicted files")
+                .expect("a repository failure must report");
+            let msg = err.to_string();
+            assert!(msg.contains("unable to read index file"), "got: {msg}");
+        }
+
+        /// The #921 occurrence: exited non-zero, wrote nothing at all. Without
+        /// the exit code there is literally nothing to investigate — a bare
+        /// "Failed to check for conflicted files: " with an empty tail.
+        #[test]
+        fn an_empty_stderr_failure_carries_its_exit_code() {
+            let dir = tempfile::tempdir().unwrap();
+            repo(dir.path());
+            let err = unmerged_paths_failure(
+                dir.path(),
+                &failed("", Some(128)),
+                "check for conflicted files",
+            )
+            .expect("a repository failure must report");
+            let msg = err.to_string();
+            assert!(msg.contains("exit 128"), "got: {msg}");
+            assert!(!msg.ends_with(": "), "message must not trail off: {msg}");
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn a_signalled_git_says_so_rather_than_inventing_a_code() {
+            let dir = tempfile::tempdir().unwrap();
+            repo(dir.path());
+            let err = unmerged_paths_failure(dir.path(), &failed("", None), "get conflicted files")
+                .expect("a repository failure must report");
+            assert!(
+                err.to_string().contains("terminated by signal"),
+                "got: {err}"
+            );
+        }
+
+        /// `git diff`'s usage dump is thousands of characters. Whatever else
+        /// happens, it must not all end up in a toast (#547's cap, reused).
+        #[test]
+        fn a_pathological_stderr_is_capped() {
+            let dir = tempfile::tempdir().unwrap();
+            repo(dir.path());
+            let err = unmerged_paths_failure(
+                dir.path(),
+                &failed(&"x".repeat(5000), Some(129)),
+                "check for conflicted files",
+            )
+            .expect("a repository failure must report");
+            assert!(err.to_string().len() < 700, "not capped: {}", err);
+        }
+
+        #[test]
+        fn is_git_repository_agrees_with_git() {
+            let plain = tempfile::tempdir().unwrap();
+            assert!(!is_git_repository(plain.path()));
+
+            let initialised = tempfile::tempdir().unwrap();
+            repo(initialised.path());
+            assert!(is_git_repository(initialised.path()));
+        }
     }
 }

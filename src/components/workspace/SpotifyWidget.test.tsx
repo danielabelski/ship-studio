@@ -21,6 +21,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { SpotifyWidget } from './SpotifyWidget';
+import { ToastContext } from '../../contexts/ToastContext';
 import type { SpotifyState } from '../../lib/spotify';
 
 function state(overrides: Partial<SpotifyState> = {}): SpotifyState {
@@ -203,4 +204,98 @@ describe('SpotifyWidget', () => {
     );
     expect(controlCalls.some((call) => call.action === 'activate')).toBe(false);
   });
+});
+
+/**
+ * Issue #930: the state poll spawns an `osascript` on a 2s leash, so a round
+ * trip that is merely slow fails here and succeeds on the next tick. The
+ * policy itself (how many failures before saying anything) is covered by
+ * `lib/pollFailureGate.test.ts`; what matters here is that the widget's poll
+ * is wired to it at all — a single failure must not toast.
+ */
+describe('SpotifyWidget transient poll failures', () => {
+  it('does not toast when a state poll fails', async () => {
+    let calls = 0;
+    mockIPC((cmd) => {
+      if (cmd === 'get_spotify_widget_enabled') return true;
+      if (cmd === 'get_spotify_state') {
+        calls += 1;
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- the CommandError shape under test
+        throw { type: 'Timeout', cmd: 'osascript (spotify state)', secs: 2 };
+      }
+      return undefined;
+    });
+
+    const showToast = vi.fn();
+    render(
+      <ToastContext.Provider value={{ toasts: [], showToast, dismissToast: vi.fn() }}>
+        <SpotifyWidget />
+      </ToastContext.Provider>
+    );
+
+    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('never toasts a timeout, however many of them there are', async () => {
+    // The gate used to let the fourth consecutive failure through, on the
+    // theory that a run that long meant a broken widget. It does not: a busy
+    // machine misses a 2s Apple Events leash for ten seconds at a time while
+    // the widget works perfectly, and the user gets `osascript (spotify state)
+    // timed out after 2s` for something with no remedy and no consequence.
+    let calls = 0;
+    mockIPC((cmd) => {
+      if (cmd === 'get_spotify_widget_enabled') return true;
+      if (cmd === 'get_spotify_state') {
+        calls += 1;
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- the CommandError shape under test
+        throw { type: 'Timeout', cmd: 'osascript (spotify state)', secs: 2 };
+      }
+      return undefined;
+    });
+
+    const showToast = vi.fn();
+    render(
+      <ToastContext.Provider value={{ toasts: [], showToast, dismissToast: vi.fn() }}>
+        <SpotifyWidget />
+      </ToastContext.Provider>
+    );
+
+    // Three consecutive failures is the gate's threshold — the exact poll the
+    // old code surfaced on, and the one the test below shows a non-timeout
+    // still surfaces on. Failing polls back off, so a longer run costs test
+    // time without testing anything this does not.
+    await waitFor(() => expect(calls).toBeGreaterThanOrEqual(3), { timeout: 15_000 });
+    expect(showToast).not.toHaveBeenCalled();
+  }, 20_000);
+
+  it('still speaks up when the failure is not a timeout', async () => {
+    // The gate is kept for everything else, so a widget that is genuinely
+    // broken is not silently broken. Going quiet for every error would trade
+    // one bad behaviour for a worse one.
+    let calls = 0;
+    mockIPC((cmd) => {
+      if (cmd === 'get_spotify_widget_enabled') return true;
+      if (cmd === 'get_spotify_state') {
+        calls += 1;
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- the CommandError shape under test
+        throw { type: 'Io', message: 'osascript is missing' };
+      }
+      return undefined;
+    });
+
+    const showToast = vi.fn();
+    render(
+      <ToastContext.Provider value={{ toasts: [], showToast, dismissToast: vi.fn() }}>
+        <SpotifyWidget />
+      </ToastContext.Provider>
+    );
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledTimes(1), { timeout: 15_000 });
+    // And exactly once, no matter how long it keeps failing.
+    const atFirstToast = calls;
+    await waitFor(() => expect(calls).toBeGreaterThan(atFirstToast), { timeout: 15_000 });
+    expect(showToast).toHaveBeenCalledTimes(1);
+  }, 20_000);
 });

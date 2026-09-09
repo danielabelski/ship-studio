@@ -538,7 +538,7 @@ export function useProjectLifecycle({
         } catch (focusError) {
           // Window no longer exists (stale data), proceed with opening locally
           logger.info(`[OpenProject] Window ${existingWindow} no longer exists, opening locally`, {
-            focusError: focusError instanceof Error ? focusError.message : String(focusError),
+            focusError: formatCommandError(asCommandError(focusError)),
           });
         }
       }

@@ -228,6 +228,39 @@ the editor hooks a ref whose object identity changes with the frame — that is
 what re-runs their setup. Focus mode passes the single preview iframe's own
 stable ref, so nothing about it changes.
 
+### The agent is a user of the active frame too
+
+The agent preview bridge (`src/lib/agentBridge.ts`) drives the preview through
+the same shim the inspector talks to, and it inherited a world where "every
+preview iframe" meant one. On a canvas it means four, and every place that
+assumption was left standing broke a different way:
+
+- **Actions went to all four frames.** One `preview_click` clicked in every
+  frame, so passive frames navigated on their own — independently of the host's
+  idea of where the preview is — and the call resolved from whichever frame
+  answered first, meaning the rect and match count could describe a frame the
+  user was not in. `execPreviewAction` now sends to the frame the inspector is
+  pinned to (`getInspectSource`), and only broadcasts in focus mode, where the
+  pin is null because there is genuinely one frame.
+- **Nothing said the agent was there.** The activity overlay was rendered only
+  in the focus-mode branch, so the canvas got no glow, no chip and no cursor.
+  It is now part of `activeFrameOverlay`, which scopes it to the active frame —
+  a glow around the whole canvas would claim the agent was working in all of
+  them. Like the comment layer it needs an explicit `pointer-events: none`
+  exception in `preview-canvas.css`, for exactly the reason documented there.
+- **The cursor could not land in the right place.** The page reports the target
+  as a fraction of its own viewport, and on a canvas its viewport is a device
+  fiction (`ssLieAboutViewport`, and `ssPinRootHeight` pins the root to the same
+  lie) while the frame renders the whole document — so anything below the device
+  fold came back clamped to the bottom edge. The raw pixel rect is honest in
+  both modes, so the host re-derives the fractions from the frame size it
+  already knows (`overlayFraction` + `getOverlayFrameSize`).
+- **The agent could not know any of this.** `preview_status` now says the canvas
+  is open, which frame is active, and that `preview_set_viewport` closes the
+  canvas — that tool has always collapsed the canvas to a single frame by
+  design, and an agent sweeping mobile→tablet→desktop was doing it three times
+  without ever saying so. Its result text now admits it.
+
 ### Messages
 
 Host → frame: `ss:canvas {on, vh}` — you are part of a canvas, this is the

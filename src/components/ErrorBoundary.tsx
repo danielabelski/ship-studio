@@ -6,6 +6,7 @@ import { lookupBlobOwner, markPluginCrashed } from '../lib/plugin-loader';
 import { uninstallPlugin } from '../lib/plugins';
 import { Button } from './primitives/Button';
 import { InfoIcon } from '@/components/icons';
+import { asCommandError, formatCommandError } from '../lib/errors';
 
 interface Props {
   children: ReactNode;
@@ -83,7 +84,7 @@ export class ErrorBoundary extends Component<Props, State> {
     } catch (err) {
       // In dev mode, relaunch might not work - try window reload
       logger.error('Relaunch failed, trying reload', {
-        error: err instanceof Error ? err.message : String(err),
+        error: formatCommandError(asCommandError(err)),
       });
       window.location.reload();
     }

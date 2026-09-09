@@ -1,5 +1,11 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import { useToasts, type UseToastsReturn, type ToastType } from '../hooks/useToasts';
+import {
+  useToasts,
+  type UseToastsReturn,
+  type ToastType,
+  type ToastAction,
+  type ToastOptions,
+} from '../hooks/useToasts';
 
 export const ToastContext = createContext<UseToastsReturn | null>(null);
 
@@ -49,7 +55,14 @@ const NOOP_TOAST = {
  * Optional variant for code paths that may render outside the provider (tests, isolated
  * stories). Returns a no-op `showToast` so call sites don't need to special-case absence.
  */
-export function useOptionalToast(): { showToast: (message: string, type?: ToastType) => void } {
+export function useOptionalToast(): {
+  showToast: (
+    message: string,
+    type?: ToastType,
+    action?: ToastAction,
+    options?: ToastOptions
+  ) => void;
+} {
   const ctx = useContext(ToastContext);
   if (ctx) return ctx;
   return NOOP_TOAST;

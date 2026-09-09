@@ -6,6 +6,7 @@
  */
 
 import { logger } from './logger';
+import { asCommandError, formatCommandError } from './errors';
 
 export interface PollingOptions {
   /** Starting interval in milliseconds */
@@ -131,12 +132,16 @@ export class ExponentialPoller<T> {
         attempt: this.attempt,
         prevInterval,
         newInterval: this.interval,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(asCommandError(error)),
       });
 
       this.onResult({
         data: null,
-        error: error instanceof Error ? error : new Error(String(error)),
+        // Consumers get an Error, but its message has to be the real reason.
+        // A Tauri rejection is a plain tagged object, so `String(error)` gave
+        // every failed poll the message "[object Object]" (issue #909).
+        error:
+          error instanceof Error ? error : new Error(formatCommandError(asCommandError(error))),
         attempt: this.attempt,
         nextInterval: this.interval,
       });
@@ -191,7 +196,7 @@ export async function retryWithBackoff<T>(
       logger.debug('Retry with backoff', {
         attempt,
         delay,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(asCommandError(error)),
       });
 
       await new Promise((resolve) => setTimeout(resolve, delay));

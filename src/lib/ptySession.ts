@@ -214,13 +214,36 @@ export interface AttachGate {
   open(endOffset: number): void;
 }
 
+/**
+ * Ceiling on what the gate will hold while waiting for the attach snapshot.
+ *
+ * The wait is normally one IPC round-trip, but it is not guaranteed to be: an
+ * attach that is slow or never completes, in front of a process producing
+ * output as fast as it can, turns this queue into an unbounded heap allocation
+ * that nothing ever frees. 4 MiB is far more than the round-trip can plausibly
+ * accumulate and far less than a problem.
+ */
+export const ATTACH_GATE_MAX_PENDING_BYTES = 4 * 1024 * 1024;
+
 export function createAttachGate(deliver: (bytes: Uint8Array) => void): AttachGate {
   let snapshotEnd: number | null = null;
   const pending: Array<{ offset: number; bytes: Uint8Array }> = [];
+  let pendingBytes = 0;
+  let droppedBytes = 0;
   return {
     push(offset: number, bytes: Uint8Array): void {
       if (snapshotEnd === null) {
         pending.push({ offset, bytes });
+        pendingBytes += bytes.byteLength;
+        // Over the ceiling, shed from the front. The oldest queued chunks are
+        // the ones most likely to be inside the snapshot anyway, and for a
+        // terminal the newest output is the part worth keeping.
+        while (pendingBytes > ATTACH_GATE_MAX_PENDING_BYTES && pending.length > 1) {
+          const dropped = pending.shift();
+          if (!dropped) break;
+          pendingBytes -= dropped.bytes.byteLength;
+          droppedBytes += dropped.bytes.byteLength;
+        }
         return;
       }
       if (offset >= snapshotEnd) deliver(bytes);
@@ -228,10 +251,35 @@ export function createAttachGate(deliver: (bytes: Uint8Array) => void): AttachGa
     open(endOffset: number): void {
       if (snapshotEnd !== null) return; // already open — ignore
       snapshotEnd = endOffset;
+      if (droppedBytes > 0) {
+        logger.warn('[ptySession] attach gate shed output while waiting for the snapshot', {
+          droppedBytes,
+        });
+      }
       for (const chunk of pending) {
         if (chunk.offset >= endOffset) deliver(chunk.bytes);
       }
       pending.length = 0;
+      pendingBytes = 0;
     },
   };
+}
+
+/**
+ * Ask the backend to stop, or resume, draining this session's PTY.
+ *
+ * The consumer half lives in `lib/terminalFlowControl.ts`: when xterm's
+ * unparsed backlog crosses the high-water mark the terminal calls this with
+ * `true`, and with `false` once it drains. Fire-and-forget by design — pacing
+ * is an optimisation, and a failed pace call is not something any caller can
+ * act on, so it is logged rather than thrown (issue #910).
+ */
+export function setPtySessionPaused(sessionId: string, paused: boolean): void {
+  invoke('pty_session_set_paused', { sessionId, paused }).catch((err: unknown) => {
+    logger.warn('[ptySession] flow-control pause failed — output is unpaced', {
+      sessionId,
+      paused,
+      error: formatCommandError(asCommandError(err)),
+    });
+  });
 }

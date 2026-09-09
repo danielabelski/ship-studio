@@ -78,7 +78,7 @@ export function useAssetManagement({ projectPath, isOpen, onToast }: UseAssetMan
     } catch (e) {
       trackError('asset_load', e, 'Workspace');
       setError('Failed to load assets');
-      logger.error('Failed to load assets', { error: e instanceof Error ? e.message : String(e) });
+      logger.error('Failed to load assets', { error: formatCommandError(asCommandError(e)) });
     } finally {
       setIsLoading(false);
     }
@@ -93,7 +93,7 @@ export function useAssetManagement({ projectPath, isOpen, onToast }: UseAssetMan
         .then(setAssetsRootState)
         .catch((e) =>
           logger.warn('Failed to load assets root', {
-            error: e instanceof Error ? e.message : String(e),
+            error: formatCommandError(asCommandError(e)),
           })
         );
     }

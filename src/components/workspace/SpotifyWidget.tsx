@@ -13,17 +13,27 @@
  * @module components/workspace/SpotifyWidget
  */
 
-import { useCallback, useEffect, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type SyntheticEvent,
+} from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { AlertIcon, PauseIcon, PlayIcon, SkipNextIcon, SkipPreviousIcon } from '@/components/icons';
 import SpotifyLogoGraphic from '@/assets/graphics/spotify-logo.svg?react';
 import { Button } from '../primitives/Button';
 import { IconButton } from '../primitives/IconButton';
 import { usePolling } from '../../hooks/usePolling';
+import { useWindowFocused } from '../../hooks/useWindowFocused';
 import { useOptionalToast } from '../../contexts/ToastContext';
 import { useCommands } from '../../commands/useCommands';
 import { isMac } from '../../lib/setup';
 import { asCommandError, formatCommandError } from '../../lib/errors';
+import { logger } from '../../lib/logger';
+import { createPollFailureGate } from '../../lib/pollFailureGate';
 import { getSpotifyState, spotifyControl, type SpotifyState } from '../../lib/spotify';
 import { getSpotifyWidgetEnabled, SPOTIFY_WIDGET_ENABLED_CHANGED_EVENT } from '../../lib/settings';
 
@@ -33,6 +43,14 @@ const PLAYING_INTERVAL_MS = 1000;
  *  a process on the Rust side, so idle cost matters. */
 const IDLE_INTERVAL_MS = 5000;
 
+/**
+ * Consecutive failed state polls tolerated before the widget says anything.
+ * At the playing cadence that is a few seconds of silence, which is the right
+ * trade: a slow Apple Events round-trip resolves itself well inside it, and a
+ * widget that is actually broken stays broken past it (issue #930).
+ */
+const POLL_FAILURES_BEFORE_TOAST = 3;
+
 /** macOS System Settings deep link to Privacy & Security → Automation. */
 const AUTOMATION_SETTINGS_URL =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation';
@@ -40,10 +58,6 @@ const AUTOMATION_SETTINGS_URL =
 interface SpotifyWidgetProps {
   /** Sidebar is collapsed to an icon rail. */
   isSidebarHidden?: boolean;
-}
-
-function isWindowActive(): boolean {
-  return document.visibilityState === 'visible' && document.hasFocus();
 }
 
 function trackTitle(trackName: string | null, artist: string | null): string | undefined {
@@ -66,8 +80,10 @@ export function SpotifyWidget({ isSidebarHidden }: SpotifyWidgetProps) {
   const mac = isMac();
 
   const [enabled, setEnabled] = useState(false);
-  const [isWindowFocused, setIsWindowFocused] = useState(isWindowActive);
+  const isWindowFocused = useWindowFocused();
   const [state, setState] = useState<SpotifyState | null>(null);
+  // Decides when a run of failed state polls is worth interrupting over.
+  const pollFailuresRef = useRef(createPollFailureGate(POLL_FAILURES_BEFORE_TOAST));
   // Flips the icon/position immediately on click; cleared as soon as a fresh
   // poll reconciles with the real state, so a stuck backend can't leave it lying.
   const [optimisticPlaying, setOptimisticPlaying] = useState<boolean | null>(null);
@@ -92,28 +108,59 @@ export function SpotifyWidget({ isSidebarHidden }: SpotifyWidgetProps) {
     };
   }, [mac]);
 
-  // Track whether this window is the one the user is looking at, so polling
-  // can stop entirely rather than just backing off.
-  useEffect(() => {
-    const update = () => setIsWindowFocused(isWindowActive());
-    document.addEventListener('visibilitychange', update);
-    window.addEventListener('focus', update);
-    window.addEventListener('blur', update);
-    return () => {
-      document.removeEventListener('visibilitychange', update);
-      window.removeEventListener('focus', update);
-      window.removeEventListener('blur', update);
-    };
-  }, []);
-
   const poll = useCallback(async () => {
     try {
       const next = await getSpotifyState();
       setState(next);
       setOptimisticPlaying(null);
       setOptimisticPosition(null);
+      pollFailuresRef.current.recordSuccess();
     } catch (err) {
-      showToast(formatCommandError(asCommandError(err)), 'error');
+      // A background poll is not a user action, and this one spawns an
+      // `osascript` on a 2s leash: an Apple Events round-trip that is slow
+      // because the machine is busy fails here and succeeds a second later.
+      // Toasting the first failure meant a transient timeout interrupted the
+      // user (issue #930). Ride out a few, then say something once — and only
+      // once — so a genuinely broken widget still speaks up.
+      const error = asCommandError(err);
+      const message = formatCommandError(error);
+
+      // A timeout never speaks up, however many of them there are.
+      //
+      // Three in a row was meant to distinguish "busy machine" from "broken
+      // widget", and it does not: a machine running the app, an agent and two
+      // dev servers can miss a 2s Apple Events leash for ten seconds at a
+      // stretch while the widget is working perfectly, and the run of failures
+      // that produces is indistinguishable from a real outage by count alone.
+      //
+      // What separates them is not how many but which kind. `osascript
+      // (spotify state) timed out after 2s` is not a thing anyone can act on —
+      // there is no setting to change and no button to press, and the next
+      // poll usually fixes it. The errors worth a toast are the ones with a
+      // remedy, and Spotify's actual remediable state — macOS withholding
+      // Automation permission — is not an error here at all: it comes back as
+      // an ordinary `permission_denied` status the widget renders in place.
+      //
+      // So timeouts go to the log, where a genuinely wedged osascript is still
+      // visible to anyone looking, and everything else keeps the gate.
+      if (error.type === 'Timeout') {
+        logger.warn('[Spotify] state poll timed out — retrying', {
+          consecutiveFailures: pollFailuresRef.current.consecutiveFailures + 1,
+          error: message,
+        });
+        pollFailuresRef.current.recordFailure();
+        return;
+      }
+
+      const action = pollFailuresRef.current.recordFailure();
+      if (action === 'surface') {
+        showToast(message, 'error');
+      } else if (action === 'suppress') {
+        logger.warn('[Spotify] state poll failed — retrying', {
+          consecutiveFailures: pollFailuresRef.current.consecutiveFailures,
+          error: message,
+        });
+      }
     }
   }, [showToast]);
 

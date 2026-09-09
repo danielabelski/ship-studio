@@ -31,12 +31,35 @@ export interface Toast {
   action?: ToastAction;
 }
 
+/**
+ * How to show a toast beyond its type and action.
+ *
+ * `expected` marks an error toast the app *meant* to show: a by-design
+ * refusal the user can act on ("that project already has the maximum number
+ * of agent tabs"), not something that went wrong. It still looks and behaves
+ * like an error — it is a problem from where the user is sitting, and it
+ * should persist until they have read it — but it is not filed as a bug.
+ *
+ * Without this, every such refusal had to be demoted to an `info` toast to
+ * stay out of telemetry, which is why the same class of report kept coming
+ * back at each new call site (issues #437, #920).
+ */
+export interface ToastOptions {
+  /** A deliberate refusal, not a malfunction — show it, don't report it. */
+  expected?: boolean;
+}
+
 /** Return type for useToasts hook */
 export interface UseToastsReturn {
   /** Array of active toast notifications */
   toasts: Toast[];
   /** Show a new toast notification */
-  showToast: (message: string, type?: ToastType, action?: ToastAction) => void;
+  showToast: (
+    message: string,
+    type?: ToastType,
+    action?: ToastAction,
+    options?: ToastOptions
+  ) => void;
   /** Dismiss a toast by ID */
   dismissToast: (id: number) => void;
 }
@@ -82,11 +105,17 @@ export function useToasts(): UseToastsReturn {
   }, []);
 
   const showToast = useCallback(
-    (message: string, type: ToastType = 'success', action?: ToastAction) => {
+    (
+      message: string,
+      type: ToastType = 'success',
+      action?: ToastAction,
+      options?: ToastOptions
+    ) => {
       // An error toast is, by definition, the user seeing something not work as
       // intended — report it to the admin agent (deduped + throttled; see
-      // docs/error-reporting.md).
-      if (type === 'error') {
+      // docs/error-reporting.md). Unless the caller says otherwise: a refusal
+      // the app decided on is not a malfunction (see `ToastOptions.expected`).
+      if (type === 'error' && !options?.expected) {
         reportError({ message, source: 'toast' });
       }
       const id = ++toastIdRef.current;

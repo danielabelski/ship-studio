@@ -32,7 +32,9 @@ import {
   onPtySessionData,
   onPtySessionExit,
   createAttachGate,
+  setPtySessionPaused,
 } from '../../lib/ptySession';
+import { createTerminalFlowControl } from '../../lib/terminalFlowControl';
 import { getTerminalGpuEnabled } from '../../lib/settings';
 import { loadNerdFonts } from '../../lib/fonts';
 import { logger } from '../../lib/logger';
@@ -180,8 +182,18 @@ export function BuildTerminal({
         // callbacks were skipped) — sync the PTY to the current size once.
         resizePtySessionLogged(sessionId, Math.max(term.cols, 2), Math.max(term.rows, 2));
 
+        // A build is the single most likely thing in the app to outrun
+        // xterm's parser — a verbose bundler can emit megabytes in a second.
+        // Pace it (issue #910); without this xterm eventually discards output
+        // and the error the user is looking for is the part that vanishes.
+        const flow = createTerminalFlowControl(term, {
+          onPause: () => setPtySessionPaused(sessionId, true),
+          onResume: () => setPtySessionPaused(sessionId, false),
+        });
+        disposers.push(() => flow.dispose());
+
         const gate = createAttachGate((bytes) => {
-          term.write(bytes);
+          flow.write(bytes);
           emitOutput(bytes);
         });
         const unlistenData = await onPtySessionData(sessionId, (bytes, offset) => {
@@ -209,7 +221,7 @@ export function BuildTerminal({
         const attach = await attachPtySession(sessionId);
         if (cancelled) return;
         if (attach.buffer.length > 0) {
-          term.write(attach.buffer);
+          flow.write(attach.buffer);
           emitOutput(attach.buffer);
         }
         gateOpen = true;
@@ -223,7 +235,7 @@ export function BuildTerminal({
       } catch (err) {
         if (!cancelled) {
           logger.error('[BuildTerminal] failed to start build session', {
-            error: err instanceof Error ? err.message : String(err),
+            error: formatCommandError(asCommandError(err)),
           });
           term.write(
             `\r\n\x1b[31mFailed to start build: ${formatCommandError(asCommandError(err))}\x1b[0m\r\n`

@@ -60,3 +60,6 @@ coverage/
 
 # UI harness capture output (regenerate with scripts/harness-capture.mjs)
 harness/shots/
+
+# TypeScript incremental build cache (written by `tsc -p tsconfig.node.json`)
+*.tsbuildinfo

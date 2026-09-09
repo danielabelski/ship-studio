@@ -26,10 +26,25 @@ interface ChangelogEntry {
 // Keep ~15 most recent versions for the sidebar
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.3.0', // v1.3.0
+    items: [
+      'New: Team — see what your teammates actually did and why, who is on which branch, and the comments left on the project, without leaving the workspace. It reads your own repository rather than a server: no account, no sign-up, and it works on first launch even if nobody else on the team uses Ship Studio',
+      "New: comments are shared. Pin a note to the element it is about and your teammates see it after their next sync — carried on a ref of their own, so your branches, your commits and your pull requests never contain them. Tick the ones you want and hand them to your agent in one go; it can reply and mark them resolved when it's done. Comments still work with no repository at all, which is the right tool for annotating a page on your own",
+      'New: rebuild a site from its URL. "From a URL" in New Project takes an address and a stack, and your agent surveys the site, extracts its design system, and rebuilds it template by template. Nothing is reported as done until it has been measured against the original, and anything that can\'t come across is named rather than quietly dropped',
+      "Projects whose remote isn't GitHub work: GitLab and self-managed git hosts get branches, worktrees, sync and push, and the copy names the host you actually use. What genuinely needs GitHub, like pull requests, is absent rather than broken",
+      "Dev servers start with the project's own package manager, so a bun or pnpm project no longer gets an npm dev script it was never set up for (thanks Maarten Keizer)",
+      "Terminal output is no longer thrown away: a verbose agent turn or a chatty build could outrun the terminal's parser until it gave up and discarded the rest — which is exactly the part with the error in it. The terminal paces the process now instead",
+      'Lower idle CPU: while anything on screen was changing, which during an agent turn is continuously, the app re-examined every element in the window four times a second looking for scrollable ones. It now looks only at what actually changed',
+      "Quieter in the background: a project window you aren't looking at no longer walks git history, runs gh, or calls GitHub every minute. It refreshes the moment you come back to it",
+      'A click inside a dialog no longer dismisses the popover underneath it',
+      "~17 more reported issues fixed — mostly routine environment states that used to file themselves as bug reports and now explain themselves instead: a dev server restarting, a project folder that moved, a broken npm install, an agent CLI whose own config won't parse, a clone cut off by a flaky network",
+    ],
+  },
+  {
     version: '1.2.0', // v1.2.0
     items: [
       "New: the breakpoint canvas — see every breakpoint at once, side by side, each showing the whole page at its own device width and an honest viewport height, instead of one size at a time. Pan and zoom it like a design canvas, and click a frame's label to drop into that size and work there; editing, inspection and screenshots follow whichever frame is active",
-      'New: comments on the preview — pin a note to the element it is about, collect a few, and hand them all to your agent at once instead of describing them one at a time',
+      'New: comments on the preview. Pin a note to the element it is about, collect a few, and hand them all to your agent in one go instead of describing them one at a time',
       "New: hosting status is built into the app and now covers Vercel, Cloudflare Pages and Netlify. It answers one question honestly — did the commit you just pushed deploy? — showing the provider's own status word, the site's address, and when a build fails, the error line, so you don't have to open the provider's dashboard to find out why. The Vercel plugin is superseded and says so",
       "The dashboard opens fast: scanning your projects no longer blocks on filesystem work or rewrites every project's .gitignore on each load — measured 2.06s down to 0.38s for three projects opening at once — and a scan that fails now says so with a retry instead of spinning forever",
       'Comments on a breakpoint canvas work at all: an invisible layer was swallowing every click, so on the canvas you could never pick an element or write a note',

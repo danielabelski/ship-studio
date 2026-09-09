@@ -101,7 +101,80 @@ struct Session {
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     /// `None` once the session has exited (issue #540).
     master: Mutex<Option<Box<dyn portable_pty::MasterPty + Send>>>,
+    /// Flow control: the reader thread stops reading while this is set, which
+    /// lets the kernel's PTY buffer fill and blocks the child's own `write`.
+    /// See [`FlowControl`] and issue #910.
+    flow: FlowControl,
 }
+
+/// Backpressure between a PTY and the terminal rendering it.
+///
+/// xterm.js buffers everything handed to `write()` and parses it on a frame
+/// budget. A producer that outruns the parser grows that buffer without bound
+/// until xterm gives up — "write data discarded, use flow control to avoid
+/// losing data" — and the output is simply lost (issue #910). The documented
+/// remedy is for the consumer to stop the producer, so that is what this is:
+/// the frontend reports its backlog, and while the backlog is high the reader
+/// thread stops draining the PTY. The child then blocks in its own `write`,
+/// which is exactly the behaviour a real terminal has.
+///
+/// A pause is never permanent. A frontend that crashes, hangs, or forgets to
+/// resume must not be able to freeze someone's build forever, so every wait is
+/// bounded by [`MAX_PAUSE`] and the reader carries on regardless afterwards.
+struct FlowControl {
+    paused: Mutex<bool>,
+    changed: std::sync::Condvar,
+}
+
+impl FlowControl {
+    fn new() -> Self {
+        Self {
+            paused: Mutex::new(false),
+            changed: std::sync::Condvar::new(),
+        }
+    }
+
+    fn set_paused(&self, value: bool) {
+        if let Ok(mut paused) = self.paused.lock() {
+            *paused = value;
+        }
+        self.changed.notify_all();
+    }
+
+    /// Block while paused, for at most [`MAX_PAUSE`]. Returns once reading may
+    /// continue — either because the frontend resumed, or because it didn't
+    /// and we refuse to wait on it any longer.
+    fn wait_while_paused(&self) {
+        self.wait_while_paused_for(MAX_PAUSE);
+    }
+
+    /// [`Self::wait_while_paused`] with the safety bound spelled out, so a
+    /// test can watch it expire without sleeping for the production value.
+    fn wait_while_paused_for(&self, max: std::time::Duration) {
+        let Ok(paused) = self.paused.lock() else {
+            return; // poisoned — a wedged reader is worse than an unpaced one
+        };
+        if !*paused {
+            return;
+        }
+        let deadline = std::time::Instant::now() + max;
+        let mut guard = paused;
+        while *guard {
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                break;
+            };
+            let Ok((next, _timeout)) = self.changed.wait_timeout(guard, remaining) else {
+                return;
+            };
+            guard = next;
+        }
+    }
+}
+
+/// Longest the reader thread will honour a frontend's pause. Chosen to be far
+/// longer than any legitimate xterm parse backlog (which drains in tens of
+/// milliseconds) and far shorter than a user would tolerate a wedged build.
+const MAX_PAUSE: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl Session {
     /// Close this session's PTY master and writer, freeing the underlying
@@ -404,6 +477,7 @@ pub async fn pty_session_open(
         writer: Mutex::new(Some(writer)),
         child_killer: Mutex::new(child_killer),
         master: Mutex::new(Some(pair.master)),
+        flow: FlowControl::new(),
     });
 
     REGISTRY
@@ -420,6 +494,12 @@ pub async fn pty_session_open(
             let mut buf = [0u8; 4096];
             let mut dsr_carry: Vec<u8> = Vec::new();
             loop {
+                // Backpressure (issue #910). Waiting here — rather than after
+                // the read — means the bytes already in the kernel's PTY
+                // buffer stay there, so the child blocks instead of us
+                // buffering its output on its behalf.
+                session_for_reader.flow.wait_while_paused();
+
                 let n = match reader.read(&mut buf) {
                     Ok(0) => break, // EOF — child closed slave
                     Ok(n) => n,
@@ -482,6 +562,9 @@ pub async fn pty_session_open(
             // again. Close it now instead of holding it for the (unbounded)
             // lifetime of the registry entry — the pseudo-terminal pool is
             // system-wide and small (issue #540).
+            // Release the reader thread if the frontend had it paused, so it
+            // observes EOF and exits now rather than after MAX_PAUSE.
+            session_for_waiter.flow.set_paused(false);
             session_for_waiter.release_pty_handles();
             let _ = app_for_waiter.emit(
                 "pty-session-exit",
@@ -726,6 +809,35 @@ pub fn pty_session_detach(session_id: String) -> Result<(), CommandError> {
     };
     if let Some(session) = session {
         session.attached.store(false, Ordering::Relaxed);
+        // Nothing is rendering this session any more, so nothing is going to
+        // resume it either. A pause left set here would stall the child until
+        // MAX_PAUSE elapsed, over and over (issue #910).
+        session.flow.set_paused(false);
+    }
+    Ok(())
+}
+
+/// Pause or resume the reader thread draining this session's PTY.
+///
+/// Called by the terminal that is rendering the session when its xterm write
+/// backlog crosses the high-water mark, and again when it drains — the
+/// consumer end of the flow control described on [`FlowControl`] (issue #910).
+///
+/// Idempotent, and deliberately forgiving: a session that has already exited,
+/// or one the frontend knows about but the registry has evicted, is a no-op
+/// rather than an error. Nothing about pacing output is worth failing a call
+/// the caller cannot meaningfully handle.
+#[tauri::command]
+#[tracing::instrument]
+pub fn pty_session_set_paused(session_id: String, paused: bool) -> Result<(), CommandError> {
+    let session = {
+        let map = REGISTRY
+            .lock()
+            .map_err(|e| format!("pty registry poisoned: {e}"))?;
+        map.get(&session_id).cloned()
+    };
+    if let Some(session) = session {
+        session.flow.set_paused(paused);
     }
     Ok(())
 }
@@ -777,6 +889,7 @@ mod tests {
                 writer: Mutex::new(Some(writer)),
                 child_killer: Mutex::new(killer),
                 master: Mutex::new(Some(pair.master)),
+                flow: FlowControl::new(),
             })
         }
 
@@ -839,6 +952,91 @@ mod tests {
             assert!(err.to_string().contains("session has ended"), "got: {err}");
 
             REGISTRY.lock().unwrap().remove(&session_id);
+        }
+    }
+
+    /// Issue #910: the reader must actually stop when the terminal asks it
+    /// to, must start again when told, and must never be stoppable forever.
+    mod flow_control {
+        use super::*;
+
+        #[test]
+        fn an_unpaused_reader_never_waits() {
+            let flow = FlowControl::new();
+            let started = std::time::Instant::now();
+            flow.wait_while_paused();
+            assert!(
+                started.elapsed() < std::time::Duration::from_millis(200),
+                "an unpaused reader must fall straight through"
+            );
+        }
+
+        #[test]
+        fn a_paused_reader_blocks_until_resumed() {
+            let flow = Arc::new(FlowControl::new());
+            flow.set_paused(true);
+
+            let reader = {
+                let flow = flow.clone();
+                std::thread::spawn(move || {
+                    let started = std::time::Instant::now();
+                    flow.wait_while_paused();
+                    started.elapsed()
+                })
+            };
+
+            // Long enough that a reader ignoring the pause would finish first.
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            flow.set_paused(false);
+
+            let waited = reader.join().expect("reader thread panicked");
+            assert!(
+                waited >= std::time::Duration::from_millis(100),
+                "reader returned after {waited:?} — it did not honour the pause"
+            );
+            assert!(
+                waited < MAX_PAUSE,
+                "reader waited for the safety timeout instead of the resume"
+            );
+        }
+
+        /// A frontend that crashes mid-pause must not freeze someone's build
+        /// for the rest of the session. The wait is bounded; reading resumes
+        /// on its own even though nothing ever called resume.
+        #[test]
+        fn a_pause_that_is_never_lifted_expires() {
+            let flow = FlowControl::new();
+            flow.set_paused(true);
+
+            let bound = std::time::Duration::from_millis(120);
+            let started = std::time::Instant::now();
+            flow.wait_while_paused_for(bound);
+            let waited = started.elapsed();
+
+            assert!(
+                waited >= bound,
+                "returned early ({waited:?}) — never waited"
+            );
+            assert!(
+                waited < bound * 20,
+                "a pause nobody lifted blocked the reader for {waited:?}"
+            );
+            // The production bound: long enough to never trip on a real parse
+            // backlog, short enough that a wedged frontend is a hiccup.
+            assert!(MAX_PAUSE >= std::time::Duration::from_secs(1));
+            assert!(MAX_PAUSE <= std::time::Duration::from_secs(30));
+        }
+
+        #[test]
+        fn pausing_is_idempotent() {
+            let flow = FlowControl::new();
+            flow.set_paused(true);
+            flow.set_paused(true);
+            flow.set_paused(false);
+            flow.set_paused(false);
+            let started = std::time::Instant::now();
+            flow.wait_while_paused();
+            assert!(started.elapsed() < std::time::Duration::from_millis(200));
         }
     }
 

@@ -12,6 +12,7 @@ import * as snapshots from '../lib/snapshots';
 import { logger } from '../lib/logger';
 import { asCommandError, formatCommandError } from '../lib/errors';
 import { usePolling } from './usePolling';
+import { useWindowFocused } from './useWindowFocused';
 import type { ToastType } from './useToasts';
 
 type ShowToast = (message: string, type?: ToastType) => void;
@@ -77,14 +78,20 @@ export function useSnapshots(
   }, [projectPath]);
 
   // Poll status so the toolbar reflects new captures debounced from the
-  // backend. Cheap call; the backend just reads an in-memory map.
+  // backend. A cheap call, but a call: an IPC round trip, a canonicalize and a
+  // walk up for `.git`, once a second, per open project. Only while the window
+  // is the one being looked at — the toolbar this drives is not on screen
+  // otherwise, and `usePolling` reads immediately on start, so coming back to
+  // a window shows the current state rather than the state it had when it lost
+  // focus.
+  const focused = useWindowFocused();
   usePolling(
     async () => {
       if (!projectPath) return;
       const next = await snapshots.getStatus(projectPath);
       setStatus(next);
     },
-    { intervalMs: 1000, enabled: Boolean(projectPath), name: 'snapshots' }
+    { intervalMs: 1000, enabled: Boolean(projectPath) && focused, name: 'snapshots' }
   );
 
   const undo = useCallback(async () => {

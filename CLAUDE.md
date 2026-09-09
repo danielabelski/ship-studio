@@ -11,6 +11,7 @@ Ship Studio is a desktop app for web developers that provides:
 - **Branch Management** - Create, switch, and manage git branches
 - **Pull Request Creation** - Submit PRs with AI-generated titles and descriptions
 - **Merge Conflict Resolution** - Visual UI for resolving git merge conflicts
+- **Site Migration** - Paste a live URL into New Project and the agent rebuilds it here, measuring every page against the original before calling it done (see `docs/site-migration.md`)
 - **Snapshots & Backups** - Create and restore project snapshots (rewind)
 - **Asset Management** - Upload, view, and delete files under a configurable assets folder (default `/public`)
 - **Multi-Window & Hot Sessions** - Open projects in separate windows; the project rail keeps background sessions (PTYs + dev server) alive when you return to the dashboard
@@ -81,6 +82,7 @@ Single-file domains:
 - `github.rs` - GitHub CLI integration (auth status, push, remote management)
 - `i18n.rs` - Multilingual config management (Next.js Pages i18n, Astro i18n, next-intl routing.ts) via conservative string surgery — fails with Validation errors instead of guessing
 - `mcp.rs` - MCP server configuration for agents
+- `migration.rs` - Site migration: scaffolds a project to have a live URL rebuilt into it, writes the measuring tools into `.shipstudio/fidelity/`, and reads back the agent's status and its comparisons (see "Site Migration Flow")
 - `mobile.rs` - Native mobile app preview (Expo / React Native / Flutter): simulator boot, build, launch, mirror
 - `monorepo.rs` - Workspace detection for pnpm/yarn/npm monorepos
 - `proxy.rs` - Preview proxy control (the proxy itself lives in `src-tauri/src/proxy/`)
@@ -121,6 +123,7 @@ Single-file domains:
 - `plugins/` - Plugin manager/slots/dropdown, MCP and Skills modals
 - `workflows/` - Workflows list, row, editor, template picker, run history
 - `inbox/` - Findings list and the report reader
+- `migration/` - Site migration: the URL tab in New Project, the phase rail, the four-part status, the fidelity matrix and the comparison viewer
 - `shopify/` - Shopify theme setup and store modal
 - `primitives/`, `icons/`, `setup/`, `edit/`, `support/`, `CommandPalette/`, `import-project/` - pre-existing groups
 - Root holds only cross-cutting files: ErrorBoundary, UpdateBanner, EducationOverlay, ConnectOverlay, AppGlobalModals, HelpModal
@@ -158,6 +161,7 @@ Key modules in `src/lib/` (not exhaustive — `ls src/lib` for the full list):
 - `i18n.ts` - Multilingual support: status/config wrappers, full-ISO language search, locale path helpers for the preview switcher, and agent prompt builders (translate, App Router next-intl setup, removal cleanup)
 - `logger.ts` - Structured frontend logging
 - `mcp.ts` / `skills.ts` / `plugins.ts` / `plugin-loader.ts` - Agent extensions and the plugin system
+- `migration.ts` - Site migration: the phase/status model the panel renders, the fidelity types mirroring the capture script's report, and the prompts handed to the agent at creation and on resume
 - `mobile.ts` / `androidMirror.ts` - Mobile app preview and device mirror
 - `previewCanvas.ts` - Breakpoint-canvas geometry and zoom maths (layout, fit scale, device heights, mount window, pointer anchoring) — see `docs/breakpoint-canvas.md`
 - `polling.ts` - Exponential backoff utilities for async operations
@@ -405,6 +409,40 @@ recorded in [docs/internal/hosting-provider-matrix.md](docs/internal/hosting-pro
 5. In the Inbox, "Fix in \<project\>" queues the suggested prompt (`lib/workflowHandoff.ts`), opens the workspace, and `useWorkflowHandoff` types it once a terminal exists
 
 Full design: [docs/workflows-inbox.md](docs/workflows-inbox.md).
+
+### Site Migration Flow
+
+Answers one question the old `webflow-to-code` plugin never asked: **does the
+rebuild still look like the site?**
+
+1. New Project → **From a URL**. One input, whatever the site was built with.
+   `init_migration` scaffolds `.shipstudio/`: the opening status, and the two
+   measuring tools embedded with `include_str!` and written into the project,
+   because the agent works there and cannot reach this repo
+2. The agent is handed a brief (`buildMigrationPrompt`) naming the site, the
+   tools, the dev server URL this project actually serves on, and the exact
+   shape of `migration.json` — a real run invented three shapes when the schema
+   was only described, and each one broke the panel
+3. The method lives in the `shipstudio-site-to-code` skill: survey, settle the
+   decisions in one batch, extract the design system from *computed* values,
+   then one verified page before the rest. Tokens before pages is what makes
+   the work converge; one verified page is what stops a bad structural decision
+   being made twelve times
+4. `site-fidelity.mjs` scores the pixel match at chosen widths. The score for a
+   page is its **worst breakpoint, never a mean** — an average is precisely the
+   statistic that hides a broken phone layout, and it caught one in four
+   separate trial runs
+5. `site-structure.mjs` says *what* differs, by reading both pages' computed
+   styles. The score is a good regression signal and a poor diagnostic: one
+   container 60px narrow shifts every image and lights up a tenth of the page
+   while naming none of it
+6. The panel reads the agent's own status file and its comparisons, and shows
+   what is done, being done, not done, and waiting on the user — in that fixed
+   order, present even when empty. **Resume** hands an interrupted migration
+   back to a fresh agent and refreshes its tooling on the way
+
+Full design, the trial results, and the bugs each rule came from:
+[docs/site-migration.md](docs/site-migration.md).
 
 ### Breakpoint Canvas Flow
 

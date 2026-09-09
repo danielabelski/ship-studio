@@ -147,12 +147,15 @@ fn pr_create_refusal(stderr: &str, base: &str) -> Option<CommandError> {
 /// Create a new pull request.
 /// Automatically pushes the branch to the remote first if needed.
 #[tauri::command]
-#[tracing::instrument(skip(project_path, title, body, base), fields(project = %project_path, base = %base))]
+#[tracing::instrument(skip(project_path, title, body, base, described_by_agent), fields(project = %project_path, base = %base))]
 pub async fn create_pull_request(
     app: tauri::AppHandle,
     project_path: String,
     title: String,
     body: Option<String>,
+    // Display name of the agent that wrote `body`, when one did. See the
+    // footer call below for why the caller has to be the one to say.
+    described_by_agent: Option<String>,
     base: String,
 ) -> Result<String, CommandError> {
     let validated_path = validate_project_path(&project_path)?;
@@ -211,7 +214,18 @@ pub async fn create_pull_request(
         }
     }
 
-    let body_str = body.unwrap_or_default();
+    // Same attribution as the commit trailer, in the form a PR body takes: one
+    // line under a rule, after whatever the description actually says. Governed
+    // by the same single setting, so turning it off turns off all of it.
+    //
+    // `described_by_agent` comes from the caller because only the caller knows.
+    // The submit flow falls back to a branch-name title whenever the agent is
+    // unavailable or fails, and a footer crediting an agent for a sentence it
+    // never wrote is the same invention the commit trailer refuses to make.
+    let body_str = crate::commands::team::with_pr_footer(
+        &body.unwrap_or_default(),
+        described_by_agent.as_deref(),
+    );
     let args = vec![
         "pr", "create", "--title", &title, "--body", &body_str, "--base", &base,
     ];

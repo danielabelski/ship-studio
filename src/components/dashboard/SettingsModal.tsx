@@ -34,8 +34,12 @@ import {
   setTerminalGpuEnabled,
   getCompactWorkspaceToolbarEnabled,
   setCompactWorkspaceToolbarEnabled,
+  getCommitAttributionEnabled,
   getElementBreadcrumbEnabled,
+  getTeamSharingEnabled,
+  setCommitAttributionEnabled,
   setElementBreadcrumbEnabled,
+  setTeamSharingEnabled,
   ELEMENT_BREADCRUMB_ENABLED_CHANGED_EVENT,
   getThumbnailsEnabled,
   setThumbnailsEnabled,
@@ -100,6 +104,8 @@ export function SettingsModal({
   const [terminalGpuEnabled, setLocalTerminalGpuEnabled] = useState(true);
   const [compactWorkspaceToolbarEnabled, setLocalCompactWorkspaceToolbarEnabled] = useState(false);
   const [elementBreadcrumbEnabled, setLocalElementBreadcrumbEnabled] = useState(true);
+  const [commitAttributionEnabled, setLocalCommitAttributionEnabled] = useState(true);
+  const [teamSharingEnabled, setLocalTeamSharingEnabled] = useState(true);
   const [thumbnailsOn, setLocalThumbnailsOn] = useState(true);
   const [spotifyWidgetEnabled, setLocalSpotifyWidgetEnabled] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('general');
@@ -125,6 +131,8 @@ export function SettingsModal({
         gpuEnabled,
         compactToolbarEnabled,
         breadcrumbEnabled,
+        attributionEnabled,
+        sharingEnabled,
         thumbnails,
         spotifyEnabled,
         root,
@@ -138,6 +146,8 @@ export function SettingsModal({
         getTerminalGpuEnabled(),
         getCompactWorkspaceToolbarEnabled(),
         getElementBreadcrumbEnabled(),
+        getCommitAttributionEnabled(),
+        getTeamSharingEnabled(),
         getThumbnailsEnabled(),
         isMac() ? getSpotifyWidgetEnabled() : Promise.resolve(false),
         getProjectsRoot().catch(() => ''),
@@ -152,6 +162,8 @@ export function SettingsModal({
         setLocalTerminalGpuEnabled(gpuEnabled);
         setLocalCompactWorkspaceToolbarEnabled(compactToolbarEnabled);
         setLocalElementBreadcrumbEnabled(breadcrumbEnabled);
+        setLocalCommitAttributionEnabled(attributionEnabled);
+        setLocalTeamSharingEnabled(sharingEnabled);
         // `null` = not asked yet; the toggle reflects the default-on behavior
         // (the first auto-capture will show the in-app explainer).
         setLocalThumbnailsOn(thumbnails !== false);
@@ -309,6 +321,28 @@ export function SettingsModal({
       $screen_name: 'Settings',
     });
   }, [elementBreadcrumbEnabled]);
+
+  const handleCommitAttributionToggle = useCallback(() => {
+    const enabled = !commitAttributionEnabled;
+    setLocalCommitAttributionEnabled(enabled);
+    void setCommitAttributionEnabled(enabled);
+    void trackEvent('setting_changed', {
+      setting: 'commit_attribution',
+      value: enabled,
+      $screen_name: 'Settings',
+    });
+  }, [commitAttributionEnabled]);
+
+  const handleTeamSharingToggle = useCallback(() => {
+    const enabled = !teamSharingEnabled;
+    setLocalTeamSharingEnabled(enabled);
+    void setTeamSharingEnabled(enabled);
+    void trackEvent('setting_changed', {
+      setting: 'team_sharing',
+      value: enabled,
+      $screen_name: 'Settings',
+    });
+  }, [teamSharingEnabled]);
 
   const handleThumbnailsToggle = useCallback(() => {
     const newEnabled = !thumbnailsOn;
@@ -545,6 +579,64 @@ export function SettingsModal({
                     disabled={loading}
                     role="switch"
                     aria-checked={thumbnailsOn}
+                  >
+                    <span className="settings-toggle-track">
+                      <span className="settings-toggle-thumb" />
+                    </span>
+                  </button>
+                </div>
+                {/* The one thing in this app that writes words into a shared
+                    repository, so it says exactly what it writes and exactly
+                    who reads it, in the row itself rather than in a doc. */}
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">
+                      Let your agent write the commit message
+                    </span>
+                    <span className="settings-row-description">
+                      When you push, your agent writes the subject and a short paragraph on why you
+                      made the change, and that becomes the commit message. Never your prompts, your
+                      conversation or your terminal. It is permanent history — anyone who can read
+                      the repository, now or later, can read it.
+                    </span>
+                  </div>
+                  <button
+                    className={`settings-toggle ${teamSharingEnabled ? 'on' : 'off'}`}
+                    onClick={handleTeamSharingToggle}
+                    disabled={loading}
+                    role="switch"
+                    aria-label="Let your agent write the commit message"
+                    aria-checked={teamSharingEnabled}
+                  >
+                    <span className="settings-toggle-track">
+                      <span className="settings-toggle-thumb" />
+                    </span>
+                  </button>
+                </div>
+                {/* What Ship Studio writes into your history, next to what it
+                    sends off your machine. Both are "what the app does on your
+                    behalf", which is a different question from how it looks —
+                    this was briefly on the Appearance tab, where it read as a
+                    cosmetic preference rather than a decision about your repo.
+
+                    A settings row rather than a palette command, per the repo's
+                    own rule that one-shot deep settings stay out of Cmd+K. */}
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Credit Ship Studio in commits</span>
+                    <span className="settings-row-description">
+                      Add a <code>Made-With</code> line to the bottom of commits Ship Studio makes,
+                      naming the agent that wrote the message. It is a git trailer, so it never
+                      appears in the subject line or in <code>git log --oneline</code>.
+                    </span>
+                  </div>
+                  <button
+                    className={`settings-toggle ${commitAttributionEnabled ? 'on' : 'off'}`}
+                    onClick={handleCommitAttributionToggle}
+                    disabled={loading}
+                    role="switch"
+                    aria-label="Credit Ship Studio in commits"
+                    aria-checked={commitAttributionEnabled}
                   >
                     <span className="settings-toggle-track">
                       <span className="settings-toggle-thumb" />

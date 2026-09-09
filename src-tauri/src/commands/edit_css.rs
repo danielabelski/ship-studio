@@ -99,7 +99,15 @@ fn cached_sheets(root: &Path) -> Arc<Vec<SheetIndex>> {
             .collect::<Vec<_>>(),
     );
     if let Ok(mut cache) = SHEET_CACHE.lock() {
-        cache.insert(root.to_path_buf(), (Instant::now(), sheets.clone()));
+        // Sweep expired roots before inserting. Entries were only ever read
+        // past their TTL, never removed, so every project visited in a session
+        // kept its whole parsed stylesheet set alive for the life of the
+        // process — data that stopped being usable ten seconds after it was
+        // written. Opportunistic on write, the same pattern the hosting status
+        // cache uses.
+        let now = Instant::now();
+        cache.retain(|_, (at, _)| now.duration_since(*at) < SHEET_CACHE_TTL);
+        cache.insert(root.to_path_buf(), (now, sheets.clone()));
     }
     sheets
 }

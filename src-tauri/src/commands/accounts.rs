@@ -114,6 +114,37 @@ pub fn validate_account_id(account_id: &str) -> Result<(), CommandError> {
 }
 
 // ============ Keychain helpers (macOS `security` CLI) ============
+//
+// The vault is macOS-only. Everything below shells out to `security`, which
+// exists on no other platform, so on Windows and Linux a workspace credential
+// save failed with "Keychain write failed: program not found" — a message that
+// describes a missing binary rather than a missing feature, and that was filed
+// as a malfunction every time (issue #922).
+//
+// Making it *work* elsewhere is a real piece of work with a real decision in
+// it: Windows means the Credential Manager through the Win32 API (no CLI can
+// read a secret back), Linux means Secret Service over D-Bus, which is not
+// present on a headless box or under WSL. Until that is decided, the honest
+// behaviour is to say so — a workspace's credentials are simply not stored on
+// this platform, which is a limitation the user can act on (use the default
+// workspace, or sign in with the provider's own CLI) rather than a bug for
+// them to report.
+
+/// Whether this platform has a credential vault behind these helpers.
+const KEYCHAIN_SUPPORTED: bool = cfg!(target_os = "macos");
+
+/// The refusal used everywhere the vault is asked for and isn't there.
+///
+/// `Expected`, because a platform without an implementation is a known state
+/// with a user-side course of action, not something going wrong.
+fn keychain_unsupported() -> CommandError {
+    CommandError::expected(
+        "Per-workspace credentials are only stored on macOS at the moment — Ship Studio has no \
+         credential vault on this platform yet. Use the default workspace, or sign in with the \
+         provider's own CLI (`vercel login`, `gh auth login`, `claude /login`), and this project \
+         will use those credentials.",
+    )
+}
 
 fn keychain_service(account_id: &str) -> String {
     format!("{KEYCHAIN_PREFIX}{account_id}")
@@ -122,6 +153,10 @@ fn keychain_service(account_id: &str) -> String {
 fn write_to_keychain(account_id: &str, key: &str, value: &str) -> Result<(), CommandError> {
     use std::io::Write;
     use std::process::Stdio;
+
+    if !KEYCHAIN_SUPPORTED {
+        return Err(keychain_unsupported());
+    }
 
     let service = keychain_service(account_id);
     // Pass the secret on stdin rather than as an argv entry — a CLI argument is
@@ -164,6 +199,9 @@ fn write_to_keychain(account_id: &str, key: &str, value: &str) -> Result<(), Com
 }
 
 fn read_from_keychain(account_id: &str, key: &str) -> Option<String> {
+    if !KEYCHAIN_SUPPORTED {
+        return None;
+    }
     let service = keychain_service(account_id);
     let output = create_command("security")
         .args(["find-generic-password", "-a", key, "-s", &service, "-w"])
@@ -182,6 +220,9 @@ fn read_from_keychain(account_id: &str, key: &str) -> Option<String> {
 }
 
 fn delete_from_keychain(account_id: &str, key: &str) {
+    if !KEYCHAIN_SUPPORTED {
+        return;
+    }
     let service = keychain_service(account_id);
     let _ = create_command("security")
         .args(["delete-generic-password", "-a", key, "-s", &service])
@@ -2195,6 +2236,31 @@ mod tests {
         // account, so this must report "not connected" rather than a false green.
         let out = "github.com\n  X Failed to log in to github.com account broken-active (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n\n  \u{2713} Logged in to github.com account good-inactive (keyring)\n  - Active account: false\n";
         assert_eq!(parse_gh_auth_status(out, ""), None);
+    }
+
+    /// Issue #922: on a platform with no vault, a credential save must say so
+    /// rather than reporting that a macOS binary is missing.
+    #[test]
+    fn the_vault_refusal_names_the_limitation_and_is_not_a_bug() {
+        let err = keychain_unsupported();
+        assert!(matches!(err, CommandError::Expected { .. }));
+        let msg = err.to_string();
+        assert!(msg.contains("macOS"), "got: {msg}");
+        assert!(msg.contains("default workspace"), "got: {msg}");
+        // Nothing about a missing program: that was the old message, and it
+        // sent people looking for something to install.
+        assert!(!msg.contains("program not found"), "got: {msg}");
+    }
+
+    /// And on a platform without one, reads answer "nothing stored" rather
+    /// than spawning a binary that isn't there — this runs on every PTY spawn
+    /// for a non-default workspace.
+    #[test]
+    fn reads_are_silent_where_there_is_no_vault() {
+        if KEYCHAIN_SUPPORTED {
+            return;
+        }
+        assert_eq!(read_from_keychain("some-workspace", "VERCEL_TOKEN"), None);
     }
 
     #[test]

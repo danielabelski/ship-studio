@@ -94,6 +94,40 @@
       "lifecycle": "canonical"
     },
     {
+      "name": "Checkbox",
+      "file": "src/components/primitives/Checkbox.tsx",
+      "exports": [
+        "Checkbox"
+      ],
+      "purpose": "Boolean selection control for rows and lists, drawn in the app's own visual language.",
+      "owner": "primitives/choices",
+      "props": [
+        "checked",
+        "onChange",
+        "label",
+        "disabled",
+        "className",
+        "stopPropagation"
+      ],
+      "variants": [
+        "default"
+      ],
+      "states": [
+        "checked",
+        "unchecked",
+        "hover",
+        "focus-visible",
+        "disabled"
+      ],
+      "accessibility": "Wraps a real <input type=\"checkbox\">, visually hidden under a drawn box, so the space bar, form semantics and screen-reader announcement stay native. `label` is required and becomes the accessible name; the drawn box is aria-hidden.",
+      "style": "src/styles/components/checkbox.css",
+      "example": "docs/design-system.md#development-primitive-lab",
+      "tests": [
+        "src/components/team/TeamThreadsPanel.test.tsx"
+      ],
+      "lifecycle": "canonical"
+    },
+    {
       "name": "ContextMenu family",
       "file": "src/components/primitives/ContextMenu.tsx",
       "exports": [

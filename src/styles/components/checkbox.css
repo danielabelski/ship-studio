@@ -1,0 +1,65 @@
+/*
+ * The drawn checkbox. See components/primitives/Checkbox.tsx for why the real
+ * input is still in the DOM underneath.
+ */
+
+.checkbox {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: var(--control-checkbox-size);
+  height: var(--control-checkbox-size);
+}
+
+/* Covers the drawn box exactly, so the whole control is the hit target and the
+   pointer is over a real input rather than over a label forwarding clicks. */
+.checkbox__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.checkbox__input:disabled {
+  cursor: not-allowed;
+}
+
+.checkbox__box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border: var(--stroke-1) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: transparent;
+  transition:
+    background var(--transition),
+    border-color var(--transition),
+    color var(--transition);
+  pointer-events: none;
+}
+
+.checkbox__input:hover:not(:disabled) + .checkbox__box {
+  border-color: var(--accent-active);
+}
+
+.checkbox__input:checked + .checkbox__box {
+  background: var(--accent-active);
+  border-color: var(--accent-active);
+  color: var(--text-on-accent);
+}
+
+/* The ring goes on the drawn box, since the input it belongs to is invisible. */
+.checkbox__input:focus-visible + .checkbox__box {
+  outline: var(--stroke-2) solid var(--accent-active);
+  outline-offset: var(--space-02);
+}
+
+.checkbox__input:disabled + .checkbox__box {
+  opacity: var(--button-disabled-opacity);
+}

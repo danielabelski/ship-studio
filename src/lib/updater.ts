@@ -14,6 +14,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { logger } from './logger';
+import { asCommandError, formatCommandError } from './errors';
 
 /** Injected by Vite/Vitest from package.json; absent in bare test runners. */
 declare const __APP_VERSION__: string | undefined;
@@ -166,7 +167,7 @@ export async function getRunningAppVersion(): Promise<string | null> {
     if (binaryVersion) candidates.push(binaryVersion);
   } catch (error) {
     logger.warn('[Updater] Could not read the running app version', {
-      error: error instanceof Error ? error.message : String(error),
+      error: formatCommandError(asCommandError(error)),
     });
   }
 
@@ -223,7 +224,7 @@ export async function checkForUpdate(): Promise<{ update: UpdateHandle; info: Up
     }
     return null;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatCommandError(asCommandError(error));
     // The manifest fetched fine but simply has no entry for this platform
     // (e.g. the Windows manifest wasn't carried forward onto the "latest"
     // release). Treat as "no update available" rather than an error — there

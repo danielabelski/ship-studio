@@ -1,45 +1,75 @@
-# Canvas comments
+# Comments
 
-Use the **Comments** speech-bubble toggle in the workspace header's tool row — beside Agent,
-Elements and Variables — to collect feedback. It badges the number of pending notes, and
-opening it brings the preview forward and starts the dev server the way Variables does. Click an
-actual page element, write the note, and choose **Save comment**. Adding a comment never calls an
-agent or writes to website source. Hovering outlines the target in Ship Studio green
-and dims the surrounding canvas. The target stays clear while writing the note.
+Comments live in **Team → Comments**, and that tab being open is what arms
+clicking an element in the preview. There is no separate comments mode and no
+floating comments panel: opening the tab brings the preview forward and starts
+the dev server the way Variables does, and the tab says why you cannot place one
+when the preview is not running.
 
-The compact floating panel can be moved or closed without changing the
-preview viewport. While composing, the backlog and send controls are hidden. Click
-another element to retarget without losing draft text; Escape clears the canvas
-highlight, and the next click selects a fresh target. **A note lives on the thing it is about, not in a list.** Each saved comment is a
-numbered pin on its element; clicking the pin opens the note itself beside it — body,
-scope, sent state, Edit and Delete — and hovering one outlines its element without
-moving the page. The composer opens at the element too. Pins are placed from a live
-rect on every scroll, resize and DOM change, so they follow their element instead of
-drifting; a card flips to the other side of its pin rather than overflowing the frame.
-A sent note's pin is outlined rather than filled.
+Click an actual page element, write the note, and choose **Save comment**. Adding
+a comment never calls an agent or writes to website source. Hovering outlines the
+target in Ship Studio green and dims the surrounding canvas; the target stays
+clear while writing.
 
-What remains in the floating panel is only what is about the *batch* rather than any one
-note: how many are selected, how much context to send, which terminal to send to, the
-handoff, and a jump list for reaching a pin that is off-screen or on another route. All pending notes start selected; uncheck notes to hold them for later. Review the generated prompt
-and choose the destination terminal before sending. Sending pastes one bracketed
-batch into that terminal. It does not press Enter. The user starts the request in
-the terminal and reviews its results before deleting comments with the trash icon.
+**A note lives on the thing it is about, not only in a list.** Each comment is a
+numbered pin on its element; clicking the pin opens the note beside it, and
+hovering one outlines its element without moving the page. Pins are placed from a
+live rect on every scroll, resize and DOM change, so they follow their element
+instead of drifting.
+
+A pin is drawn only when the element still matches — same tag, same text. A
+comment written on another branch, or on a page that has since changed, lists in
+the panel and draws no pin rather than pointing at the wrong thing.
+
+Click another element to retarget without losing draft text; Escape clears the
+highlight, and the next click selects a fresh target. Saving is asynchronous, so
+the button is dead while the record is written — clicking it repeatedly cannot
+file the same note twice.
+
+## Handing comments to an agent
+
+Nothing is selected by default. Ticking a comment reveals the send button, named
+for how many are going: **Send comment to agent** for one, **Send comments to
+agent** for several. Sending pastes one prompt into the chosen terminal. It does
+not press Enter — you start the request and review the results yourself.
+
+The prompt carries each thread's id, so an agent can say which note it addressed
+and write a `resolve` record for it (see the `shipstudio-team` skill in
+[team-multiplayer.md](team-multiplayer.md)). Everything interpolated into it is
+flattened to a single line: element text is captured from a live page, and a page
+can contain a line that would otherwise forge a heading in the prompt.
+
+The tick is one piece of state shared by the pin and the panel row, so the two
+can never disagree about what is going.
 
 ## State and storage
 
-- One list shows saved comments, with Edit and Delete actions. Sent comments
-  show their destination; sent means the terminal accepted the paste.
-- Edit changes the text, screen sizes, or target by clicking another element.
-  Saving edits makes a sent comment ready to send again without a separate action.
-- The trash icon removes the note from local storage. Legacy resolved notes remain
-  accessible in the list and can be edited or deleted. There are no status tabs.
-- Notes persist in the app webview's local storage, keyed by the full project
-  path and actual working branch. They are local to this installation and are
-  not committed, synced, or shared with other users.
-- Each note uses a separate storage key. Storage failures surface an error and
-  preserve existing data. A failed terminal handoff leaves the batch pending.
-- Unsaved composer text survives closing the panel, but not leaving the project
-  or branch or restarting the app. Saved backlog notes survive restarts.
+Comments are **records in the repository**, not local notes. Each one is a
+write-once JSON file under `.shipstudio-team/threads/`, folded into threads at
+read time, and carried between machines on a ref of their own. See
+[team-multiplayer.md](team-multiplayer.md) for the record format and the
+transport.
+
+What that changes, compared with the localStorage version this replaces:
+
+- **They are shared.** A teammate sees a comment once it has been pushed and
+  they have fetched.
+- **They are not branch-scoped.** The branch a note was written on is recorded
+  and shown, but the note is visible from every branch — a review comment that
+  only exists on the branch being reviewed is a note to yourself.
+- **Editing and deleting are appends.** An edit writes an `edit` record and a
+  delete writes a `retract`; the original file stays, because two people acting
+  at once must never produce a merge conflict. Authorship is enforced when
+  records are folded, so a record claiming to edit someone else's message is
+  written and never rendered.
+- **Resolution is shared**; whether *you* pasted a note into a terminal is not,
+  and stays in this machine's localStorage.
+
+Notes written before this change are migrated into records the first time their
+project is opened, once, and the originals are left in localStorage untouched.
+
+A failed write keeps the comment on screen and says so. A comment saved while
+the remote is unreachable is kept and counted as unshared rather than lost.
 
 ## Element context and agent prompt
 
@@ -75,27 +105,32 @@ edit the note and click the intended element to update it.
 
 - `useCanvasCommentsLayer` is a layer hook, not a component, because its halves mount
   in different places — the same arrangement `useElementStructure` has with
-  `ElementToolbar`. It returns `bar` (the batch panel) and `pins(scale, bounds)`,
-  which `Preview` drops into the iframe wrapper for a single frame and into the
-  canvas's `activeFrameOverlay` for the active frame. That overlay is an unscaled
+  `ElementToolbar`. It returns `pins(scale, bounds)`, which `Preview` drops into
+  the iframe wrapper for a single frame and into the canvas's
+  `activeFrameOverlay` for the active frame. That overlay is an unscaled
   screen-pixel layer, so frame coordinates are multiplied by the canvas scale there.
 - Pins and cards are drawn host-side in React with house primitives; the injected
   script only *reports* geometry (`locations.at`), validated by `isCommentPlacement`
   before use. Comments bind to `editorFrameRef` — the frame the user is actually in.
-- The layer does not own its open state: the toggle lives in `WorkspaceHeader` and
-  `WorkspaceView` holds the flag, so the header can badge the pending count (reported
-  up via `onPendingCountChange`). Opening comments closes the visual editor — the two
-  are mutually exclusive preview surfaces.
-- `CommentsPanel`, `CommentPins` and `CommentComposer` use the existing button,
-  empty-state, segmented-control, and dockable-panel primitives.
+- The layer does not own its open state. Team → Comments being open *is* the
+  mode: `useTeamWorkspace` reports `commentsActive`, and `useWorkspaceComments`
+  brings the preview forward when it turns on. Opening comments closes the visual
+  editor — the two are mutually exclusive preview surfaces.
+- `useCanvasComments` is an adapter over `teamStore`, not a store of its own. It
+  maps threads into the `CanvasComment` shape the pins and composer already
+  speak, so the storage moved without the preview surfaces changing.
+- `CommentPins` and `CommentComposer` use the existing button, empty-state,
+  checkbox and dockable-panel primitives.
 - `useCommentBridge` checks the message source against the actual preview frame.
   It only forwards validated target data and never sends a prompt on a frame event.
 - `commentAgents` resolves the selected project/tab at handoff time.
   `Terminal.pastePrompt` rejects absent/exited PTYs and terminals without bracketed
   paste support, blocks known setup/permission screens and busy agents, strips terminal
   control characters, and awaits the backend write.
-- Primary entry points are also registered in Cmd+K.
-- Web previews only. Remote collaboration and automatic resolution are out of scope.
+- Primary entry points are registered in Cmd+K, scoped to a project so they open
+  the workspace panel rather than the home screen.
+- Placing a comment needs a live web preview. Reading, replying and resolving
+  work anywhere, including a folder that is not a git repository.
 
 ## Validation
 

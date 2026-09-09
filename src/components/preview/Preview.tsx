@@ -168,7 +168,6 @@ interface PreviewProps {
   /** Comments open state lives in the workspace header, which owns the toggle. */
   commentsOpen?: boolean;
   onCommentsOpenChange?: (open: boolean) => void;
-  onCommentsPendingCountChange?: (count: number) => void;
   /** Dev server port (default: 3000) */
   port?: number;
   /** Absolute path to the project directory */
@@ -320,7 +319,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     activeCommentAgentId,
     commentsOpen = false,
     onCommentsOpenChange,
-    onCommentsPendingCountChange,
     port = 3000,
     projectPath,
     onServerReady,
@@ -501,7 +499,16 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
       if (typeof value === 'number') resize.previewAtWidth(value);
       else resize.handleBreakpointClick(value);
     },
-    getViewportWidth: () => resize.customWidth,
+    // On the canvas the width that matters is the ACTIVE frame's — it is the
+    // frame the agent reads, clicks in, and screenshots. `resize.customWidth`
+    // there is the stale focus-mode width from before the canvas was opened.
+    getViewportWidth: () => (canvasMode ? canvasFrameWidth : resize.customWidth),
+    canvasMode,
+    // The activity overlay is drawn over the active frame's whole stage; on the
+    // canvas only the host knows that box, because the page in there has been
+    // told its viewport is a device.
+    getOverlayFrameSize: () =>
+      canvasMode ? { w: canvasFrameWidth, h: canvasFrameStageHeight } : null,
   });
 
   // Fullscreen: the container goes position:fixed over the window below the
@@ -833,7 +840,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     activeAgentId: activeCommentAgentId,
     open: commentsOpen,
     onOpenChange: onCommentsOpenChange ?? (() => undefined),
-    onPendingCountChange: onCommentsPendingCountChange,
     currentPage: conn.currentPage,
     navigate: conn.handlePageSelect,
     available: conn.serverReady && !isBranchSwitching && !isCropMode,
@@ -1513,7 +1519,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   if (conn.isLoading || conn.isStopped || conn.hasError) {
     return (
       <>
-        {comments.bar}
         <DevServerStatus
           // A known-dead process escalates straight to the error card — polling
           // a port nothing listens on can only end in the same place, minutes
@@ -1651,8 +1656,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                 </span>
               </Tooltip>
             )}
-
-            {comments.bar}
 
             {onToggleLogs && (
               <ToggleButton
@@ -1925,6 +1928,10 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               onBackgroundClick={deselectOnCanvas}
               activeFrameOverlay={(scale) => (
                 <>
+                  {/* Agent activity layer. On the canvas it belongs to the
+                    ACTIVE frame — that is the only frame the agent acts in,
+                    and a glow around the whole canvas would claim otherwise. */}
+                  <AgentActivityOverlay />
                   {comments.pins(scale, {
                     w: canvasFrameWidth * scale,
                     h: canvasFrameStageHeight * scale,
@@ -1983,7 +1990,21 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                   : `${resize.customHeight + RESIZE_HANDLE_PX}px`,
             }}
           >
-            <div ref={setIframeWrapperEl} className="preview-iframe-wrapper">
+            <div
+              ref={setIframeWrapperEl}
+              className="preview-iframe-wrapper"
+              // `overflow: hidden` still makes this a scroll container — one
+              // with no scrollbar, so anything that scrolls it strands the
+              // frame where the user cannot bring it back. Nothing scrolls it
+              // on purpose; the overlays absolutely positioned over the frame
+              // (comment composer, element toolbar, plugin panels) do it by
+              // accident, because focus() reveals what it focuses. Snap back.
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                if (el.scrollTop !== 0) el.scrollTop = 0;
+                if (el.scrollLeft !== 0) el.scrollLeft = 0;
+              }}
+            >
               <iframe
                 key={projectPath}
                 ref={iframeRef}
@@ -2008,8 +2029,14 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                     : undefined
                 }
               />
-              {/* Pinned comments, tracking their elements in the live frame */}
-              {!canvasMode && comments.pins(1, iframeSize)}
+              {/* Pinned comments, tracking their elements in the live frame.
+                  The frame reports rects in its OWN pixels while this layer is
+                  an unscaled sibling of it, so a shrunk-to-fit preview needs
+                  the same previewScale the iframe's transform uses — at 1 the
+                  pins and composer drift further from their elements the
+                  further down the page they are, and slide at their own rate
+                  when it scrolls. previewScale is 1 when nothing is scaled. */}
+              {!canvasMode && comments.pins(resize.previewScale, iframeSize)}
               {/* Structural-edit toolbar, tracking the canvas selection box */}
               {activeEditMode && (
                 <ElementToolbar

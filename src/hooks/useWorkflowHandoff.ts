@@ -28,6 +28,7 @@ import {
   type HandoffFinding,
 } from '../lib/workflowHandoff';
 import { logger } from '../lib/logger';
+import type { ToastAction, ToastOptions, ToastType } from './useToasts';
 
 const RETRY_MS = 400;
 const GIVE_UP_MS = 60_000;
@@ -92,7 +93,12 @@ interface HandoffTerminals {
 export function useFindingHandoff(
   currentProjectPath: string | null,
   { terminalTabs, maxTerminalTabs, addTerminalTab }: HandoffTerminals,
-  showToast: (message: string, type?: 'success' | 'error' | 'info') => void
+  showToast: (
+    message: string,
+    type?: ToastType,
+    action?: ToastAction,
+    options?: ToastOptions
+  ) => void
 ): void {
   const terminalTabCount = terminalTabs.length;
   const startAgentWithPrompt = useCallback(
@@ -123,7 +129,13 @@ export function useFindingHandoff(
   const onFailed = useCallback(
     (finding: HandoffFinding | null) => {
       trackFindingFix(finding, atCapacity ? 'no_room' : 'failed');
-      showToast(atCapacity ? HANDOFF_NO_ROOM_MESSAGE : HANDOFF_FAILED_MESSAGE, 'error');
+      // Being out of tabs is the app enforcing its own cap and telling the
+      // user how to proceed — a refusal, not a fault, so it shows like an
+      // error without being filed as one (issue #920). A handoff that failed
+      // for any other reason genuinely did go wrong.
+      showToast(atCapacity ? HANDOFF_NO_ROOM_MESSAGE : HANDOFF_FAILED_MESSAGE, 'error', undefined, {
+        expected: atCapacity,
+      });
     },
     [showToast, atCapacity]
   );

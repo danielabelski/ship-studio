@@ -188,6 +188,59 @@ export async function setCompactWorkspaceToolbarEnabled(enabled: boolean): Promi
   }
 }
 
+// ============ Commit attribution ============
+
+/**
+ * Whether commits Ship Studio makes carry the `Made-With` attribution trailer.
+ *
+ * A trailer, never the subject line, so `git log --oneline` reads exactly as it
+ * did before. Defaults to on — and to on when the read fails, matching the
+ * backend, so a momentary failure never silently changes what goes into
+ * somebody's history.
+ */
+export async function getCommitAttributionEnabled(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('get_commit_attribution_enabled');
+  } catch {
+    return true;
+  }
+}
+
+/** Turn the `Made-With` commit trailer on or off. */
+export async function setCommitAttributionEnabled(enabled: boolean): Promise<void> {
+  try {
+    await invoke('set_commit_attribution_enabled', { enabled });
+  } catch {
+    // Silently fail, matching the other non-critical UI preferences.
+  }
+}
+
+// ============ Written commit messages ============
+
+/**
+ * Whether pushing from Ship Studio asks an agent to write the commit message.
+ *
+ * Defaults to on, and to on when the read fails, matching the backend. A feed
+ * of bare subject lines is the GitHub half forever, which is the state this
+ * feature exists to improve on.
+ */
+export async function getTeamSharingEnabled(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('get_team_sharing_enabled');
+  } catch {
+    return true;
+  }
+}
+
+/** Turn written commit messages on or off. */
+export async function setTeamSharingEnabled(enabled: boolean): Promise<void> {
+  try {
+    await invoke('set_team_sharing_enabled', { enabled });
+  } catch {
+    // Silently fail, matching the other non-critical UI preferences.
+  }
+}
+
 // ============ Element breadcrumb ============
 
 /** Whether the selected element's DOM breadcrumb is shown in the preview. */

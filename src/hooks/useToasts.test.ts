@@ -233,4 +233,62 @@ describe('useToasts', () => {
 
     expect(vi.mocked(reportError)).not.toHaveBeenCalled();
   });
+
+  /**
+   * Issue #920: a refusal the app decided on ("that project already has the
+   * maximum number of agent tabs") is a problem for the user and belongs in
+   * an error toast, but it is not a malfunction and must not be filed as one.
+   * Before this, the only way to stay out of telemetry was to demote the
+   * message to `info`, which is why the same report kept coming back from a
+   * different call site each time.
+   */
+  it('does not report an error toast the caller marked expected', () => {
+    vi.mocked(reportError).mockClear();
+    const { result } = renderHook(() => useToasts());
+
+    act(() => {
+      result.current.showToast('Close a tab and send this again.', 'error', undefined, {
+        expected: true,
+      });
+    });
+
+    expect(vi.mocked(reportError)).not.toHaveBeenCalled();
+  });
+
+  it('still shows an expected error toast, and still keeps it on screen', () => {
+    const { result } = renderHook(() => useToasts());
+
+    act(() => {
+      result.current.showToast('Close a tab and send this again.', 'error', undefined, {
+        expected: true,
+      });
+    });
+
+    expect(result.current.toasts).toHaveLength(1);
+    expect(result.current.toasts[0]).toMatchObject({
+      message: 'Close a tab and send this again.',
+      type: 'error',
+    });
+
+    // Error toasts persist until dismissed — being expected doesn't change
+    // that, only whether it is reported.
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(result.current.toasts).toHaveLength(1);
+  });
+
+  it('reports an error toast that explicitly says it is not expected', () => {
+    vi.mocked(reportError).mockClear();
+    const { result } = renderHook(() => useToasts());
+
+    act(() => {
+      result.current.showToast('Real failure', 'error', undefined, { expected: false });
+    });
+
+    expect(vi.mocked(reportError)).toHaveBeenCalledWith({
+      message: 'Real failure',
+      source: 'toast',
+    });
+  });
 });

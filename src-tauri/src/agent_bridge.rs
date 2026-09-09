@@ -662,6 +662,10 @@ fn tools_list_result() -> Value {
             })
         })
         .collect();
+    // The Team tools are handled in Rust rather than forwarded to a window, so
+    // they carry their own definitions. See `commands::team::bridge`.
+    let mut tools = tools;
+    tools.extend(crate::commands::team::bridge::tool_definitions());
     json!({ "tools": tools })
 }
 
@@ -683,6 +687,27 @@ async fn handle_rpc(app: &tauri::AppHandle, project_path: &str, message: &Value)
                 .and_then(|p| p.get("arguments"))
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+            // Team tools write files. Forwarding them to a window would make
+            // recording your work depend on a preview being open, which has
+            // nothing to do with it.
+            if crate::commands::team::bridge::handles(name) {
+                let resolved = if project_path == ACTIVE_PROJECT_SEGMENT {
+                    match resolve_active_project(app) {
+                        Ok(path) => path,
+                        Err(message) => return success_response(id, tool_error_result(&message)),
+                    }
+                } else {
+                    project_path.to_string()
+                };
+                let result = match crate::utils::validate_project_path(&resolved) {
+                    Ok(project) => {
+                        crate::commands::team::bridge::dispatch(&project, name, arguments).await
+                    }
+                    Err(error) => tool_error_result(&error.to_string()),
+                };
+                return success_response(id, result);
+            }
+
             match TOOLS.iter().find(|t| t.name == name) {
                 Some(tool) => {
                     let result = dispatch_tool(app, project_path, tool, arguments).await;
@@ -854,11 +879,28 @@ mod tests {
     fn test_tools_list_contains_all_tools() {
         let result = tools_list_result();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), TOOLS.len());
+        // The preview tools plus the Team tools, which are served from here but
+        // handled in Rust rather than forwarded to a window.
+        assert_eq!(
+            tools.len(),
+            TOOLS.len() + crate::commands::team::bridge::tool_definitions().len()
+        );
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"preview_console"));
         assert!(names.contains(&"preview_screenshot"));
         assert!(names.contains(&"preview_navigate"));
+        assert!(names.contains(&"team_resolve_comment"));
+        assert!(names.contains(&"team_open_comments"));
+
+        // Everything advertised must be routable, or an agent gets a tool that
+        // answers "unknown tool" when it calls it.
+        for name in &names {
+            assert!(
+                crate::commands::team::bridge::handles(name)
+                    || TOOLS.iter().any(|tool| tool.name == *name),
+                "{name} is advertised but nothing dispatches it"
+            );
+        }
         // Every tool must have a valid object schema.
         for tool in tools {
             assert_eq!(tool["inputSchema"]["type"], "object");

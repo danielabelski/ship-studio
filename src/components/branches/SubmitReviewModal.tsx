@@ -17,6 +17,7 @@ import {
   getDefaultBaseBranch,
 } from '../../lib/branches';
 import { generatePRDescription } from '../../lib/ai';
+import { getActiveAgent } from '../../lib/agent';
 import { commitChanges } from '../../lib/git';
 import { trackEvent, trackError } from '../../lib/analytics';
 import {
@@ -166,7 +167,11 @@ export function SubmitReviewModal({
         projectPath,
         prTitle,
         prDescription || null,
-        baseBranch
+        baseBranch,
+        // Only when the agent actually wrote the description. The fallback
+        // above is a branch-name title, and the attribution footer must not
+        // credit an agent for a sentence it never saw.
+        usedAi ? getActiveAgent().displayName : null
       );
       void trackEvent('pr_created', {
         used_ai: usedAi,

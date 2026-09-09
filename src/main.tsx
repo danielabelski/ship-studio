@@ -21,6 +21,9 @@ import { exposeReactGlobals, lookupBlobOwner, markPluginCrashed } from './lib/pl
 import { uninstallPlugin } from './lib/plugins';
 import { exposePluginContextRef } from './contexts/PluginContext';
 import { reportError } from './lib/errorReporting';
+import { classifyRejection, describeRejectionReason } from './lib/globalErrorFilters';
+import { createScrollbarScanner, rootsFromMutations } from './lib/scrollbarScan';
+import { isExpectedCommandError } from './lib/errors';
 import { OverlayScrollbars } from 'overlayscrollbars';
 import 'overlayscrollbars/overlayscrollbars.css';
 
@@ -39,6 +42,12 @@ window.addEventListener('error', (event) => {
     msg.includes('Plugin context') ||
     msg.includes('plugin-sdk');
   if (!isPluginError) {
+    // A backend-classified Expected value thrown synchronously is the same
+    // non-bug it is on the rejection path (issue #916) — never file it.
+    if (isExpectedCommandError(event.error)) {
+      console.warn('[Ship Studio] Uncaught Expected backend error — not reported:', msg);
+      return;
+    }
     // App bug (not third-party plugin code) — report to the admin agent.
     reportError({
       message: msg,
@@ -61,52 +70,37 @@ window.addEventListener('error', (event) => {
     );
   }
 });
-// Promises are often rejected with plain objects rather than Errors (Tauri
-// IPC error payloads especially) — String() renders those as "[object
-// Object]", which both destroys the diagnostic and collapses every such
-// rejection onto one dedupe fingerprint (issue #333). Serialize the shape.
-const describeRejectionReason = (r: unknown): string => {
-  if (typeof r === 'string') return r;
-  try {
-    return JSON.stringify(r) ?? String(r);
-  } catch {
-    return String(r); // circular structures etc.
-  }
-};
-
 window.addEventListener('unhandledrejection', (event) => {
   const reason: unknown = event.reason;
-  const stack = reason instanceof Error ? reason.stack || '' : describeRejectionReason(reason);
   const message = reason instanceof Error ? reason.message : describeRejectionReason(reason);
 
-  if (stack.includes('blob:')) {
-    event.preventDefault();
-    console.error('[Ship Studio] Plugin unhandled rejection caught by global handler:', reason);
-    return;
-  }
+  switch (classifyRejection(reason)) {
+    case 'plugin':
+      event.preventDefault();
+      console.error('[Ship Studio] Plugin unhandled rejection caught by global handler:', reason);
+      return;
 
-  // Silently drop Tauri's internal race: when a plugin:pty|read invoke's
-  // response arrives after the component that issued it unmounted (common
-  // during rapid project switches), the runtime looks up a listener that
-  // was already garbage-collected and throws TypeError accessing
-  // `listeners[eventId].handlerId` from its injected bootstrap script.
-  // This is a Tauri v2 runtime bug — not our code — and doesn't affect
-  // functionality. Suppressing to keep the console clean.
-  if (
-    message.includes('listeners[eventId]') ||
-    stack.includes('listeners[eventId]') ||
-    (message.includes('handlerId') && stack.includes('user-script'))
-  ) {
-    event.preventDefault();
-    return;
-  }
+    case 'tauri-race':
+      // Inert Tauri v2 runtime race — suppressed to keep the console clean.
+      event.preventDefault();
+      return;
 
-  // Genuine unhandled rejection from app code — report to the admin agent.
-  reportError({
-    message,
-    stack: reason instanceof Error ? reason.stack : undefined,
-    source: 'unhandled-rejection',
-  });
+    case 'expected':
+      // The backend already classified this a recognized environment state
+      // with a user-side fix. Nobody caught the promise, which is worth a
+      // local trace, but it is not a malfunction and must not be filed as
+      // one (issue #916).
+      console.warn('[Ship Studio] Uncaught Expected backend error — not reported:', message);
+      return;
+
+    case 'report':
+      // Genuine unhandled rejection from app code — report to the admin agent.
+      reportError({
+        message,
+        stack: reason instanceof Error ? reason.stack : undefined,
+        source: 'unhandled-rejection',
+      });
+  }
 });
 
 // Patch removeChild to handle nodes relocated by OverlayScrollbars.
@@ -140,10 +134,9 @@ Node.prototype.insertBefore = function <T extends Node>(newNode: T, referenceNod
   return origInsertBefore.call(this, newNode, referenceNode) as T;
 };
 
-// Initialize OverlayScrollbars on scrollable elements.
-// Uses a debounced MutationObserver to catch dynamically added containers.
-// Skips elements with scrollbar-width: none (intentionally hidden scrollbars).
-const OS_ATTR = 'data-os-init';
+// Attach OverlayScrollbars to scrollable elements, wherever and whenever they
+// appear. The deciding — and, more to the point, the *not* re-deciding — lives
+// in `lib/scrollbarScan.ts`; this half owns the options and the observer.
 const OS_OPTS = { scrollbars: { theme: 'os-theme-shipstudio', autoHide: 'move' as const } };
 const ASSET_SCROLL_SELECTOR = '.assets-list-container';
 const ASSET_OS_OPTS = {
@@ -198,47 +191,21 @@ const OS_SKIP_SELECTOR = [
   // clipping, so the canvas's own height feeds back into the size it measures
   // itself by and the surface runs away to millions of pixels.
   '.preview-canvas',
-  // Comments replace draft/list children often; preserve React's DOM ownership.
-  '.canvas-comments-panel',
+  // The comment list replaces its children often; preserve React's DOM
+  // ownership. It lives in the Team panel now rather than a floating one.
+  '.team-thread-list',
 ].join(', ');
 
-function initScrollbars() {
-  document.querySelectorAll<HTMLElement>('*').forEach((el) => {
-    // Skip elements already processed
-    if (el.hasAttribute(OS_ATTR)) return;
-    // Skip OverlayScrollbars internal elements (viewport, content, scrollbar wrappers).
-    // This is CRITICAL: OS creates a viewport with overflow:scroll inside the host.
-    // Without this guard, initScrollbars would detect that viewport, init OS on it,
-    // creating another viewport inside it — an infinite nesting loop that causes
-    // 100% CPU and ever-growing memory.
-    if (
-      el.hasAttribute('data-overlayscrollbars-viewport') ||
-      el.hasAttribute('data-overlayscrollbars-padding') ||
-      el.hasAttribute('data-overlayscrollbars-content') ||
-      el.hasAttribute('data-overlayscrollbars') ||
-      el.closest('[data-overlayscrollbars]')
-    )
-      return;
-    // Skip non-HTML elements (SVG, etc.)
-    if (!(el instanceof HTMLElement)) return;
-    const isAssetScrollContainer = el.matches(ASSET_SCROLL_SELECTOR);
-    // Skip elements inside modals, overlays, dropdowns, except the Assets
-    // browser, whose scrollbar is intentionally rendered as an overlay.
-    if (!isAssetScrollContainer && el.closest(OS_SKIP_SELECTOR)) return;
-
-    const style = getComputedStyle(el);
-    // Skip elements that intentionally hide scrollbars
-    if (style.scrollbarWidth === 'none') return;
-    const oy = style.overflowY;
-    if (oy === 'auto' || oy === 'scroll') {
-      el.setAttribute(OS_ATTR, '');
-      OverlayScrollbars(el, isAssetScrollContainer ? ASSET_OS_OPTS : OS_OPTS);
-    }
-  });
-}
+const scrollbarScanner = createScrollbarScanner({
+  skipSelector: OS_SKIP_SELECTOR,
+  assetSelector: ASSET_SCROLL_SELECTOR,
+  attach: (el, isAssetScrollContainer) => {
+    OverlayScrollbars(el, isAssetScrollContainer ? ASSET_OS_OPTS : OS_OPTS);
+  },
+});
 
 requestAnimationFrame(() => {
-  initScrollbars();
+  scrollbarScanner.scan(document.body);
 
   // Disconnect previous observer if HMR reload
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
@@ -247,24 +214,52 @@ requestAnimationFrame(() => {
     prevObserver.disconnect();
   }
 
-  let timer: number;
+  // Records are collected across the debounce window rather than dropped,
+  // because they are now the whole input: a coalesced batch that forgot which
+  // subtrees arrived would have nothing left to scan but the document.
+  let timer: number | undefined;
+  let pending: MutationRecord[] = [];
   let running = false;
-  const observer = new MutationObserver(() => {
-    // Don't re-schedule if already running (prevents cascading mutations from re-triggering)
+
+  const flush = () => {
+    timer = undefined;
+    const records = pending;
+    pending = [];
+    running = true;
+    const { added, changed } = rootsFromMutations(records);
+    // A class or inline-style change can turn an element — or, through the
+    // cascade, one of its descendants — scrollable when it wasn't.
+    for (const el of changed) {
+      if (el.isConnected) scrollbarScanner.invalidate(el);
+    }
+    for (const el of changed) {
+      if (el.isConnected) scrollbarScanner.scan(el);
+    }
+    for (const el of added) {
+      if (el.isConnected) scrollbarScanner.scan(el);
+    }
+    // Cleared a frame later so the mutations this pass just caused (attaching
+    // OverlayScrollbars rewrites the host's children) don't re-trigger it.
+    requestAnimationFrame(() => {
+      running = false;
+    });
+  };
+
+  const observer = new MutationObserver((records) => {
     if (running) return;
-    clearTimeout(timer);
-    timer = window.setTimeout(() => {
-      running = true;
-      initScrollbars();
-      // Delay clearing the flag so mutations caused by initScrollbars itself are ignored
-      requestAnimationFrame(() => {
-        running = false;
-      });
-    }, 250);
+    pending.push(...records);
+    if (timer !== undefined) window.clearTimeout(timer);
+    timer = window.setTimeout(flush, 250);
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
   (window as any).__scrollbarObserver = observer;
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    // The only attributes that can change computed overflow.
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+  });
 });
 
 // Parse project path from URL if present (for project windows)

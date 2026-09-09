@@ -87,12 +87,24 @@ const notify = () => {
 const isPreviewOrigin = (origin: string) =>
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 
-/** When set, only this frame's telemetry is collected and only this frame is
- *  asked for DOM snapshots. The breakpoint canvas runs several preview frames
- *  at once; without this the inspector would interleave four copies of every
- *  console line and pay for four DOM serializations. Null (focus mode, where
- *  there is only one preview frame) accepts every preview-origin frame. */
+/** When set, this is the ONE preview frame the host talks to: only its
+ *  telemetry is collected, only it is asked for DOM snapshots, and only it
+ *  executes agent actions (see `execPreviewAction`). The breakpoint canvas
+ *  runs several preview frames at once; without this the inspector would
+ *  interleave four copies of every console line, pay for four DOM
+ *  serializations, and the agent would click four times. Null (focus mode,
+ *  where there is only one preview frame) accepts every preview-origin
+ *  frame. */
 let inspectSource: Window | null = null;
+
+/**
+ * The frame the host is talking to, or null in focus mode ("whichever preview
+ * frame is there"). Exported so the agent's action channel targets the same
+ * frame the inspector reads — a canvas where the agent clicks in a frame the
+ * user isn't in, and reports back what a different frame answered, is worse
+ * than no canvas at all.
+ */
+export const getInspectSource = (): Window | null => inspectSource;
 
 const handleMessage = (event: MessageEvent) => {
   if (!isPreviewOrigin(event.origin)) return;

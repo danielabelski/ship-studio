@@ -99,6 +99,17 @@ export const baseCommands: CommandMap = {
   get_pinned_projects: [],
   get_settings: {},
   get_compact_workspace_toolbar_enabled: false,
+  // Both default-on in the product, so captures show what people actually see.
+  get_element_breadcrumb_enabled: true,
+  get_commit_attribution_enabled: true,
+  get_team_sharing_enabled: true,
+  get_analytics_enabled: true,
+  get_app_icon: 'brand',
+  // `null` is the real third state here: never asked. The toggle then reflects
+  // default-on, and the explainer runs before the first capture.
+  get_thumbnails_enabled: null,
+  get_projects_root: `${HARNESS_ROOT}`,
+  is_custom_projects_root: false,
   check_ide_availability: { vscode: true, cursor: false },
 
   // ---- workspaces (accounts) --------------------------------------------
@@ -174,6 +185,12 @@ export const baseCommands: CommandMap = {
   register_external_project: null,
   set_compact_workspace_toolbar_enabled: null,
   fetch_community_templates: '[]',
+  // Both `Result<(), CommandError>` on the Rust side, so `null` over IPC.
+  // Reached only by the palette sweep — `devserver.stop` and
+  // `preview.toggleElementBreadcrumb` are the two commands nothing else
+  // invokes, so they were the last two captures still badged incomplete.
+  stop_static_server: null,
+  set_element_breadcrumb_enabled: null,
 
   // ---- agents -------------------------------------------------------------
   get_agents_status: [

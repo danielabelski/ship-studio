@@ -12,6 +12,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { syncAfterGitActivity } from './teamStore';
 
 /** Information about a git branch */
 export interface BranchInfo {
@@ -329,7 +330,13 @@ export async function publishBranch(
   projectPath: string,
   commitMessage?: string
 ): Promise<PublishResult> {
-  return invoke<PublishResult>('publish_branch', { projectPath, commitMessage });
+  const result = await invoke<PublishResult>('publish_branch', { projectPath, commitMessage });
+  // You have just proved you have network and credentials, and you are already
+  // waiting on the remote. Comments ride out on the back of that rather than
+  // waiting for a timer — this is the moment a teammate most expects to see
+  // what you said.
+  syncAfterGitActivity();
+  return result;
 }
 
 /**
@@ -411,15 +418,25 @@ export async function listPullRequests(projectPath: string): Promise<PullRequest
  * @param title - PR title
  * @param body - Optional PR description
  * @param base - Target branch (e.g., "main")
+ * @param describedByAgent - Display name of the agent that wrote `body`, when
+ *   one did. Drives the attribution footer, which must not credit an agent for
+ *   a description that fell back to the branch name.
  * @returns URL of the created PR
  */
 export async function createPullRequest(
   projectPath: string,
   title: string,
   body: string | null,
-  base: string
+  base: string,
+  describedByAgent: string | null = null
 ): Promise<string> {
-  return invoke<string>('create_pull_request', { projectPath, title, body, base });
+  return invoke<string>('create_pull_request', {
+    projectPath,
+    title,
+    body,
+    base,
+    describedByAgent,
+  });
 }
 
 /**

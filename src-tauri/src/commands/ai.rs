@@ -174,6 +174,19 @@ pub(crate) fn classify_agent_cli_failure(agent_name: &str, detail: &str) -> Opti
              The limit resets automatically — try again later. ({detail})"
         )));
     }
+    // The CLI refusing to run because the selected model is billed from a
+    // credit balance that has run out. An account state with two remedies the
+    // CLI itself names, and neither of them is ours (issue #919). Distinct
+    // from the usage-limit branch above: that one resets on a clock, this one
+    // resets when the user buys credits or picks a different model.
+    if lower.contains("usage credits") || lower.contains("usage-credits") {
+        let detail = crate::external_command::truncate_output_head_tail(detail);
+        return Some(CommandError::expected(format!(
+            "{agent_name} needs usage credits for the model it's set to, so AI generation \
+             isn't available right now. Open an agent terminal and run /usage-credits to \
+             top up, or /model to switch to one your plan covers. ({detail})"
+        )));
+    }
     if lower.contains("failed to load models cache")
         || lower.contains("codex_models_manager::cache")
     {
@@ -632,28 +645,101 @@ pub async fn generate_commit_message(project_path: String) -> Result<String, Com
     generate_commit_message_for_path(&validated_path).await
 }
 
+/// A commit message and, when one was involved, the agent that wrote it.
+///
+/// The second half exists so the `Made-With` trailer can name an agent only
+/// when an agent actually did something. A user-typed message and a fallback to
+/// [`DEFAULT_COMMIT_MESSAGE`] both carry `None`, and the trailer then says only
+/// "Ship Studio" — crediting Claude Code for a sentence it never saw is the
+/// same invention "Never Assume Data" rules out everywhere else.
+pub struct ResolvedCommitMessage {
+    pub message: String,
+    pub written_by_agent: Option<&'static str>,
+}
+
 /// Resolve the commit message for a publish action: use the caller-provided
 /// message when present and non-empty, otherwise auto-generate one from the
 /// working tree, falling back to [`DEFAULT_COMMIT_MESSAGE`] if generation is
 /// unavailable (no headless agent, agent not installed, nothing to summarize,
 /// CLI failure/timeout). This never errors so publishing always proceeds.
-pub async fn resolve_commit_message(path: &std::path::Path, provided: Option<String>) -> String {
+pub async fn resolve_commit_message(
+    path: &std::path::Path,
+    provided: Option<String>,
+) -> ResolvedCommitMessage {
     if let Some(message) = provided {
         let trimmed = message.trim();
         if !trimmed.is_empty() {
-            return trimmed.to_string();
+            return ResolvedCommitMessage {
+                message: trimmed.to_string(),
+                written_by_agent: None,
+            };
         }
     }
     match generate_commit_message_for_path(path).await {
         Ok(message) => {
             info!(message = %message, "Auto-generated commit message");
-            message
+            ResolvedCommitMessage {
+                message,
+                written_by_agent: Some(get_active_agent().display_name),
+            }
         }
         Err(e) => {
             debug!(error = %e, "Falling back to default commit message");
-            DEFAULT_COMMIT_MESSAGE.to_string()
+            ResolvedCommitMessage {
+                message: DEFAULT_COMMIT_MESSAGE.to_string(),
+                written_by_agent: None,
+            }
         }
     }
+}
+
+/// Run one prompt through the active agent's headless mode, against the
+/// project's working tree.
+///
+/// The plumbing `generate_commit_message_for_path` had inline, lifted out so
+/// the Team summariser can reuse it rather than reimplement the agent-picking,
+/// binary-finding and "nothing changed" guards. All three failure modes stay
+/// `Expected`: no headless agent, no CLI installed, nothing to summarise. Every
+/// caller falls back to something, because none of this may block a push.
+pub async fn run_working_tree_prompt(
+    path: &Path,
+    build: impl FnOnce(&str, &str) -> String,
+    timeout_secs: u64,
+) -> Result<String, CommandError> {
+    let agent = get_active_agent();
+
+    if headless_invocation(agent, "").is_none() {
+        return Err(CommandError::expected(format!(
+            "{} has no headless mode, so it cannot write a summary. Set an agent that does as \
+             your default in Settings.",
+            agent.display_name
+        )));
+    }
+    let agent_path = find_agent_binary().ok_or_else(|| {
+        CommandError::expected(format!("{} CLI is not installed", agent.display_name))
+    })?;
+
+    // Cheap guard: if nothing changed, skip the agent call entirely.
+    let status = git_status_porcelain(path)?;
+    if status.trim().is_empty() {
+        return Err(CommandError::expected("No changes to summarize"));
+    }
+    let diff = truncate_diff(&git_working_diff(path));
+
+    debug!(
+        "Calling {} CLI for a working-tree summary",
+        agent.display_name
+    );
+    run_agent_headless(
+        agent,
+        &agent_path,
+        &build(&status, &diff),
+        path,
+        HashMap::new(),
+        timeout_secs,
+    )
+    .await
+    .map_err(soften_commit_timeout)
 }
 
 /// Generate a concise, single-line commit subject from the project's current
@@ -914,6 +1000,36 @@ mod tests {
             classify_agent_cli_failure("Claude Code", "Claude AI usage limit reached").is_some()
         );
         assert!(classify_agent_cli_failure("Codex", "Rate limit exceeded, retry later").is_some());
+    }
+
+    // The #919 shape: the CLI refuses because the selected model is billed
+    // from a credit balance that has run out. An account state, and the CLI
+    // names both remedies — keep them.
+    #[test]
+    fn classify_agent_cli_failure_usage_credits_is_expected() {
+        let detail = "exit code Some(1): Fable 5 requires usage credits. \
+                      Run /usage-credits to continue or switch models with /model.";
+        let err = classify_agent_cli_failure("Claude Code", detail).expect("must classify");
+        assert!(matches!(err, CommandError::Expected { .. }));
+        let msg = format!("{err}");
+        assert!(msg.contains("usage credits"), "got: {msg}");
+        assert!(msg.contains("/usage-credits"), "got: {msg}");
+        assert!(msg.contains("/model"), "got: {msg}");
+        // The CLI's own sentence survives, so the model it named is visible.
+        assert!(msg.contains("Fable 5"), "got: {msg}");
+    }
+
+    // It must not be swallowed by the usage-*limit* branch: that one tells the
+    // user to wait, which is wrong advice for an empty credit balance.
+    #[test]
+    fn classify_agent_cli_failure_usage_credits_is_not_a_usage_limit() {
+        let err = classify_agent_cli_failure("Claude Code", "requires usage credits")
+            .expect("must classify");
+        let msg = format!("{err}");
+        assert!(
+            !msg.contains("resets automatically"),
+            "credits don't reset on a clock — got: {msg}"
+        );
     }
 
     // Expired sign-in ("run /login") is user-fixable, not a malfunction.
@@ -1252,12 +1368,15 @@ mod tests {
     async fn resolve_uses_provided_message_without_touching_git() {
         // A caller-supplied message short-circuits before any git/agent work,
         // so even a bogus path is fine.
-        let msg = resolve_commit_message(
+        let resolved = resolve_commit_message(
             std::path::Path::new("/definitely/not/a/repo"),
             Some("  Hand-written message  ".to_string()),
         )
         .await;
-        assert_eq!(msg, "Hand-written message"); // trimmed
+        assert_eq!(resolved.message, "Hand-written message"); // trimmed
+                                                              // A message the user wrote is not an agent's work, and the attribution
+                                                              // trailer must not claim otherwise.
+        assert_eq!(resolved.written_by_agent, None);
     }
 
     #[tokio::test]
@@ -1281,8 +1400,10 @@ mod tests {
 
         // Clean tree → empty porcelain → generation short-circuits before any
         // agent call → fallback. Non-flaky regardless of agent availability.
-        let msg = resolve_commit_message(dir, None).await;
-        assert_eq!(msg, DEFAULT_COMMIT_MESSAGE);
+        let resolved = resolve_commit_message(dir, None).await;
+        assert_eq!(resolved.message, DEFAULT_COMMIT_MESSAGE);
+        // And the fallback credits nobody — there was no agent involved.
+        assert_eq!(resolved.written_by_agent, None);
     }
 
     /// End-to-end check that actually shells out to the agent CLI. Ignored by
