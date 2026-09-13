@@ -32,7 +32,7 @@ const PROJECT = '/Users/dev/ShipStudio/site';
  * Takes `docked` from the layout exactly as the real panels do, so a test can
  * never put the two in a state the app cannot reach.
  */
-function TestPanel({ panel }: { panel: PanelId }) {
+function TestPanel({ panel, visible = true }: { panel: PanelId; visible?: boolean }) {
   const dock = usePanelDockBinding(panel);
   const { layout } = usePanelDock();
   const docked = isDocked(layout, panel);
@@ -40,6 +40,7 @@ function TestPanel({ panel }: { panel: PanelId }) {
     <DockablePanel
       dock={dock}
       docked={docked}
+      visible={visible}
       ariaLabel={`${panel} panel`}
       positionKey={`${panel}.pos`}
       sizeKey={`${panel}.size`}
@@ -216,6 +217,26 @@ describe('the rail', () => {
     expect(document.querySelector('.workspace-dock__slot[data-panel="editor"]')).toBeNull();
     expect(document.querySelector('.workspace-dock__slot[data-panel="agent"]')).not.toBeNull();
   });
+
+  it('releases a docked panel column when the panel closes', () => {
+    function Harness({ visible }: { visible: boolean }) {
+      return (
+        <PanelDockProvider projectPath={PROJECT}>
+          <WorkspaceDock preview={<div data-testid="preview" />}>
+            <TestPanel panel="agent" visible={visible} />
+          </WorkspaceDock>
+        </PanelDockProvider>
+      );
+    }
+
+    const { rerender } = render(<Harness visible />);
+    expect(document.querySelector('.workspace-dock__slot[data-panel="agent"]')).not.toBeNull();
+
+    rerender(<Harness visible={false} />);
+
+    expect(document.querySelector('.workspace-dock__slot[data-panel="agent"]')).toBeNull();
+    expect(document.querySelector('.workspace-dock > .dockable-panel__placeholder')).toBeNull();
+  });
 });
 
 describe('resizing a panel', () => {
@@ -375,8 +396,8 @@ describe('dragging a docked panel', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Before Edit');
 
     // Bounded by the rail, not by the window. The line is `position: fixed` so
-    // it can sit above the portaled panel surfaces, and it was drawing straight
-    // up through the workspace header and the titlebar above them.
+    // it can sit above docked surfaces while the floating panel being dragged
+    // remains visibly in front of it.
     const line = document.querySelector<HTMLElement>('.workspace-dock__drop-line');
     expect(line).not.toBeNull();
     expect(line!.style.top).toBe('100px');

@@ -4,6 +4,7 @@ import {
   describeDrop,
   dropTargetAt,
   railBoundaries,
+  SNAP_PX,
   type DropTarget,
   type RailBounds,
   type RailSlotRect,
@@ -69,6 +70,15 @@ describe('railBoundaries', () => {
 });
 
 describe('dropTargetAt', () => {
+  it('keeps the seam snap area narrow', () => {
+    expect(SNAP_PX).toBe(24);
+    expect(dropTargetAt(slots, bounds, { x: 423, y: 400 })).toMatchObject({
+      kind: 'dock',
+      before: PREVIEW,
+    });
+    expect(dropTargetAt(slots, bounds, { x: 425, y: 400 })).toEqual({ kind: 'float' });
+  });
+
   it('docks at the seam the pointer is nearest', () => {
     expect(dropTargetAt(slots, bounds, { x: 420, y: 400 })).toEqual({
       kind: 'dock',

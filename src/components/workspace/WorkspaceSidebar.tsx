@@ -30,6 +30,7 @@ import {
   SlackIcon,
   NewWorkspaceIcon,
   SwitchWorkspaceIcon,
+  DragHandleIcon,
 } from '@/components/icons';
 import { Button } from '../primitives/Button';
 import { IconButton } from '../primitives/IconButton';
@@ -63,6 +64,8 @@ import { basename } from '../../lib/paths';
 import { asCommandError, formatCommandError } from '../../lib/errors';
 import { useOptionalToast } from '../../contexts/ToastContext';
 import { setActiveAccountId, type Account } from '../../lib/accounts';
+import { DragSortHandle, DragSortItem, DragSortScope } from '../primitives/DragSort';
+import type { DragSortMove } from '../../lib/drag-sort/types';
 import { ProjectSettingsModal } from './ProjectSettingsModal';
 import {
   ContextMenu,
@@ -77,10 +80,14 @@ import {
   type SessionTerminalTab,
   type TabStatus,
 } from '../../lib/sessionRegistry';
+import {
+  getActiveProjectOrder,
+  setActiveProjectOrder,
+  subscribeActiveProjectOrder,
+} from '../../lib/activeProjectOrder';
 
 type SectionId = 'agents' | 'terminals' | 'worktrees' | 'commands';
 type GroupId = 'pinned' | 'projects';
-
 const WORKSPACE_SWITCHER_MENU_GUTTER = 8;
 const WORKSPACE_SWITCHER_MENU_OFFSET = 4;
 
@@ -145,6 +152,8 @@ interface Props {
    *  live session to close — without it, a pin whose folder was moved or
    *  deleted outside the app could never be removed (issue #366). */
   onUnpinProject?: (projectPath: string) => void;
+  /** Persist a reordered pinned-project list through the feature adapter. */
+  onReorderProjects?: (orderedPaths: string[]) => Promise<void> | void;
   /** Rename a project folder and update the owning app state. */
   onRenameProject?: (projectPath: string, newName: string) => Promise<void>;
   /** Toggle whether a project is pinned in the sidebar. */
@@ -332,6 +341,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   onSelectProject,
   onCloseProject,
   onUnpinProject,
+  onReorderProjects,
   onRenameProject,
   onTogglePinProject,
   onSelectProjectTab,
@@ -856,6 +866,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   // Pinned projects keep their pin-list order exactly — no pop-to-top on
   // activation, so cells don't shift when the user switches between them.
   const pinnedRows: PinnedProjectRow[] = projects;
+  const activeProjectOrder = useSyncExternalStore(
+    subscribeActiveProjectOrder,
+    getActiveProjectOrder,
+    getActiveProjectOrder
+  );
   const pinnedPaths = useMemo(() => new Set(pinnedRows.map((p) => p.projectPath)), [pinnedRows]);
 
   // Active sessions that aren't pinned — "Active" group. Source of truth is
@@ -900,12 +915,26 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     });
     // Stable name order (matches useProjectNumberShortcuts) so swapping
     // between two active projects doesn't reorder rows.
-    rows.sort(
-      (a, b) =>
+    rows.sort((a, b) => {
+      const aRank = activeProjectOrder.indexOf(a.projectPath);
+      const bRank = activeProjectOrder.indexOf(b.projectPath);
+      if (aRank >= 0 || bRank >= 0) {
+        if (aRank < 0) return 1;
+        if (bRank < 0) return -1;
+        if (aRank !== bRank) return aRank - bRank;
+      }
+      return (
         a.fallbackName.localeCompare(b.fallbackName) || a.projectPath.localeCompare(b.projectPath)
-    );
+      );
+    });
     return rows;
-  }, [pinnedPaths, currentFamily, registryVersion, familiesVersion]);
+  }, [activeProjectOrder, pinnedPaths, currentFamily, registryVersion, familiesVersion]);
+
+  // Keep stale ranks harmlessly in storage. SessionRegistry can be empty for
+  // the first render while persisted sessions are still being restored; an
+  // eager prune here would erase their confirmed order before they appear.
+  // Derivation above filters ranks against rows that exist today, while a
+  // later session can still reclaim its saved position.
 
   // A collapsed project hides its tab rows, so surface the same working state
   // in the project row when any tab in the family is actively thinking.
@@ -948,6 +977,22 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const visibleActive = [...(currentExternalRow ? [currentExternalRow] : []), ...activeRows].filter(
     (p) => matchesFilter(p.fallbackName)
   );
+  const canSortPinned =
+    onReorderProjects !== undefined && !isSidebarHidden && !filterLower && pinnedRows.length > 1;
+
+  const handlePinnedMove = useCallback(
+    async (move: DragSortMove) => {
+      if (!onReorderProjects || !move.projectedOrder) return;
+      await onReorderProjects(move.projectedOrder.map(String));
+    },
+    [onReorderProjects]
+  );
+  const canSortActive =
+    !isSidebarHidden && !filterLower && currentExternalRow === null && activeRows.length > 1;
+  const handleActiveMove = useCallback((move: DragSortMove) => {
+    if (!move.projectedOrder) return;
+    setActiveProjectOrder(move.projectedOrder.map(String));
+  }, []);
 
   // Force-open the group containing the current project. We honor the
   // user's manual collapsed state for the OTHER group.
@@ -963,7 +1008,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 
   /**
    * Cmd+1..9 shortcut number for this row — matches the ordering used by
-   * `useProjectNumberShortcuts`: pinned first, then active (alphabetical).
+   * `useProjectNumberShortcuts`: pinned first, then the saved Active rank with
+   * deterministic alphabetical fallback for new sessions.
    * Only rows 1..9 get a badge; 10+ return null.
    */
   const shortcutNumberFor = (row: PinnedProjectRow): number | null => {
@@ -980,7 +1026,12 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   // Single row renderer shared by both groups — the current project gets its
   // live agent/terminal/command sections; anyone else gets the read-only
   // InactiveProjectSections view fed from the session registry.
-  const renderProjectRow = (row: PinnedProjectRow) => {
+  const renderProjectRow = (
+    row: PinnedProjectRow,
+    sortable = false,
+    sortIndex = 0,
+    sortGroup: 'pinned' | 'active' = 'pinned'
+  ) => {
     // A row is "current" when the current project is any member of its
     // family — being inside a worktree still highlights the project row.
     const isCurrent = currentFamily !== null && familyKeyOf(row.projectPath) === currentFamily;
@@ -1059,6 +1110,9 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         onUnpin={canUnpin ? unpinProject : undefined}
         onTogglePin={togglePin}
         onStopDevServer={stopDevServer}
+        sortable={sortable}
+        sortIndex={sortIndex}
+        sortGroup={sortGroup}
       >
         {expanded &&
           (isCurrent ? (
@@ -1364,9 +1418,26 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             />
           )}
           {(isSidebarHidden || pinnedOpen) &&
-            (visiblePinned.length === 0 && !filterLower
-              ? !isSidebarHidden && <div className="sidebar-group-empty">Nothing pinned yet</div>
-              : visiblePinned.map((row) => renderProjectRow(row)))}
+            (visiblePinned.length === 0 && !filterLower ? (
+              !isSidebarHidden && <div className="sidebar-group-empty">Nothing pinned yet</div>
+            ) : canSortPinned ? (
+              <DragSortScope
+                axis="vertical"
+                items={pinnedRows.map((row) => row.projectPath)}
+                label="Pinned projects"
+                onMove={handlePinnedMove}
+              >
+                {visiblePinned.map((row) =>
+                  renderProjectRow(
+                    row,
+                    true,
+                    pinnedRows.findIndex((candidate) => candidate.projectPath === row.projectPath)
+                  )
+                )}
+              </DragSortScope>
+            ) : (
+              visiblePinned.map((row) => renderProjectRow(row))
+            ))}
 
           {isSidebarHidden ? (
             <CompactSidebarGroupMarker label="Active" />
@@ -1379,11 +1450,27 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             />
           )}
           {(isSidebarHidden || activeOpen) &&
-            (visibleActive.length === 0 && !filterLower
-              ? !isSidebarHidden && (
-                  <div className="sidebar-group-empty">No active projects yet.</div>
-                )
-              : visibleActive.map((row) => renderProjectRow(row)))}
+            (visibleActive.length === 0 && !filterLower ? (
+              !isSidebarHidden && <div className="sidebar-group-empty">No active projects yet.</div>
+            ) : canSortActive ? (
+              <DragSortScope
+                axis="vertical"
+                items={activeRows.map((row) => row.projectPath)}
+                label="Active projects"
+                onMove={handleActiveMove}
+              >
+                {visibleActive.map((row) =>
+                  renderProjectRow(
+                    row,
+                    true,
+                    activeRows.findIndex((candidate) => candidate.projectPath === row.projectPath),
+                    'active'
+                  )
+                )}
+              </DragSortScope>
+            ) : (
+              visibleActive.map((row) => renderProjectRow(row))
+            ))}
 
           <div className="workspace-sidebar-active-actions">
             <Button
@@ -1702,14 +1789,10 @@ function InactiveProjectSections({
 function ProjectRowName({ name }: { name: string }) {
   const slash = name.indexOf(' / ');
   if (slash === -1) {
-    return (
-      <span className="sidebar-project-name" title={name}>
-        {name}
-      </span>
-    );
+    return <span className="sidebar-project-name">{name}</span>;
   }
   return (
-    <span className="sidebar-project-name sidebar-project-name-split" title={name}>
+    <span className="sidebar-project-name sidebar-project-name-split">
       <span className="sidebar-project-name-repo">{name.slice(0, slash)}</span>
       <span className="sidebar-project-name-branch">{name.slice(slash)}</span>
     </span>
@@ -1732,6 +1815,9 @@ function ProjectGroup({
   onUnpin,
   onTogglePin,
   onStopDevServer,
+  sortable,
+  sortIndex,
+  sortGroup = 'pinned',
   children,
 }: {
   row: PinnedProjectRow;
@@ -1758,6 +1844,12 @@ function ProjectGroup({
   onTogglePin?: (shouldPin: boolean) => void;
   /** Stop this row's dev server when one is explicitly tracked. */
   onStopDevServer?: () => void;
+  /** Whether this row belongs to the sortable Pinned group. */
+  sortable?: boolean;
+  /** Stable index in the full pinned order. */
+  sortIndex?: number;
+  /** Sortable group used to keep Active and Pinned scopes isolated. */
+  sortGroup?: 'pinned' | 'active';
   children?: React.ReactNode;
 }) {
   const initials = projectInitials(row.fallbackName);
@@ -1772,8 +1864,8 @@ function ProjectGroup({
     row.memoryBytes > 0 ? `${Math.round(row.memoryBytes / (1024 * 1024))}MB` : null;
   const showWorkingIndicator = !isExpanded && isWorking;
 
-  return (
-    <div className={`sidebar-project ${isCurrent ? 'is-current' : ''}`}>
+  const projectContent = (
+    <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
@@ -1781,6 +1873,7 @@ function ProjectGroup({
             role="button"
             tabIndex={0}
             aria-current={isCurrent ? 'true' : undefined}
+            aria-label={row.fallbackName}
             onClick={() => {
               if (!isCurrent) onSelectProject(row.projectPath);
             }}
@@ -1791,6 +1884,15 @@ function ProjectGroup({
               }
             }}
           >
+            {sortable && (
+              <DragSortHandle
+                className="sidebar-project-drag-handle"
+                visibility="hover"
+                revealOn="row"
+                label={`Move ${row.fallbackName} project`}
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
             {!compact && (
               <IconButton
                 className="sidebar-project-control sidebar-project-chevron"
@@ -1807,20 +1909,12 @@ function ProjectGroup({
                   onToggleExpand();
                 }}
                 aria-expanded={isExpanded}
-                title={isExpanded ? 'Collapse project' : 'Expand project'}
                 aria-label={isExpanded ? 'Collapse project' : 'Expand project'}
               />
             )}
             <span
               className={`sidebar-project-initials ${shortcutNumber !== null ? 'is-shortcut' : ''}`}
               aria-hidden={!compact}
-              title={
-                compact
-                  ? row.fallbackName
-                  : shortcutNumber !== null
-                    ? kbd('mod', String(shortcutNumber))
-                    : undefined
-              }
             >
               {shortcutNumber !== null ? kbd('mod', String(shortcutNumber)) : initials}
             </span>
@@ -1837,7 +1931,6 @@ function ProjectGroup({
                   onClose();
                 }}
                 aria-label={`Close ${row.fallbackName}`}
-                title="Close project (stops dev server)"
               />
             )}
             {!compact && !onClose && onUnpin && (
@@ -1851,7 +1944,6 @@ function ProjectGroup({
                   onUnpin();
                 }}
                 aria-label={`Unpin ${row.fallbackName}`}
-                title="Unpin from sidebar"
               />
             )}
             {!compact && (
@@ -1890,6 +1982,65 @@ function ProjectGroup({
         </ContextMenuContent>
       </ContextMenu>
       {!compact && isExpanded && children && <div className="sidebar-project-body">{children}</div>}
+    </>
+  );
+
+  if (sortable) {
+    return (
+      <DragSortItem
+        id={row.projectPath}
+        group={sortGroup}
+        index={sortIndex ?? 0}
+        label={`Move ${row.fallbackName} project`}
+        overlay={
+          <ProjectRowDragOverlay
+            row={row}
+            initials={initials}
+            shortcutNumber={shortcutNumber}
+            isCurrent={isCurrent}
+            dot={dot}
+          />
+        }
+        className={`sidebar-project ${isCurrent ? 'is-current' : ''}`}
+      >
+        {projectContent}
+      </DragSortItem>
+    );
+  }
+
+  return <div className={`sidebar-project ${isCurrent ? 'is-current' : ''}`}>{projectContent}</div>;
+}
+
+function ProjectRowDragOverlay({
+  row,
+  initials,
+  shortcutNumber,
+  isCurrent,
+  dot,
+}: {
+  row: PinnedProjectRow;
+  initials: string;
+  shortcutNumber: number | null;
+  isCurrent: boolean;
+  dot: SidebarItem['dotState'];
+}) {
+  return (
+    <div
+      className={`sidebar-project-row sidebar-project-row--overlay${isCurrent ? ' is-current' : ''}`}
+      data-drag-sort-overlay-content="true"
+      data-drag-sort-overlay-row-sized="true"
+      aria-hidden="true"
+    >
+      <span className="sidebar-project-drag-handle sidebar-project-drag-handle--overlay">
+        <DragHandleIcon size={14} />
+      </span>
+      <span className={`sidebar-project-initials ${shortcutNumber !== null ? 'is-shortcut' : ''}`}>
+        {shortcutNumber !== null ? kbd('mod', String(shortcutNumber)) : initials}
+      </span>
+      <span className="sidebar-project-name">{row.fallbackName}</span>
+      <span className="sidebar-project-status">
+        <span className={`sidebar-row-dot dot-${dot}`} aria-hidden="true" />
+      </span>
     </div>
   );
 }
@@ -2205,9 +2356,7 @@ function SidebarRow({ item }: { item: SidebarItem }) {
           aria-label="Rename tab"
         />
       ) : (
-        <span className="sidebar-row-label" title={item.label}>
-          {item.label}
-        </span>
+        <span className="sidebar-row-label">{item.label}</span>
       )}
       <span className="sidebar-row-meta">{item.meta}</span>
       <span className="sidebar-row-control-slot">
@@ -2218,7 +2367,6 @@ function SidebarRow({ item }: { item: SidebarItem }) {
             icon={item.actionIcon}
             onClick={handleAction}
             disabled={item.actionBusy}
-            title={item.actionLabel}
             aria-label={item.actionLabel ?? 'Item action'}
           />
         )}
@@ -2239,7 +2387,6 @@ function SidebarRow({ item }: { item: SidebarItem }) {
             variant="ghost"
             icon={<span aria-hidden="true">×</span>}
             onClick={handleClose}
-            title="Close"
             aria-label={`Close ${item.label}`}
           />
         )}

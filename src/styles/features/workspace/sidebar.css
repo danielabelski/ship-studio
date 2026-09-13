@@ -479,6 +479,82 @@
   background: var(--surface-control);
 }
 
+/* Pinned project sorting follows the same leading-handle convention as the
+ * panel layout menu. The row owns hover/focus feedback; the handle is only a
+ * hit target and never paints a separate control surface. */
+.sidebar-project-drag-handle {
+  /* The hover variant opens its slot only while the row is discoverable. A
+   * matching negative margin cancels the row gap at rest, so the collapsed
+   * layout is identical to a row without a handle. */
+  margin-inline-start: 0;
+  margin-inline-end: calc(-1 * var(--space-06));
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .sidebar-project-row:hover
+  .sidebar-project-drag-handle,
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .sidebar-project-row:focus-within
+  .sidebar-project-drag-handle,
+.drag-sort__item:has(.sidebar-project-drag-handle:focus-visible) .sidebar-project-drag-handle {
+  /* Keep the handle's hit target clear of the chevron while using the
+   * smallest existing icon slot. */
+  margin-inline-end: calc(-1 * var(--space-04));
+}
+
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .sidebar-project-row:hover
+  .sidebar-project-drag-handle[data-drag-sort-handle-reveal-on='row'],
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .sidebar-project-row:focus-within
+  .sidebar-project-drag-handle[data-drag-sort-handle-reveal-on='row'],
+.drag-sort__item
+  > .sidebar-project-row:has(:focus-visible)
+  .sidebar-project-drag-handle[data-drag-sort-handle-reveal-on='row'] {
+  width: var(--size-icon-button);
+  inline-size: var(--size-icon-button);
+  flex-basis: var(--size-icon-button);
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+.sidebar-project-drag-handle:hover:not(:disabled),
+.sidebar-project-drag-handle:focus-visible {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.drag-sort__item.sidebar-project:has(.sidebar-project-drag-handle:focus-visible)
+  > .sidebar-project-row {
+  background: var(--surface-control);
+}
+
+.sidebar-project-row--overlay {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  pointer-events: none;
+  transition: none;
+}
+
+/* An expanded project keeps its full group in flow so the sortable
+ * placeholder moves the subtree as one unit. Its presentational preview is
+ * intentionally only the draggable row, though; otherwise the overlay host
+ * would paint a tall blank card for the expanded body. */
+.drag-sort__overlay:has(.sidebar-project-row--overlay) {
+  height: var(--size-sidebar-project-row);
+}
+
+.sidebar-project-drag-handle--overlay {
+  margin-inline-start: 0;
+  cursor: default;
+}
+
 /* Dedicated chevron hit-target so clicking it toggles without switching. */
 .sidebar-project-control {
   display: inline-flex;

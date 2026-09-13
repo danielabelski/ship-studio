@@ -31,6 +31,7 @@ import {
   duplicateElement,
   ELEMENT_KINDS,
   insertElement,
+  moveElement,
   pasteElement,
   type ElementKind,
   type InsertPosition,
@@ -62,6 +63,26 @@ export interface ElementClipboard {
   sourceClassName: string;
   sourceNodeId: number;
   mode: 'copy' | 'cut';
+}
+
+interface ResolvedDragNode {
+  signature: ElementSignature;
+}
+
+/** Build the truthful identity to replay after a structural reparent/move. */
+export function movedElementReselectSignature(
+  source: ElementSignature,
+  target: ElementSignature,
+  position: InsertPosition
+): ElementSignature {
+  const ancestorClasses =
+    position === 'inside' ? [target.className, ...target.ancestorClasses] : target.ancestorClasses;
+  return {
+    className: source.className,
+    tagName: source.tagName,
+    text: source.text,
+    ancestorClasses: ancestorClasses.filter(Boolean),
+  };
 }
 
 type ElementShortcutKey = 'c' | 'x' | 'v' | 'd' | 'backspace';
@@ -175,10 +196,36 @@ export function useElementStructure({ iframeRef, projectPath, enabled, onToast }
   const reselectTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   // Action queued behind an ss:selectNode round-trip (tree context menu).
   const pendingActionRef = useRef<{ nodeId: number; run: () => void } | null>(null);
+  const dragRequestIdRef = useRef(0);
+  const dragRequestsRef = useRef(
+    new Map<
+      string,
+      {
+        resolve: (value: { source: ResolvedDragNode; target: ResolvedDragNode }) => void;
+        reject: (reason: unknown) => void;
+      }
+    >()
+  );
 
   const post = useCallback(
     (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
     [iframeRef]
+  );
+
+  const resolveDragNodes = useCallback(
+    (sourceId: number, targetId: number) =>
+      new Promise<{ source: ResolvedDragNode; target: ResolvedDragNode }>((resolve, reject) => {
+        const requestId = `drag-${++dragRequestIdRef.current}`;
+        dragRequestsRef.current.set(requestId, { resolve, reject });
+        post({ type: 'ss:resolveDragNodes', requestId, sourceId, targetId });
+        window.setTimeout(() => {
+          const pending = dragRequestsRef.current.get(requestId);
+          if (!pending) return;
+          dragRequestsRef.current.delete(requestId);
+          pending.reject(new Error('The preview changed before the move could be resolved.'));
+        }, 2000);
+      }),
+    [post]
   );
 
   // The preview's initialization shim captures keys before the page can
@@ -228,10 +275,19 @@ export function useElementStructure({ iframeRef, projectPath, enabled, onToast }
         nodeId?: number;
         rect?: SelectionRect;
         key?: ElementShortcutKey;
+        requestId?: string;
+        source?: ResolvedDragNode | null;
+        target?: ResolvedDragNode | null;
       } | null;
       if (!d) return;
 
-      if (
+      if (d.type === 'ss:resolvedDragNodes' && d.requestId) {
+        const pending = dragRequestsRef.current.get(d.requestId);
+        if (!pending) return;
+        dragRequestsRef.current.delete(d.requestId);
+        if (d.source && d.target) pending.resolve({ source: d.source, target: d.target });
+        else pending.reject(new Error('The source or target is no longer present in the preview.'));
+      } else if (
         d.type === 'ss:elementShortcut' &&
         (d.key === 'c' || d.key === 'x' || d.key === 'v' || d.key === 'd' || d.key === 'backspace')
       ) {
@@ -447,6 +503,51 @@ export function useElementStructure({ iframeRef, projectPath, enabled, onToast }
     [projectPath, runAction, scheduleReselect, updateClipboard, onToast]
   );
 
+  const move = useCallback(
+    (sourceNodeId: number, targetNodeId: number, position: InsertPosition) =>
+      runAction(async () => {
+        try {
+          const resolved = await resolveDragNodes(sourceNodeId, targetNodeId);
+          // The iframe can only provide rendered DOM markup. React/JSX changes
+          // that representation (`className` -> `class`, drops expressions and
+          // props), so resolve the fresh signatures back to their authored
+          // source spans before invoking the exact backend drift guards.
+          const [sourceHtml, targetHtml] = await Promise.all([
+            resolveElementHtml(projectPath, resolved.source.signature),
+            resolveElementHtml(projectPath, resolved.target.signature),
+          ]);
+          await moveElement(
+            projectPath,
+            resolved.source.signature,
+            resolved.target.signature,
+            sourceHtml.html,
+            targetHtml.html,
+            position
+          );
+          // The iframe observer will request a fresh tree after HMR. Requesting
+          // once here also covers a backend write whose dev server coalesces the
+          // mutation before the observer is ready.
+          post({ type: 'ss:requestTree' });
+          scheduleReselect(
+            movedElementReselectSignature(
+              resolved.source.signature,
+              resolved.target.signature,
+              position
+            )
+          );
+          onToast?.('Element moved', 'success');
+        } catch (error) {
+          // A rejected fresh-resolution or backend drift guard must not leave
+          // the projected DOM order looking authoritative. The iframe remains
+          // the source of truth; ask it for a fresh snapshot before surfacing
+          // the existing structured failure message.
+          post({ type: 'ss:requestTree' });
+          throw error;
+        }
+      }),
+    [onToast, post, projectPath, resolveDragNodes, runAction, scheduleReselect]
+  );
+
   shortcutActionsRef.current = {
     c: () => void copy(),
     x: () => void cut(),
@@ -546,6 +647,7 @@ export function useElementStructure({ iframeRef, projectPath, enabled, onToast }
     copy,
     cut,
     paste,
+    move,
     hasClipboard: clipboard !== null,
     clipboardSourceNodeId: clipboard?.mode === 'copy' ? clipboard.sourceNodeId : null,
     selectAndRun,

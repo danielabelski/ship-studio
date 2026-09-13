@@ -282,7 +282,7 @@ export function DockablePanel({
   // moment it closes — a docked panel that is closed must not leave an empty
   // band of workspace behind it.
   const setPresent = dock?.setPresent;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!setPresent) return;
     setPresent(visible);
     return () => setPresent(false);
@@ -602,6 +602,12 @@ export function DockablePanel({
       aria-hidden
     />
   );
+  // A workspace-bound docked panel has no inline position. Its placeholder is
+  // only meaningful inside the rail slot; when the panel is closed the slot is
+  // removed, so rendering this fallback in the rail would leave an empty
+  // flex-item-sized gap behind it. Standalone panels still keep their inline
+  // placeholder, and floating panels keep theirs hidden by CSS.
+  const shouldRenderPlaceholder = !docked || !dock || Boolean(dock.slotElement);
 
   return (
     <>
@@ -611,7 +617,8 @@ export function DockablePanel({
           a preview iframe — being touched at all. Without a slot (no rail, or
           this panel is floating) it stays where it is written, which is how
           every non-workspace user of this primitive behaves. */}
-      {dock?.slotElement ? createPortal(placeholder, dock.slotElement) : placeholder}
+      {shouldRenderPlaceholder &&
+        (dock?.slotElement ? createPortal(placeholder, dock.slotElement) : placeholder)}
       {createPortal(
         <div
           ref={surfaceRef}

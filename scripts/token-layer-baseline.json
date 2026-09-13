@@ -1755,6 +1755,12 @@
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
+      "path": "src/styles/features/workspace/dock.css",
+      "token": "--stroke-1",
+      "count": 7,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
       "path": "src/styles/features/workspace/main.css",
       "token": "--space-04",
       "count": 2,

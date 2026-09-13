@@ -137,6 +137,33 @@ describe('WorkspaceHeader title bar', () => {
     );
   });
 
+  it.each([
+    {
+      mode: 'classic',
+      compactWorkspaceToolbarEnabled: false,
+      leftSelector: '.workspace-titlebar-navigation',
+      rightSelector: '.workspace-titlebar-actions',
+    },
+    {
+      mode: 'compact',
+      compactWorkspaceToolbarEnabled: true,
+      leftSelector: '.workspace-titlebar-tools',
+      rightSelector: '.workspace-titlebar-actions',
+    },
+  ])('places the panel layout action in the top-right $mode action cluster', (scenario) => {
+    const props = headerProps();
+    props.layoutMenu = <button type="button">Panel layout</button>;
+    props.compactWorkspaceToolbarEnabled = scenario.compactWorkspaceToolbarEnabled;
+    const { container } = render(<HeaderHarness props={props} />);
+
+    const layout = screen.getByRole('button', { name: 'Panel layout' });
+    const left = container.querySelector(scenario.leftSelector);
+    const right = container.querySelector(scenario.rightSelector);
+
+    expect(left).not.toContainElement(layout);
+    expect(right).toContainElement(layout);
+  });
+
   it('starts dragging from non-interactive middle sections of the titlebar', () => {
     const { container } = render(
       <WorkspaceTitlebar>

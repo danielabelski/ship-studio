@@ -125,6 +125,7 @@
 
   --duration-fast: 100ms;
   --duration-standard: 150ms;
+  --duration-sortable-settle: 250ms;
   --duration-slow: 300ms;
   --duration-loader-fast: 900ms;
   --duration-loader-tight: 1050ms;

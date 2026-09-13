@@ -770,6 +770,45 @@ it('omits hidden comment-only Next streaming wrappers from the element tree', as
   send({ type: 'ss:deactivate' });
 });
 
+it('resolves fresh drag source and target snapshots from current tree ids', async () => {
+  document.body.innerHTML =
+    '<main class="page"><section class="source"><p class="child">Child</p></section><div class="target">Target</div></main>';
+  send({ type: 'ss:activate' });
+  type TreeNode = { i: number; k: TreeNode[] };
+  const treeMessage = nextMessage<{ tree: TreeNode }>('ss:tree');
+  send({ type: 'ss:requestTree' });
+  const { tree } = await treeMessage;
+  const source = tree.k[0].k[0];
+  const target = tree.k[0].k[1];
+  const resolved = nextMessage<{
+    type: string;
+    source: { signature: { className: string } };
+    target: { signature: { className: string } };
+  }>('ss:resolvedDragNodes');
+  send({
+    type: 'ss:resolveDragNodes',
+    requestId: 'move-1',
+    sourceId: source.i,
+    targetId: target.i,
+  });
+  const message = await resolved;
+  expect(message.source.signature.className).toBe('source');
+  expect(message.target.signature.className).toBe('target');
+  expect(message.source).not.toHaveProperty('html');
+  expect(message.target).not.toHaveProperty('html');
+
+  document.querySelector('.target')?.remove();
+  const stale = nextMessage<{ type: string; target: null }>('ss:resolvedDragNodes');
+  send({
+    type: 'ss:resolveDragNodes',
+    requestId: 'move-2',
+    sourceId: source.i,
+    targetId: target.i,
+  });
+  expect((await stale).target).toBeNull();
+  send({ type: 'ss:deactivate' });
+});
+
 it('previews by replacing the REAL rule in place, and restores it on clear', () => {
   document.body.innerHTML = '<style>.q{color:red}</style><button class="q">x</button>';
   // Target the project's own <style> (not a leftover #ss-preview sheet in <head>).

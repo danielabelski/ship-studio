@@ -1,0 +1,178 @@
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { DragSortManager, type DragSortManagerOptions } from '../lib/drag-sort/manager';
+
+export interface DragSortScopeProps extends DragSortManagerOptions {
+  children: ReactNode;
+  /** Optional accessible name for the sortable region. */
+  label?: string;
+  /** Stable IDs can be supplied for documentation and duplicate checking. */
+  items?: readonly (string | number)[];
+}
+
+export interface DragSortContextValue {
+  manager: DragSortManager;
+  instructionsId: string;
+  label: string;
+}
+
+const DragSortContext = createContext<DragSortContextValue | null>(null);
+
+export function DragSortScope({
+  children,
+  axis = 'vertical',
+  collision = 'midpoint',
+  canMove,
+  onMove,
+  announcements,
+  reducedMotion,
+  placementForTarget,
+  projectOrder,
+  isPartOfActiveMove,
+  label = 'Sortable list',
+  items,
+}: DragSortScopeProps) {
+  const [manager] = useState(
+    () =>
+      new DragSortManager({
+        axis,
+        collision,
+        canMove,
+        onMove,
+        announcements,
+        reducedMotion,
+        placementForTarget,
+        projectOrder,
+        isPartOfActiveMove,
+      })
+  );
+  const instructionsId = `drag-sort-instructions-${useId().replace(/:/g, '')}`;
+
+  useEffect(() => {
+    manager.setOptions({
+      axis,
+      collision,
+      canMove,
+      onMove,
+      announcements,
+      reducedMotion,
+      placementForTarget,
+      projectOrder,
+      isPartOfActiveMove,
+    });
+  }, [
+    announcements,
+    axis,
+    canMove,
+    collision,
+    manager,
+    isPartOfActiveMove,
+    onMove,
+    placementForTarget,
+    projectOrder,
+    reducedMotion,
+  ]);
+
+  useEffect(() => {
+    if (!items) return;
+    const seen = new Set<string>();
+    for (const item of items) {
+      const key = `${typeof item}:${String(item)}`;
+      if (seen.has(key)) manager.reportError(`Drag-sort IDs must be unique: ${String(item)}`);
+      seen.add(key);
+    }
+  }, [items, manager]);
+
+  useEffect(() => () => manager.destroy(), [manager]);
+
+  const value = useMemo(
+    () => ({ manager, instructionsId, label }),
+    [instructionsId, label, manager]
+  );
+  return (
+    <DragSortContext.Provider value={value}>
+      {children}
+      <DragSortFeedback manager={manager} instructionsId={instructionsId} label={label} />
+    </DragSortContext.Provider>
+  );
+}
+
+function DragSortFeedback({
+  manager,
+  instructionsId,
+  label,
+}: Pick<DragSortContextValue, 'manager' | 'instructionsId' | 'label'>) {
+  const snapshot = useSyncExternalStore(
+    manager.subscribe,
+    manager.getSnapshot,
+    manager.getSnapshot
+  );
+  const activeRegistration =
+    snapshot.activeId === null ? undefined : manager.getItem(snapshot.activeId);
+  const overlayRect = snapshot.overlayRect;
+  const overlayStyle: CSSProperties | undefined = overlayRect
+    ? ({
+        '--drag-sort-overlay-width': `${overlayRect.width}px`,
+        '--drag-sort-overlay-height': `${overlayRect.height}px`,
+        '--drag-sort-overlay-x': `${overlayRect.left}px`,
+        '--drag-sort-overlay-y': `${overlayRect.top}px`,
+      } as CSSProperties)
+    : undefined;
+  const hasOverlay =
+    activeRegistration?.overlay !== undefined &&
+    activeRegistration?.overlay !== null &&
+    activeRegistration?.overlay !== false;
+  const overlayActive = Boolean(hasOverlay && overlayRect && snapshot.activeId !== null);
+  // Mount the body portal with the scope, then only reveal its presentational
+  // child after activation has supplied a concrete rect. This removes a
+  // WebKit/Tauri paint race where the in-flow source was suppressed in the
+  // same commit that first created the portal. The host remains out of hit
+  // testing while idle and carries no interactive controls.
+  const overlay = createPortal(
+    <div
+      className="drag-sort__overlay"
+      data-drag-sort-overlay-host="true"
+      data-drag-sort-overlay={overlayActive ? 'true' : undefined}
+      data-drag-sort-id={overlayActive ? String(snapshot.activeId) : undefined}
+      data-drag-sort-phase={overlayActive ? snapshot.phase : undefined}
+      style={overlayStyle}
+      aria-hidden="true"
+      hidden={!overlayActive}
+    >
+      {overlayActive ? (activeRegistration?.overlay as ReactNode) : null}
+    </div>,
+    document.body
+  );
+  return (
+    <>
+      <div id={instructionsId} className="drag-sort__instructions">
+        {label}: press Space or Enter to lift, use the arrow keys to move, then press Space or Enter
+        to drop. Press Escape to cancel.
+      </div>
+      <div className="drag-sort__live-region" role="status" aria-live="polite" aria-atomic="true">
+        {snapshot.announcement}
+      </div>
+      {overlay}
+    </>
+  );
+}
+
+export function useDragSortContext(): DragSortContextValue {
+  const value = useContext(DragSortContext);
+  if (!value) throw new Error('useDragSortContext must be used inside a DragSortScope');
+  return value;
+}
+
+export function useOptionalDragSortContext(): DragSortContextValue | null {
+  return useContext(DragSortContext);
+}

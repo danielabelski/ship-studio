@@ -21,6 +21,7 @@ import MobileSvg from '../../assets/icons/mobile.svg?react';
 import FolderStackSvg from '../../assets/icons/old-icons/folder-stack.svg?react';
 import SplitViewSvg from '../../assets/icons/old-icons/split-view.svg?react';
 import PanelLayoutSvg from '../../assets/icons/template.svg?react';
+import DragHandleSvg from '../../assets/icons/drag-handle.svg?react';
 import { createIcon } from './icon-base';
 
 export const EyeIcon = createIcon(EyeSvg, {
@@ -201,4 +202,11 @@ export const PanelLayoutIcon = createIcon(PanelLayoutSvg, {
   kind: 'ui',
   defaultSize: 16,
   strokeWidth: '1px',
+});
+
+export const DragHandleIcon = createIcon(DragHandleSvg, {
+  name: 'DragHandleIcon',
+  source: 'icons/drag-handle.svg',
+  kind: 'ui',
+  defaultSize: 16,
 });

@@ -19,6 +19,7 @@ vi.mock('../lib/edit-structure', async (importActual) => {
     duplicateElement: vi.fn(),
     deleteElement: vi.fn(),
     pasteElement: vi.fn(),
+    moveElement: vi.fn(),
   };
 });
 vi.mock('../lib/edit-html', () => ({
@@ -31,12 +32,14 @@ import {
   useElementStructure,
   structuralEditMessage,
   isExpectedStructuralRefusal,
+  movedElementReselectSignature,
 } from './useElementStructure';
 import {
   insertElement,
   duplicateElement,
   deleteElement,
   pasteElement,
+  moveElement,
 } from '../lib/edit-structure';
 import { resolveElementHtml } from '../lib/edit-html';
 
@@ -66,7 +69,9 @@ function posts(iframeRef: React.RefObject<HTMLIFrameElement | null>) {
   // eslint-disable-next-line @typescript-eslint/unbound-method -- inspecting the postMessage mock's calls, not invoking it bound
   const fn = iframeRef.current!.contentWindow!.postMessage as Fn;
   return (
-    fn.mock.calls as Array<[{ type?: string; signature?: Record<string, unknown>; id?: number }]>
+    fn.mock.calls as Array<
+      [{ type?: string; signature?: Record<string, unknown>; id?: number; requestId?: string }]
+    >
   ).map((c) => c[0]);
 }
 
@@ -114,9 +119,45 @@ beforeEach(() => {
     line: 8,
     html: '<section class="hero"><p class="child">Child</p></section>',
   });
+  (moveElement as Fn).mockResolvedValue({
+    file: 'src/pages/index.astro',
+    line: 10,
+    className: '',
+    tagName: 'section',
+  });
 });
 
 describe('useElementStructure', () => {
+  it('builds reselect ancestry from the fresh target after reparenting', () => {
+    const source = {
+      ...SIG,
+      className: 'source',
+      tagName: 'article',
+      text: 'Source',
+      ancestorClasses: ['old-parent'],
+      domPath: '0.1',
+    };
+    const target = {
+      ...SIG,
+      className: 'target',
+      tagName: 'section',
+      ancestorClasses: ['page', 'shell'],
+      domPath: '0.2',
+    };
+    expect(movedElementReselectSignature(source, target, 'inside')).toEqual({
+      className: 'source',
+      tagName: 'article',
+      text: 'Source',
+      ancestorClasses: ['target', 'page', 'shell'],
+    });
+    expect(movedElementReselectSignature(source, { ...target, className: '' }, 'after')).toEqual({
+      className: 'source',
+      tagName: 'article',
+      text: 'Source',
+      ancestorClasses: ['page', 'shell'],
+    });
+  });
+
   it('tracks the selection from ss:select and refreshes its rect from ss:selRect', async () => {
     const { result, iframeRef } = setup();
     const source = iframeRef.current!.contentWindow as unknown as MessageEventSource;
@@ -468,6 +509,131 @@ describe('useElementStructure', () => {
       await new Promise((r) => setTimeout(r, 1));
     });
     expect(action).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves fresh source and target snapshots before committing a move', async () => {
+    const { result, iframeRef } = setup();
+    const source = iframeRef.current!.contentWindow as unknown as MessageEventSource;
+    const sourceSignature = { ...SIG, className: 'source', tagName: 'button', text: 'Save' };
+    const targetSignature = { ...SIG, className: 'target', tagName: 'section', text: 'Target' };
+    // The iframe reports rendered DOM (`class`, with runtime JSX props gone),
+    // while the source resolver returns the exact authored JSX snapshots.
+    (resolveElementHtml as Fn)
+      .mockResolvedValueOnce({
+        file: 'src/pages/index.tsx',
+        line: 8,
+        html: '<button className="source" onClick={() => save()}>Save</button>',
+      })
+      .mockResolvedValueOnce({
+        file: 'src/pages/index.tsx',
+        line: 9,
+        html: '<section className="target">Target</section>',
+      });
+    let promise!: Promise<void>;
+    act(() => {
+      promise = result.current.move(7, 8, 'inside');
+    });
+    const request = posts(iframeRef).find((p) => p.type === 'ss:resolveDragNodes');
+    expect(request?.requestId).toBeTruthy();
+    await dispatch(
+      {
+        type: 'ss:resolvedDragNodes',
+        requestId: request?.requestId,
+        source: { signature: sourceSignature },
+        target: { signature: targetSignature },
+      },
+      source
+    );
+    await act(async () => {
+      await promise;
+    });
+    expect(moveElement as Fn).toHaveBeenCalledWith(
+      '/proj',
+      sourceSignature,
+      targetSignature,
+      '<button className="source" onClick={() => save()}>Save</button>',
+      '<section className="target">Target</section>',
+      'inside'
+    );
+    expect(resolveElementHtml as Fn).toHaveBeenNthCalledWith(1, '/proj', sourceSignature);
+    expect(resolveElementHtml as Fn).toHaveBeenNthCalledWith(2, '/proj', targetSignature);
+    expect(posts(iframeRef).some((p) => p.type === 'ss:requestTree')).toBe(true);
+  });
+
+  it('reselects a moved element using its post-move target ancestry', async () => {
+    const { result, iframeRef } = setup();
+    const source = iframeRef.current!.contentWindow as unknown as MessageEventSource;
+    vi.useFakeTimers();
+    let promise!: Promise<void>;
+    act(() => {
+      promise = result.current.move(7, 8, 'inside');
+    });
+    const request = posts(iframeRef).find((p) => p.type === 'ss:resolveDragNodes');
+    const sourceSignature = {
+      ...SIG,
+      className: 'source',
+      tagName: 'article',
+      ancestorClasses: ['old'],
+    };
+    const targetSignature = {
+      ...SIG,
+      className: 'target',
+      tagName: 'section',
+      ancestorClasses: ['page'],
+    };
+    await dispatch(
+      {
+        type: 'ss:resolvedDragNodes',
+        requestId: request?.requestId,
+        source: { signature: sourceSignature },
+        target: { signature: targetSignature },
+      },
+      source
+    );
+    await act(async () => {
+      await promise;
+      vi.advanceTimersByTime(600);
+    });
+    expect(posts(iframeRef).find((p) => p.type === 'ss:reselect')?.signature).toMatchObject({
+      className: 'source',
+      tagName: 'article',
+      ancestorClasses: ['target', 'page'],
+    });
+    vi.useRealTimers();
+  });
+
+  it('reselects a moved-out element using the target parent chain', async () => {
+    const { result, iframeRef } = setup();
+    const source = iframeRef.current!.contentWindow as unknown as MessageEventSource;
+    vi.useFakeTimers();
+    let promise!: Promise<void>;
+    act(() => {
+      promise = result.current.move(7, 8, 'after');
+    });
+    const request = posts(iframeRef).find((p) => p.type === 'ss:resolveDragNodes');
+    await dispatch(
+      {
+        type: 'ss:resolvedDragNodes',
+        requestId: request?.requestId,
+        source: {
+          signature: { ...SIG, className: 'source', tagName: 'article', ancestorClasses: ['old'] },
+        },
+        target: {
+          signature: { ...SIG, className: 'target', tagName: 'div', ancestorClasses: ['page'] },
+        },
+      },
+      source
+    );
+    await act(async () => {
+      await promise;
+      vi.advanceTimersByTime(600);
+    });
+    expect(posts(iframeRef).find((p) => p.type === 'ss:reselect')?.signature).toMatchObject({
+      className: 'source',
+      tagName: 'article',
+      ancestorClasses: ['page'],
+    });
+    vi.useRealTimers();
   });
 
   it('does nothing while disabled', async () => {

@@ -227,6 +227,8 @@ interface PanelDockValue {
   differsFromDefault: boolean;
 
   setLayout: (next: WorkspaceLayout) => void;
+  /** Apply a projected rail order while preserving floating and widths. */
+  setOrder: (order: readonly RailItem[]) => void;
   nudge: (panel: PanelId, direction: -1 | 1) => void;
   setDocked: (panel: PanelId, docked: boolean) => void;
   setWidth: (panel: PanelId, width: number) => void;
@@ -307,6 +309,11 @@ export function PanelDockProvider({
     [layout, setLayout]
   );
 
+  const setOrder = useCallback(
+    (order: readonly RailItem[]) => setLayout({ ...layout, order: [...order] }),
+    [layout, setLayout]
+  );
+
   const setDocked = useCallback(
     (panel: PanelId, docked: boolean) => setLayout(setFloating(layout, panel, !docked)),
     [layout, setLayout]
@@ -381,6 +388,7 @@ export function PanelDockProvider({
       isCustomised,
       differsFromDefault: !layoutsEqual(layout, defaultLayout),
       setLayout,
+      setOrder,
       nudge,
       setDocked,
       setWidth,
@@ -404,6 +412,7 @@ export function PanelDockProvider({
       isCustomised,
       defaultLayout,
       setLayout,
+      setOrder,
       nudge,
       setDocked,
       setWidth,

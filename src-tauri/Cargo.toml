@@ -75,9 +75,9 @@ thiserror = "1"
 # Native clipboard read for Windows terminal paste (WebView2 gates keyboard
 # paste behind an async permission wait — see commands/clipboard.rs).
 arboard = "3"
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 
 # macOS-specific dependencies for WebKit JavaScript evaluation
 [target.'cfg(target_os = "macos")'.dependencies]

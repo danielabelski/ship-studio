@@ -241,6 +241,29 @@
   color: var(--color-orange-400);
 }
 
+/* Tree drop zones are deliberately richer than the ordinary sortable gap:
+   before/after use the shared edge marker, while a valid inside target gets a
+   contained highlight so nesting is legible without changing source state. */
+.drag-sort__item[data-drag-sort-target-indicator='true'].is-target[data-drag-sort-placement='inside']
+  > .ss-tree-node
+  > .ss-tree-row {
+  background: var(--surface-selected);
+  box-shadow: inset 0 0 0 var(--focus-ring-width) var(--accent-focus);
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true'].is-target[data-drag-sort-invalid='true']
+  > .ss-tree-node
+  > .ss-tree-row {
+  background: var(--surface-control-hover);
+  color: var(--text-muted);
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true'].is-target[data-drag-sort-placement='before']::after,
+.drag-sort__item[data-drag-sort-target-indicator='true'].is-target[data-drag-sort-placement='after']::after {
+  inset-inline-start: calc(var(--drag-sort-tree-depth, 0) * var(--spacing-md));
+  inset-inline-end: var(--spacing-xs);
+}
+
 .ss-tree-chevron {
   display: flex;
   align-items: center;

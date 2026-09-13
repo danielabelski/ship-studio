@@ -11,6 +11,13 @@ import type { ElementSignature } from './edit';
 /** Where a new element lands relative to the selected anchor. */
 export type InsertPosition = 'before' | 'after' | 'inside';
 
+export interface MovedElement {
+  file: string;
+  line: number;
+  className: string;
+  tagName: string;
+}
+
 export type ElementKind =
   | 'div'
   | 'section'
@@ -122,4 +129,23 @@ export function deleteElement(
   oldHtml: string
 ): Promise<void> {
   return invoke<void>('delete_element', { projectPath, signature, oldHtml });
+}
+
+/** Move a complete subtree with fresh source signatures and exact HTML guards. */
+export function moveElement(
+  projectPath: string,
+  sourceSignature: ElementSignature,
+  targetSignature: ElementSignature,
+  sourceHtml: string,
+  targetHtml: string,
+  position: InsertPosition
+): Promise<MovedElement> {
+  return invoke<MovedElement>('move_element', {
+    projectPath,
+    sourceSignature,
+    targetSignature,
+    sourceHtml,
+    targetHtml,
+    position,
+  });
 }

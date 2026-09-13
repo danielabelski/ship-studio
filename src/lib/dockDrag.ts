@@ -13,7 +13,7 @@
  * practice means out over the middle of the preview — nothing is near enough
  * and the panel floats.
  *
- * That is why the snap distance is generous. The alternative gesture, "drag it
+ * That is why the snap distance is intentionally bounded. The alternative gesture, "drag it
  * out of the rail to float it", has nowhere to go: the rail *is* the workspace,
  * so leaving it means leaving the window. Making the canvas the float target
  * instead gives the drop somewhere to land and says what will happen while you
@@ -32,7 +32,7 @@ import {
 } from './workspaceLayout';
 
 /** How near a boundary the pointer must be for the drop to dock rather than float. */
-export const SNAP_PX = 140;
+export const SNAP_PX = 24;
 
 /** A visible rail item's horizontal extent, in viewport coordinates. */
 export interface RailSlotRect {

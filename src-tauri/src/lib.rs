@@ -79,6 +79,24 @@ fn cleanup_agent_processes() {
     }
 }
 
+/// Use the Vite server for `tauri dev`; packaged builds must use bundled
+/// assets. The main window is built programmatically, so Tauri cannot apply
+/// `build.devUrl` automatically as it would for a window declared in config.
+fn main_webview_url() -> Result<tauri::WebviewUrl, String> {
+    if cfg!(debug_assertions) {
+        let port = std::env::var("SHIPSTUDIO_DEV_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|value| *value != 0)
+            .unwrap_or(1420);
+        let dev_url = url::Url::parse(&format!("http://127.0.0.1:{port}"))
+            .map_err(|error| format!("Invalid development server URL: {error}"))?;
+        return Ok(tauri::WebviewUrl::External(dev_url));
+    }
+
+    Ok(tauri::WebviewUrl::App("index.html".into()))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Sentry must init before the tracing subscriber so its layer can attach.
@@ -172,7 +190,10 @@ pub fn run() {
                 let mut main_builder = tauri::WebviewWindowBuilder::new(
                     _app,
                     "main",
-                    tauri::WebviewUrl::App("index.html".into()),
+                    main_webview_url().unwrap_or_else(|error| {
+                        tracing::error!(%error, "Failed to build development server URL");
+                        tauri::WebviewUrl::App("index.html".into())
+                    }),
                 )
                 .title("Ship Studio")
                 .inner_size(1400.0, 900.0)
@@ -574,6 +595,7 @@ pub fn run() {
             commands::edit_structure::duplicate_element,
             commands::edit_structure::paste_element,
             commands::edit_structure::delete_element,
+            commands::edit_structure::move_element,
             commands::edit_css::resolve_css_rule,
             commands::edit_css::set_css_declaration,
             commands::edit_css::add_css_variable,

@@ -2,9 +2,6 @@
    See docs/flexible-panels.md and components/workspace/WorkspaceDock.tsx. */
 
 :root {
-  /* The grab strip on a slot's inner edge. Matches the two-pane split handle
-     it replaces, so the workspace has one resize target width. */
-  --dock-handle-w: var(--space-08);
   --dock-drop-line-w: var(--stroke-2);
   /* Each row is a panel, where it is, and three controls to move it. */
   --dock-layout-menu-w: 280px;
@@ -58,21 +55,21 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: var(--dock-handle-w);
-  /* Above the docked surface (which sits at --z-dropdown) so the target stays
-     grabbable, and below chrome — a separator that outranks a toolbar's menus
-     draws its line through them. Same reasoning as --z-pane-separator's own. */
+  /* Match the shared sidebar handle: one visible stroke with its wider hit
+     target supplied by `.panel-resize-handle::before`. Keep it above the
+     docked surface so the edge remains grabbable. */
+  width: var(--stroke-1);
   z-index: var(--z-pane-separator);
 }
 
 /* The handle goes on the edge facing the preview, so dragging always means
    "make this panel wider or narrower" in the direction you'd expect. */
 .workspace-dock__resize--left {
-  right: calc(var(--dock-handle-w) / -2);
+  right: calc(var(--stroke-1) / -2);
 }
 
 .workspace-dock__resize--right {
-  left: calc(var(--dock-handle-w) / -2);
+  left: calc(var(--stroke-1) / -2);
 }
 
 /* Fullscreen preview.
@@ -106,9 +103,10 @@
   background: var(--accent-active);
   box-shadow: 0 0 0 var(--space-04) rgba(var(--accent-active-rgb), 0.2);
   pointer-events: none;
-  /* Above the fullscreen rail and its floating panels: the indicator has to be
-     visible over whatever it is being dropped between. */
-  z-index: var(--z-tooltip);
+  /* Above docked surfaces and below floating panels: the green target line
+     should remain visible at the seam without painting over the window being
+     dragged. */
+  z-index: var(--z-pane-separator);
 }
 
 /* What releasing now would do, in words, next to the cursor. An insertion line
@@ -165,6 +163,9 @@
    the three controls that move it — a menu of state rather than of commands. */
 .workspace-layout-menu {
   min-width: var(--dock-layout-menu-w);
+  /* This menu is portaled to body. It must clear both the workspace header
+     stacking context and panels opened after the menu. */
+  z-index: var(--z-tooltip);
 }
 
 .workspace-layout-menu__section {
@@ -178,13 +179,84 @@
 
 .workspace-layout-menu__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: var(--spacing-sm);
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: var(--spacing-xs);
   align-items: center;
-  padding: var(--spacing-xs) var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-interaction-fast);
+}
+
+/* This selector is deliberately composed on the same element as the shared
+   primitive. A later transition shorthand would replace the primitive's
+   transform transition and make rows snap instead of sliding. Keep the
+   overlay's presentational row out of this rule: it never moves in flow. */
+.drag-sort__item.workspace-layout-menu__row {
+  transition:
+    background-color var(--transition-interaction-fast),
+    transform var(--drag-sort-reorder-transition);
+}
+
+.workspace-layout-menu__row:not(.workspace-layout-menu__row--preview):hover {
+  background: var(--surface-control-hover);
+}
+
+.workspace-layout-menu__row:not(.workspace-layout-menu__row--preview):active {
+  background: var(--surface-selected);
+}
+
+.workspace-layout-menu__row--preview {
+  height: var(--stroke-1);
+  min-height: var(--stroke-1);
+  margin: var(--spacing-xs) 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.workspace-layout-menu__row--preview.is-boundary {
+  background: var(--border-default);
+}
+
+.workspace-layout-menu__preview-label {
+  position: absolute;
+  width: var(--stroke-1);
+  height: var(--stroke-1);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.workspace-layout-menu__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.workspace-layout-menu__drag-handle-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-icon-button);
+  height: var(--size-icon-button);
+  color: var(--text-muted);
+}
+
+.drag-sort__overlay > .workspace-layout-menu__row--overlay {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--spacing-xs) var(--spacing-xs);
+  pointer-events: none;
+}
+
+.workspace-layout-menu__row--overlay .workspace-layout-menu__move {
+  cursor: default;
 }
 
 .workspace-layout-menu__name {
+  min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--font-size-menu-item);

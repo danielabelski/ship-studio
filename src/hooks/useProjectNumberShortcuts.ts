@@ -6,10 +6,11 @@ import { useModal } from '../contexts/ModalContext';
 import { basename } from '../lib/paths';
 import { isMac } from '../lib/setup';
 import { familyRootOf, ensureFamilyRoot } from '../lib/worktreeFamilies';
+import { getActiveProjectOrder } from '../lib/activeProjectOrder';
 
 interface Params {
   /** Pinned-row paths, in sidebar order. */
-  pinnedPaths: string[];
+  pinnedPaths: readonly string[];
   /** Project-open handler, same as the one the sidebar uses. */
   handleSelectProject: (project: Project) => void | Promise<void>;
 }
@@ -17,7 +18,8 @@ interface Params {
 /**
  * Global Cmd/Ctrl+1..9 shortcuts to jump to the Nth project in the sidebar's
  * effective order: pinned rows first, then active sessions
- * (deduped against pinned, sorted by path — matches `WorkspaceSidebar`).
+ * (deduped against pinned, using the Active group's saved order with a
+ * deterministic name fallback — matches `WorkspaceSidebar`).
  *
  * The ordering is read fresh on each keystroke from a ref + the session
  * registry, so pin changes / new active sessions are reflected without
@@ -49,7 +51,17 @@ export function useProjectNumberShortcuts({ pinnedPaths, handleSelectProject }: 
         .map((s) => familyRootOf(s.projectPath))
         .filter((p) => !pinSet.has(p))
         .filter((p) => (seen.has(p) ? false : (seen.add(p), true)))
-        .sort((a, b) => (basename(a) || a).localeCompare(basename(b) || b) || a.localeCompare(b));
+        .sort((a, b) => {
+          const order = getActiveProjectOrder();
+          const aRank = order.indexOf(a);
+          const bRank = order.indexOf(b);
+          if (aRank >= 0 || bRank >= 0) {
+            if (aRank < 0) return 1;
+            if (bRank < 0) return -1;
+            if (aRank !== bRank) return aRank - bRank;
+          }
+          return (basename(a) || a).localeCompare(basename(b) || b) || a.localeCompare(b);
+        });
 
       const ordered = [...pins, ...activePaths];
       const path = ordered[index];

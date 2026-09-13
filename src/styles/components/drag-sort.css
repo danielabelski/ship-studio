@@ -1,0 +1,177 @@
+/* Shared DragSort interaction surfaces. Geometry is supplied by the manager. */
+.drag-sort__item {
+  position: relative;
+  transform: var(--drag-sort-transform, none);
+  transition: transform var(--drag-sort-reorder-transition);
+}
+
+/* Pointer dragging leaves the handle focused after release so keyboard users
+   can continue from the same item. Only expose the ring for keyboard-visible
+   focus; pointer focus should not make the dropped row look selected. */
+.drag-sort__item:has(:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--accent-focus);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.drag-sort__item[data-drag-sort-placeholder='true'] {
+  /* Keep the source in the hit-test tree so WebKit pointer capture survives
+     activation and target crossings. Its measured box is the moving
+     placeholder; the body portal supplies the visible row. */
+  opacity: var(--drag-sort-source-opacity);
+}
+
+.drag-sort__item.is-disabled {
+  cursor: default;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true'].is-target::after {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: var(--drag-sort-target-indicator-width);
+  content: '';
+  background: var(--drag-sort-target-indicator);
+  opacity: var(--drag-sort-overlay-opacity);
+  pointer-events: none;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true'][data-drag-sort-placement='before']::after {
+  top: 0;
+  bottom: auto;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true'][data-drag-sort-axis='horizontal'][data-drag-sort-placement='before']::after,
+.drag-sort__item[data-drag-sort-target-indicator='true'][data-drag-sort-axis='horizontal'][data-drag-sort-placement='after']::after {
+  inset-block: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--drag-sort-target-indicator-width);
+  height: auto;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true'][data-drag-sort-axis='horizontal'][data-drag-sort-placement='before']::after {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true'][data-drag-sort-axis='horizontal'][data-drag-sort-placement='after']::after {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true'].is-invalid-target::after {
+  background: var(--accent-error);
+}
+
+.drag-sort__handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--size-icon-button);
+  height: var(--size-icon-button);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: grab;
+}
+
+.drag-sort__handle:hover:not(:disabled),
+.drag-sort__handle:focus-visible {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.drag-sort__handle:focus-visible {
+  outline: none;
+}
+
+.drag-sort__handle:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.drag-sort__handle:disabled {
+  opacity: var(--button-disabled-opacity);
+  cursor: default;
+}
+
+/* Hover-revealed handles stay mounted so keyboard users can always reach them.
+   The item may deliberately open a compact inline slot for this variant;
+   opacity, scale, and blur remain separate so the reveal is interruptible
+   without affecting the sortable row's transform transition. */
+.drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+  width: 0;
+  min-width: 0;
+  inline-size: 0;
+  min-inline-size: 0;
+  flex-basis: 0;
+  overflow: hidden;
+  opacity: 0;
+  filter: blur(var(--space-04));
+  transform: scale(0.25);
+  transform-origin: left center;
+  transition-property: opacity, transform, filter, width, inline-size, flex-basis;
+  transition-duration: var(--duration-slow);
+  transition-timing-function: var(--ease-icon-swap);
+}
+
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true']):hover
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'][data-drag-sort-handle-reveal-on='item'],
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true']):focus-within
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'][data-drag-sort-handle-reveal-on='item'],
+.drag-sort__item:has(:focus-visible)
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'][data-drag-sort-handle-reveal-on='item'] {
+  width: var(--size-icon-button);
+  inline-size: var(--size-icon-button);
+  flex-basis: var(--size-icon-button);
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+.drag-sort__overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-drag-sort-overlay);
+  box-sizing: border-box;
+  width: var(--drag-sort-overlay-width);
+  height: var(--drag-sort-overlay-height);
+  opacity: var(--drag-sort-overlay-opacity);
+  pointer-events: none;
+  background: var(--surface-panel);
+  border-radius: var(--radius-control);
+  box-shadow: var(--drag-sort-overlay-shadow);
+  transform: translate3d(var(--drag-sort-overlay-x), var(--drag-sort-overlay-y), 0);
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.drag-sort__overlay[hidden] {
+  display: none;
+}
+
+.drag-sort__overlay[data-drag-sort-phase='dropping'],
+.drag-sort__overlay[data-drag-sort-phase='cancelling'] {
+  transition: transform var(--drag-sort-settle-transition);
+}
+
+.drag-sort__instructions,
+.drag-sort__live-region {
+  position: fixed;
+  width: var(--drag-sort-overlay-border-width);
+  height: var(--drag-sort-overlay-border-width);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drag-sort__item,
+  .drag-sort__overlay,
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+    transition: none;
+  }
+}

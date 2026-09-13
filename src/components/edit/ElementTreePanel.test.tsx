@@ -1,10 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { ElementTreePanel } from './ElementTreePanel';
+import {
+  ElementTreePanel,
+  projectTreeVisibleOrder,
+  treePlacementForTarget,
+} from './ElementTreePanel';
 
 describe('ElementTreePanel', () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  it('projects quarter/inside tree zones and keeps a dragged subtree together', () => {
+    const target = {
+      id: 2,
+      group: 'elements',
+      rect: { left: 0, top: 100, right: 240, bottom: 200, width: 240, height: 100 },
+    } as const;
+    expect(treePlacementForTarget(target, { x: 10, y: 120 }, 'vertical')).toBe('before');
+    expect(treePlacementForTarget(target, { x: 10, y: 150 }, 'vertical')).toBe('inside');
+    expect(treePlacementForTarget(target, { x: 10, y: 190 }, 'vertical')).toBe('after');
+    expect(
+      projectTreeVisibleOrder([1, 2, 3, 4], 1, 4, 'after', new Set(['number:1', 'number:2']))
+    ).toEqual([3, 4, 1, 2]);
   });
 
   it('describes pinning the floating panel and unpinning the docked panel', () => {
@@ -61,6 +79,46 @@ describe('ElementTreePanel', () => {
     expect(
       screen.getByTestId('element-tree-panel').querySelector('[data-tree-id="2"]')
     ).toHaveClass('affected');
+  });
+
+  it('uses the item surface for structural sorting and keeps a presentational overlay', () => {
+    render(
+      <ElementTreePanel
+        tree={{
+          id: 1,
+          tag: 'body',
+          cls: '',
+          text: '',
+          children: [{ id: 2, tag: 'section', cls: 'hero', text: '', children: [] }],
+        }}
+        truncated={false}
+        selectedId={1}
+        onSelect={vi.fn()}
+        onHover={vi.fn()}
+        projectPath="/tmp/project"
+        selectedSignature={null}
+        structure={{
+          selectAndRun: vi.fn(),
+          insert: vi.fn(),
+          move: vi.fn(),
+          duplicate: vi.fn(),
+          remove: vi.fn(),
+          copy: vi.fn(),
+          cut: vi.fn(),
+          paste: vi.fn(),
+          hasClipboard: false,
+          clipboardSourceNodeId: null,
+        }}
+      />
+    );
+
+    const item = screen
+      .getByTestId('element-tree-panel')
+      .querySelector('[data-tree-id="2"]')
+      ?.closest('[data-drag-sort-item]');
+    expect(item).toHaveAttribute('data-drag-sort-has-overlay', 'true');
+    expect(item).toHaveAttribute('data-drag-sort-activation', 'item');
+    expect(item?.querySelector('.drag-sort__handle')).not.toBeInTheDocument();
   });
 
   it('mirrors a preview hover on the matching row', () => {

@@ -285,6 +285,21 @@
   --z-workspace-header: 200;
   --z-preview-fullscreen: 900;
   --z-floating-panel: 950;
+  /* The overlay must paint above portaled menus while remaining below
+     notifications and app-level surfaces. */
+  --z-drag-sort-overlay: 1110;
+
+  /* Drag-sort owns the interaction surface but follows the global visual
+     language. The transition includes the exact settle easing from the
+     frozen drag-sort contract. */
+  --drag-sort-overlay-shadow: var(--shadow-md);
+  --drag-sort-overlay-opacity: 1;
+  --drag-sort-source-opacity: 0;
+  --drag-sort-overlay-border-width: var(--stroke-1);
+  --drag-sort-target-indicator: var(--accent-active);
+  --drag-sort-target-indicator-width: var(--stroke-2);
+  --drag-sort-reorder-transition: var(--transition-interaction);
+  --drag-sort-settle-transition: var(--duration-sortable-settle) cubic-bezier(0.25, 1, 0.5, 1);
 
   --editor-panel-w: 300px;
   --editor-panel-visual-w: 240px;

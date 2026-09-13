@@ -299,6 +299,10 @@
   padding-inline-end: var(--spacing-lg);
 }
 
+.app.workspace:not(.workspace--compact-toolbar) .workspace-titlebar-actions {
+  margin-inline-start: auto;
+}
+
 .app.workspace:not(.workspace--compact-toolbar) .workspace-title-group {
   position: absolute;
   inset-block: 0;
