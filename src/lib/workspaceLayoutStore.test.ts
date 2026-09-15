@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearProjectLayout,
   hasProjectLayout,
+  readLayoutScope,
   readDefaultLayout,
   readProjectLayout,
   writeDefaultLayout,
+  writeLayoutScope,
   writeProjectLayout,
 } from './workspaceLayoutStore';
 import {
@@ -13,10 +15,10 @@ import {
   PREVIEW,
   dockedPanels,
   layoutsEqual,
-  movePanel,
   normalizeLayout,
   setFloating,
-  setPanelWidth,
+  stackPanel,
+  widthOf,
 } from './workspaceLayout';
 
 const PROJECT = '/Users/dev/ShipStudio/site';
@@ -27,14 +29,55 @@ beforeEach(() => {
 });
 
 describe('the default', () => {
-  it('is the arrangement Ship Studio has always had, on a fresh install', () => {
-    expect(readDefaultLayout().order).toEqual(DEFAULT_LAYOUT.order);
+  it('is a v2 layout on a fresh install', () => {
+    const result = readDefaultLayout();
+    expect(result.version).toBe(2);
+    expect(result.columns.some((column) => column.kind === 'preview')).toBe(true);
   });
 
-  it('survives a round trip', () => {
-    const arranged = movePanel(readDefaultLayout(), 'agent', 99);
+  it('survives a round trip including stacked weights', () => {
+    const arranged = stackPanel(readDefaultLayout(), 'agent', 'navigator', 'after');
     writeDefaultLayout(arranged);
     expect(layoutsEqual(readDefaultLayout(), arranged)).toBe(true);
+  });
+
+  it('normalizes and writes a legacy flat default as v2 on first read', () => {
+    localStorage.setItem(
+      'shipstudio.layout.default',
+      JSON.stringify({
+        order: ['agent', PREVIEW, 'editor'],
+        floating: ['editor'],
+        widths: { agent: 500 },
+      })
+    );
+    const migrated = readDefaultLayout();
+    expect(migrated.version).toBe(2);
+    expect(widthOf(migrated, 'agent')).toBe(500);
+    expect(
+      JSON.parse(localStorage.getItem('shipstudio.layout.default')!) as { version: number }
+    ).toHaveProperty('version', 2);
+  });
+});
+
+describe('the persistence scope preference', () => {
+  it('defaults to project scope and accepts only the two known values', () => {
+    expect(readLayoutScope()).toBe('project');
+    localStorage.setItem('shipstudio.layout.scope', 'global');
+    expect(readLayoutScope()).toBe('global');
+    localStorage.setItem('shipstudio.layout.scope', 'unexpected');
+    expect(readLayoutScope()).toBe('project');
+  });
+
+  it('guards preference reads and writes when storage is unavailable', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+
+    expect(readLayoutScope()).toBe('project');
+    expect(() => writeLayoutScope('global')).not.toThrow();
   });
 });
 
@@ -44,10 +87,8 @@ describe('a project', () => {
     expect(layoutsEqual(readProjectLayout(PROJECT), readDefaultLayout())).toBe(true);
   });
 
-  it('follows a *changed* default, rather than a copy taken when it first opened', () => {
-    // The point of not writing an entry until somebody arranges the project:
-    // change your default and every project you never touched moves with it.
-    const changed = movePanel(readDefaultLayout(), 'agent', 99);
+  it('follows a changed default rather than a copy taken when it first opened', () => {
+    const changed = setFloating(readDefaultLayout(), 'agent', true);
     writeDefaultLayout(changed);
     expect(layoutsEqual(readProjectLayout(PROJECT), changed)).toBe(true);
   });
@@ -55,7 +96,7 @@ describe('a project', () => {
   it('keeps its own arrangement once it has one', () => {
     const mine = setFloating(readDefaultLayout(), 'agent', true);
     writeProjectLayout(PROJECT, mine);
-    writeDefaultLayout(movePanel(readDefaultLayout(), 'team', 0));
+    writeDefaultLayout(setFloating(readDefaultLayout(), 'team', true));
 
     expect(hasProjectLayout(PROJECT)).toBe(true);
     expect(layoutsEqual(readProjectLayout(PROJECT), mine)).toBe(true);
@@ -66,25 +107,41 @@ describe('a project', () => {
     expect(hasProjectLayout('/Users/dev/ShipStudio/other')).toBe(false);
   });
 
-  it('goes back to following the default when reset, not to a frozen copy of it', () => {
-    writeProjectLayout(PROJECT, setPanelWidth(readDefaultLayout(), 'agent', 700));
+  it('goes back to following the default when reset', () => {
+    writeProjectLayout(PROJECT, setFloating(readDefaultLayout(), 'agent', true));
     clearProjectLayout(PROJECT);
     expect(hasProjectLayout(PROJECT)).toBe(false);
 
-    const laterDefault = movePanel(readDefaultLayout(), 'navigator', 0);
+    const laterDefault = setFloating(readDefaultLayout(), 'navigator', true);
     writeDefaultLayout(laterDefault);
     expect(layoutsEqual(readProjectLayout(PROJECT), laterDefault)).toBe(true);
   });
 
+  it('migrates a legacy project entry and writes back canonical v2', () => {
+    localStorage.setItem(
+      `shipstudio.layout.project:${PROJECT}`,
+      JSON.stringify({ order: ['agent', PREVIEW], floating: [], widths: {} })
+    );
+    const migrated = readProjectLayout(PROJECT);
+    expect(migrated.version).toBe(2);
+    expect(
+      JSON.parse(localStorage.getItem(`shipstudio.layout.project:${PROJECT}`)!) as {
+        version: number;
+      }
+    ).toHaveProperty('version', 2);
+    expect(migrated.columns.filter((column) => column.kind === 'preview')).toHaveLength(1);
+  });
+
   it('repairs a corrupted entry instead of failing to open the workspace', () => {
-    localStorage.setItem(`shipstudio.layout.project:${PROJECT}`, '{"order":[oops');
-    expect(readProjectLayout(PROJECT).order).toContain(PREVIEW);
+    localStorage.setItem(`shipstudio.layout.project:${PROJECT}`, '{"columns":[oops');
+    expect(readProjectLayout(PROJECT).columns.some((column) => column.kind === 'preview')).toBe(
+      true
+    );
   });
 });
 
 describe('migration from the pre-rail preferences', () => {
   it('opens on the arrangement an existing install already had', () => {
-    // Agent + Navigator pinned, Variables floating, a dragged navigator width.
     localStorage.setItem('agentPanelPinned', '1');
     localStorage.setItem('elementTreePinned', '1');
     localStorage.setItem('variablesPanelPinned', '0');
@@ -92,7 +149,7 @@ describe('migration from the pre-rail preferences', () => {
 
     const migrated = readDefaultLayout();
     expect(dockedPanels(migrated)).toEqual(['agent', 'navigator']);
-    expect(migrated.widths.navigator).toBe(320);
+    expect(widthOf(migrated, 'navigator')).toBe(320);
   });
 
   it('carries a docked Team and its width across', () => {
@@ -101,23 +158,15 @@ describe('migration from the pre-rail preferences', () => {
 
     const migrated = readDefaultLayout();
     expect(dockedPanels(migrated)).toContain('team');
-    expect(migrated.widths.team).toBe(500);
+    expect(widthOf(migrated, 'team')).toBe(500);
   });
 
-  it('turns the agent panel’s old split percentage into a width', () => {
-    // It was the left half of a two-pane split stored as a percentage; the rail
-    // stores pixels. The conversion is an estimate from the window — see the
-    // note on `legacyAgentWidth` — and is clamped like any other width.
-    localStorage.setItem('agentPanelDockedSplit', '40');
-    expect(readDefaultLayout().widths.agent).toBe(Math.round(window.innerWidth * 0.4));
-  });
-
-  it('does not migrate a split percentage that is narrower than the panel can be', () => {
+  it('turns the agent panel old split percentage into a clamped width', () => {
     localStorage.setItem('agentPanelDockedSplit', '2');
-    expect(readDefaultLayout().widths.agent).toBe(PANEL_META.agent.minWidth);
+    expect(widthOf(readDefaultLayout(), 'agent')).toBe(PANEL_META.agent.minWidth);
   });
 
-  it('runs once, so arranging your panels back is not undone on next launch', () => {
+  it('runs once, so arranging panels back is not undone on next launch', () => {
     localStorage.setItem('variablesPanelPinned', '1');
     expect(dockedPanels(readDefaultLayout())).toContain('variables');
 
@@ -125,8 +174,8 @@ describe('migration from the pre-rail preferences', () => {
     expect(dockedPanels(readDefaultLayout())).not.toContain('variables');
   });
 
-  it('does not read the old flags for an install that already has a layout', () => {
-    writeDefaultLayout(normalizeLayout({ order: DEFAULT_LAYOUT.order, floating: [] }));
+  it('does not read old flags for an install that already has a layout', () => {
+    writeDefaultLayout(normalizeLayout(DEFAULT_LAYOUT));
     localStorage.setItem('agentPanelPinned', '0');
     expect(dockedPanels(readDefaultLayout())).toContain('agent');
   });
@@ -134,8 +183,6 @@ describe('migration from the pre-rail preferences', () => {
 
 describe('when storage is unavailable', () => {
   it('still renders a layout, and a rejected write costs only the preference', () => {
-    // A private window, blocked site data, or a full quota. Losing where your
-    // panels are is acceptable; failing to open the workspace is not.
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('denied');
     });
@@ -143,7 +190,9 @@ describe('when storage is unavailable', () => {
       throw new Error('quota');
     });
 
-    expect(readProjectLayout(PROJECT).order).toContain(PREVIEW);
+    expect(readProjectLayout(PROJECT).columns.some((column) => column.kind === 'preview')).toBe(
+      true
+    );
     expect(() => writeProjectLayout(PROJECT, readDefaultLayout())).not.toThrow();
     expect(() => clearProjectLayout(PROJECT)).not.toThrow();
   });

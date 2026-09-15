@@ -137,6 +137,31 @@ export function setCssVariable(
   });
 }
 
+/** A custom-property definition identity used when reordering one `:root` rule. */
+export interface CssVariableOrderEntry {
+  name: string;
+  file: string;
+  selector: string;
+  line: number;
+}
+
+/** Reorder custom-property declarations within their exact authored `:root` rule. */
+export function reorderCssVariables(
+  projectPath: string,
+  file: string,
+  selector: string,
+  line: number,
+  ordered: CssVariableOrderEntry[]
+): Promise<void> {
+  return invoke<void>('reorder_css_variables', {
+    projectPath,
+    file,
+    selector,
+    line,
+    ordered,
+  });
+}
+
 export interface CssVariableDeleteImpact {
   usageCount: number;
   ruleCount: number;

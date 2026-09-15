@@ -18,6 +18,15 @@ export interface MovedElement {
   tagName: string;
 }
 
+/** Exact source span used to keep a drag reorder tied to one authored node. */
+export interface ExactSourceTarget {
+  file: string;
+  start: number;
+  end: number;
+  expectedHash: string;
+  expectedHtml: string;
+}
+
 export type ElementKind =
   | 'div'
   | 'section'
@@ -138,7 +147,9 @@ export function moveElement(
   targetSignature: ElementSignature,
   sourceHtml: string,
   targetHtml: string,
-  position: InsertPosition
+  position: InsertPosition,
+  sourceTarget?: ExactSourceTarget,
+  targetTarget?: ExactSourceTarget
 ): Promise<MovedElement> {
   return invoke<MovedElement>('move_element', {
     projectPath,
@@ -147,5 +158,7 @@ export function moveElement(
     sourceHtml,
     targetHtml,
     position,
+    sourceTarget,
+    targetTarget,
   });
 }

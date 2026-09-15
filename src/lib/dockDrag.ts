@@ -1,44 +1,32 @@
-/**
- * Turning a pointer into a place to put a panel.
- *
- * Kept as pure functions over rectangles so the whole interaction can be
- * reasoned about — and tested — without a browser, a pointer, or a rendered
- * workspace. `WorkspaceDock` measures; this decides; `workspaceLayout` applies.
- *
- * ## The gesture
- *
- * A panel docks at a **boundary**: the outer edges of the rail, and every seam
- * between two things already in it. While dragging, the nearest boundary within
- * `SNAP_PX` wins and is drawn as an insertion line. Past that — which in
- * practice means out over the middle of the preview — nothing is near enough
- * and the panel floats.
- *
- * That is why the snap distance is intentionally bounded. The alternative gesture, "drag it
- * out of the rail to float it", has nowhere to go: the rail *is* the workspace,
- * so leaving it means leaving the window. Making the canvas the float target
- * instead gives the drop somewhere to land and says what will happen while you
- * are still holding it.
- *
- * @module lib/dockDrag
- */
+/** Pure pointer geometry for the two-dimensional workspace rail. */
 
 import {
-  PREVIEW,
-  movePanel,
+  movePanelToColumnGap,
   setFloating,
+  stackPanel,
   type PanelId,
-  type RailItem,
   type WorkspaceLayout,
 } from './workspaceLayout';
 
-/** How near a boundary the pointer must be for the drop to dock rather than float. */
 export const SNAP_PX = 24;
 
-/** A visible rail item's horizontal extent, in viewport coordinates. */
-export interface RailSlotRect {
-  item: RailItem;
+export interface RailColumnRect {
+  columnIndex: number;
   left: number;
   right: number;
+  top: number;
+  bottom: number;
+  preview?: boolean;
+}
+
+export interface RailPanelRect {
+  panel: PanelId;
+  columnIndex: number;
+  panelIndex: number;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
 }
 
 export interface RailBounds {
@@ -48,112 +36,173 @@ export interface RailBounds {
   bottom: number;
 }
 
-/** Where a release would put the panel. */
+export interface RailGeometry {
+  columns: RailColumnRect[];
+  panels: RailPanelRect[];
+  bounds: RailBounds;
+}
+
 export type DropTarget =
   | {
-      kind: 'dock';
-      /** Insert before this rail item, or at the end when `null`. */
-      before: RailItem | null;
-      /** Viewport x of the insertion line, for drawing it. */
+      kind: 'column';
+      beforeColumn: number | null;
       x: number;
-      /**
-       * The rail's own vertical extent.
-       *
-       * The line is drawn `position: fixed`, so without this it runs the full
-       * height of the window and strikes through the workspace header and the
-       * titlebar above the rail it is dropping into.
-       */
+      top: number;
+      bottom: number;
+    }
+  | {
+      kind: 'stack';
+      columnIndex: number;
+      /** Insert before this panel, or after the stack when null. */
+      beforePanel: PanelId | null;
+      /** The panel immediately above the append boundary, for the hint. */
+      afterPanel: PanelId | null;
+      left: number;
+      right: number;
+      y: number;
       top: number;
       bottom: number;
     }
   | { kind: 'float' };
 
-/**
- * Every seam a panel could be inserted at, left to right.
- *
- * Adjacent slots share a seam, so consecutive `right`/`left` pairs collapse to
- * one boundary — otherwise a two-pixel gap between slots would offer two
- * targets a person cannot tell apart, and which one won would come down to
- * sub-pixel rounding.
- */
-export function railBoundaries(
-  slots: RailSlotRect[],
-  bounds: RailBounds
-): { x: number; before: RailItem | null }[] {
-  if (slots.length === 0) return [{ x: bounds.left, before: null }];
-
-  const boundaries: { x: number; before: RailItem | null }[] = [
-    { x: slots[0].left, before: slots[0].item },
+function columnBoundaries(columns: RailColumnRect[], bounds: RailBounds) {
+  if (columns.length === 0) return [{ x: bounds.left, beforeColumn: null as number | null }];
+  const ordered = [...columns].sort((a, b) => a.left - b.left);
+  const result: { x: number; beforeColumn: number | null }[] = [
+    { x: ordered[0].left, beforeColumn: ordered[0].columnIndex },
   ];
-  for (let i = 1; i < slots.length; i += 1) {
-    boundaries.push({ x: (slots[i - 1].right + slots[i].left) / 2, before: slots[i].item });
+  for (let index = 1; index < ordered.length; index += 1) {
+    result.push({
+      x: (ordered[index - 1].right + ordered[index].left) / 2,
+      beforeColumn: ordered[index].columnIndex,
+    });
   }
-  boundaries.push({ x: slots[slots.length - 1].right, before: null });
-  return boundaries;
+  result.push({ x: ordered[ordered.length - 1].right, beforeColumn: null });
+  return result;
 }
 
-/**
- * The drop this pointer position means.
- *
- * Vertical position is a gate rather than a dimension: above or below the rail
- * there is no arrangement to join, so it floats regardless of how well the x
- * lines up with a seam.
- */
+function stackBoundaries(stack: RailPanelRect[]) {
+  const ordered = [...stack].sort((a, b) => a.top - b.top);
+  if (ordered.length === 0) return [];
+
+  return [
+    ...ordered.map((panel) => ({
+      y: panel.top,
+      beforePanel: panel.panel,
+      afterPanel: null as PanelId | null,
+    })),
+    {
+      y: ordered[ordered.length - 1].bottom,
+      beforePanel: null,
+      afterPanel: ordered[ordered.length - 1].panel,
+    },
+  ];
+}
+
+/** Resolve a pointer into a new-column seam, stack insertion, or float. */
 export function dropTargetAt(
-  slots: RailSlotRect[],
-  bounds: RailBounds,
+  geometry: RailGeometry,
   point: { x: number; y: number },
   snapPx: number = SNAP_PX
 ): DropTarget {
+  const { columns, panels, bounds } = geometry;
   if (point.y < bounds.top || point.y > bounds.bottom) return { kind: 'float' };
 
-  let best: { x: number; before: RailItem | null } | null = null;
-  let bestDistance = Infinity;
-  for (const boundary of railBoundaries(slots, bounds)) {
-    const distance = Math.abs(point.x - boundary.x);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = boundary;
+  // Seams have priority. This is what lets a user pull a panel out of a stack
+  // by aiming at the rail edge without accidentally stacking it.
+  let nearest: { x: number; beforeColumn: number | null } | null = null;
+  let distance = Infinity;
+  for (const boundary of columnBoundaries(columns, bounds)) {
+    const nextDistance = Math.abs(point.x - boundary.x);
+    if (nextDistance < distance) {
+      distance = nextDistance;
+      nearest = boundary;
     }
   }
+  if (nearest && distance <= snapPx) {
+    return {
+      kind: 'column',
+      beforeColumn: nearest.beforeColumn,
+      x: nearest.x,
+      top: bounds.top,
+      bottom: bounds.bottom,
+    };
+  }
 
-  if (!best || bestDistance > snapPx) return { kind: 'float' };
+  const column = columns.find(
+    (candidate) =>
+      point.x >= candidate.left &&
+      point.x <= candidate.right &&
+      point.y >= candidate.top &&
+      point.y <= candidate.bottom
+  );
+  if (!column || column.preview) return { kind: 'float' };
+
+  const stack = panels
+    .filter((panel) => panel.columnIndex === column.columnIndex)
+    .sort((a, b) => a.top - b.top);
+  if (stack.length === 0) return { kind: 'float' };
+
+  let nearestStackBoundary:
+    | (ReturnType<typeof stackBoundaries>[number] & { distance: number })
+    | null = null;
+  for (const boundary of stackBoundaries(stack)) {
+    const distance = Math.abs(point.y - boundary.y);
+    if (!nearestStackBoundary || distance < nearestStackBoundary.distance) {
+      nearestStackBoundary = { ...boundary, distance };
+    }
+  }
+  if (!nearestStackBoundary || nearestStackBoundary.distance > snapPx) {
+    return { kind: 'float' };
+  }
   return {
-    kind: 'dock',
-    before: best.before,
-    x: best.x,
-    top: bounds.top,
-    bottom: bounds.bottom,
+    kind: 'stack',
+    columnIndex: column.columnIndex,
+    beforePanel: nearestStackBoundary.beforePanel,
+    afterPanel: nearestStackBoundary.afterPanel,
+    left: column.left,
+    right: column.right,
+    y: nearestStackBoundary.y,
+    top: column.top,
+    bottom: column.bottom,
   };
 }
 
-/**
- * The layout a release produces.
- *
- * Dropping onto the rail docks the panel — putting something in a row is the
- * gesture for wanting it there, and leaving it floating over the slot it just
- * claimed would be a move that visibly did nothing.
- */
 export function applyDrop(
   layout: WorkspaceLayout,
   panel: PanelId,
   target: DropTarget
 ): WorkspaceLayout {
   if (target.kind === 'float') return setFloating(layout, panel, true);
-  const to = target.before === null ? layout.order.length : layout.order.indexOf(target.before);
-  return movePanel(layout, panel, to === -1 ? layout.order.length : to);
+  if (target.kind === 'column') {
+    return movePanelToColumnGap(
+      layout,
+      panel,
+      target.beforeColumn === null ? layout.columns.length : target.beforeColumn
+    );
+  }
+  if (target.beforePanel !== null) return stackPanel(layout, panel, target.beforePanel, 'before');
+  if (target.afterPanel !== null) return stackPanel(layout, panel, target.afterPanel, 'after');
+  return layout;
 }
 
-/**
- * A one-line description of what releasing now would do.
- *
- * Shown on the drag chip. A drag that changes where you work should say so
- * before you commit to it, and "Float" versus "Left of Preview" is the whole
- * difference between the two outcomes this gesture has.
- */
-export function describeDrop(target: DropTarget, labelOf: (item: RailItem) => string): string {
+export function describeDrop(
+  target: DropTarget,
+  labelOf: (panel: PanelId) => string,
+  columnLabel?: (column: number | null) => string
+): string {
   if (target.kind === 'float') return 'Float';
-  if (target.before === null) return 'Far right';
-  if (target.before === PREVIEW) return 'Left of preview';
-  return `Before ${labelOf(target.before)}`;
+  if (target.kind === 'column') {
+    return target.beforeColumn === null
+      ? 'New column at the far right'
+      : `New column ${columnLabel?.(target.beforeColumn) ?? 'here'}`;
+  }
+  if (target.beforePanel !== null) return `Above ${labelOf(target.beforePanel)} · same column`;
+  return target.afterPanel === null
+    ? 'Stack in this column'
+    : `Below ${labelOf(target.afterPanel)} · same column`;
+}
+
+export function railBoundaries(columns: RailColumnRect[], bounds: RailBounds) {
+  return columnBoundaries(columns, bounds);
 }

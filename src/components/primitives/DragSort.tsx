@@ -3,6 +3,7 @@
 import {
   forwardRef,
   useCallback,
+  useRef,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type HTMLAttributes,
@@ -19,6 +20,12 @@ import {
   useDragSortItemContext,
   type UseDragSortItemOptions,
 } from '../../hooks/useDragSortItem';
+
+// Keep activation out of controls owned by the row. This deliberately mirrors
+// the manager's pointer guard so pointer and keyboard activation have the same
+// interactive-descendant boundary.
+const INTERACTIVE_DESCENDANT_SELECTOR =
+  'button, a, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="switch"], [role="checkbox"]';
 
 export interface DragSortItemProps
   extends
@@ -50,6 +57,7 @@ export function DragSortItem({
   disabled = false,
   hidden = false,
   targetDisabled = false,
+  targetOnly = false,
   collisionPriority,
   showTargetIndicator = false,
   overlay,
@@ -76,10 +84,12 @@ export function DragSortItem({
     disabled,
     hidden,
     targetDisabled,
+    targetOnly,
     collisionPriority,
     showTargetIndicator,
     overlay,
   });
+  const rearmHoverReveal = binding.rearmHoverReveal;
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       onPointerDown?.(event);
@@ -88,10 +98,11 @@ export function DragSortItem({
       // collision target depend on DOM nesting rather than the grabbed row.
       const nearestItem = (event.target as Element | null)?.closest?.('[data-drag-sort-item]');
       if (nearestItem && nearestItem !== event.currentTarget) return;
-      const registeredHandle = binding.manager.getItem(id)?.handle;
+      const registration = binding.manager.getItem(id);
+      const registeredHandle = registration?.handle;
       const fromRegisteredHandle =
         registeredHandle && event.target instanceof Node && registeredHandle.contains(event.target);
-      if (!event.defaultPrevented && !fromRegisteredHandle) {
+      if (!event.defaultPrevented && !fromRegisteredHandle && registration?.activation === 'item') {
         binding.manager.pointerDown(id, event.nativeEvent, event.currentTarget);
       }
     },
@@ -100,10 +111,27 @@ export function DragSortItem({
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       onKeyDown?.(event);
-      const registeredHandle = binding.manager.getItem(id)?.handle;
+      const nearestItem = (event.target as Element | null)?.closest?.('[data-drag-sort-item]');
+      if (nearestItem && nearestItem !== event.currentTarget) return;
+      const registration = binding.manager.getItem(id);
+      const registeredHandle = registration?.handle;
       const fromRegisteredHandle =
         registeredHandle && event.target instanceof Node && registeredHandle.contains(event.target);
-      if (!event.defaultPrevented && !fromRegisteredHandle) {
+      const interactiveTarget =
+        event.target instanceof Element
+          ? event.target.closest(INTERACTIVE_DESCENDANT_SELECTOR)
+          : null;
+      const fromInteractiveChild =
+        event.target instanceof Element &&
+        event.target !== event.currentTarget &&
+        interactiveTarget !== null &&
+        interactiveTarget !== event.currentTarget;
+      if (
+        !event.defaultPrevented &&
+        !fromRegisteredHandle &&
+        registration?.activation === 'item' &&
+        !fromInteractiveChild
+      ) {
         binding.manager.keyDown(id, event.nativeEvent);
       }
     },
@@ -122,10 +150,10 @@ export function DragSortItem({
   );
   const handlePointerEnter = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      binding.rearmHoverReveal();
+      rearmHoverReveal();
       onPointerEnter?.(event);
     },
-    [binding.rearmHoverReveal, onPointerEnter]
+    [rearmHoverReveal, onPointerEnter]
   );
   const handlePointerLeave = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -234,6 +262,66 @@ export const DragSortHandle = forwardRef<HTMLButtonElement, DragSortHandleProps>
       >
         {children ?? <DragHandleIcon size={14} aria-hidden="true" />}
       </button>
+    );
+  }
+);
+
+/**
+ * Register a smaller DOM surface as the drop target for the surrounding item.
+ * The item remains the draggable/placeholder box, while this surface owns
+ * collision geometry and target indicators. This keeps nested sortable rows
+ * from treating an enclosing subtree as one giant drop zone.
+ */
+export const DragSortTarget = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
+  function DragSortTarget({ className, ...rest }, ref) {
+    const { itemProps, itemState, targetRef } = useDragSortItemContext();
+    const forwardedRef = useRef(ref);
+    forwardedRef.current = ref;
+    const setTargetRefs = useCallback(
+      (node: HTMLDivElement | null) => {
+        targetRef(node);
+        const nextRef = forwardedRef.current;
+        if (typeof nextRef === 'function') nextRef(node);
+        else if (nextRef) nextRef.current = node;
+      },
+      [targetRef, forwardedRef]
+    );
+    const classes = [
+      'drag-sort__target',
+      itemState.isTarget ? 'is-target' : null,
+      itemState.isTarget && itemProps['data-drag-sort-invalid'] ? 'is-invalid-target' : null,
+      className,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const showInsideSlot = itemState.insideHold === 'ready';
+    return (
+      <div className="drag-sort__target-wrap">
+        <div
+          ref={setTargetRefs}
+          className={classes}
+          {...rest}
+          data-drag-sort-target-element="true"
+          data-drag-sort-target={itemProps['data-drag-sort-target']}
+          data-drag-sort-invalid={itemProps['data-drag-sort-invalid']}
+          data-drag-sort-placement={itemProps['data-drag-sort-placement']}
+          data-drag-sort-inside-hold={itemProps['data-drag-sort-inside-hold']}
+          data-drag-sort-axis={itemProps['data-drag-sort-axis']}
+          data-drag-sort-target-indicator={itemProps['data-drag-sort-target-indicator']}
+        />
+        {showInsideSlot && (
+          <div
+            className="drag-sort__inside-slot"
+            data-drag-sort-inside-slot="true"
+            style={
+              {
+                '--drag-sort-inside-slot-height': `${itemState.insideSlotHeight ?? 0}px`,
+              } as CSSProperties
+            }
+            aria-hidden="true"
+          />
+        )}
+      </div>
     );
   }
 );

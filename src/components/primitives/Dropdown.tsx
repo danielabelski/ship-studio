@@ -188,7 +188,7 @@ export function Dropdown({
     containerRef,
     closeFromOutsidePointer,
     isOpen,
-    portal ? '.ss-dropdown__menu' : undefined
+    portal ? '.ss-dropdown__menu, .ss-context-menu' : '.ss-context-menu'
   );
 
   const focusMenuItem = useCallback((item: HTMLElement | null) => {

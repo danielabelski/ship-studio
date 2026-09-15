@@ -13,6 +13,12 @@ export interface ElementHtml {
   line: number;
   /** The element's source HTML: opening tag through its matching close tag. */
   html: string;
+  /** Exact source span/hash for a single resolved instance. */
+  sourceStart?: number;
+  sourceEnd?: number;
+  sourceHash?: string;
+  sourceLine?: number;
+  sourceColumn?: number;
   /** Present when the element's class string resolves to several identical
    *  source spots with byte-identical markup: every candidate location.
    *  Edits apply to all of them by default; pass a `location` to target one. */

@@ -80,10 +80,162 @@ describe('DragSortManager', () => {
         expect.objectContaining({ projectedOrder: ['b', 'a', 'c'] })
       );
       expect(manager.getSnapshot().phase).toBe('idle');
+      expect(manager.getItemState('a').suppressTransition).toBe(true);
+      expect(manager.getItemState('b').suppressTransition).toBe(true);
+      vi.advanceTimersByTime(32);
+      expect(manager.getItemState('a').suppressTransition).toBe(false);
+      expect(manager.getItemState('b').suppressTransition).toBe(false);
       manager.destroy();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('clears a stale projection and cancels when the current target is invalid', () => {
+    const moves = vi.fn();
+    const { manager, elements } = setup({
+      onMove: moves,
+      reducedMotion: () => true,
+      canMove: (_destination, context) =>
+        context.target?.id === 'c' ? { allowed: false, reason: 'locked' } : { allowed: true },
+    });
+
+    manager.pointerDown('a', pointer('pointerdown', 1, 10, 10), elements[0].element);
+    manager.pointerMove(pointer('pointermove', 1, 10, 45));
+    expect(manager.getSnapshot().projectedOrder).toEqual(['b', 'a', 'c']);
+
+    manager.pointerMove(pointer('pointermove', 1, 10, 70));
+    expect(manager.getSnapshot()).toMatchObject({
+      targetId: 'c',
+      invalidReason: 'locked',
+      projectedOrder: ['a', 'b', 'c'],
+    });
+
+    manager.pointerUp(pointer('pointerup', 1, 10, 70));
+    expect(moves).not.toHaveBeenCalled();
+    expect(manager.getSnapshot().phase).toBe('idle');
+    manager.destroy();
+  });
+
+  it('commits an adapter-reported hierarchy change when flat order is unchanged', () => {
+    const moves = vi.fn();
+    const { manager, elements } = setup({
+      onMove: moves,
+      reducedMotion: () => true,
+      placementForTarget: () => 'before',
+      projectOrder: (order) => order,
+      hasProjectedMove: () => true,
+    });
+
+    manager.pointerDown('a', pointer('pointerdown', 1, 10, 10), elements[0].element);
+    manager.pointerMove(pointer('pointermove', 1, 10, 40));
+    manager.pointerUp(pointer('pointerup', 1, 10, 40));
+
+    expect(moves).toHaveBeenCalledWith(
+      expect.objectContaining({ targetId: 'b', projectedOrder: ['a', 'b', 'c'] })
+    );
+    manager.destroy();
+  });
+
+  it('requires a pointer hold before an inside placement becomes ready', () => {
+    vi.useFakeTimers();
+    try {
+      const moves = vi.fn();
+      const { manager, elements } = setup({
+        onMove: moves,
+        reducedMotion: () => true,
+        insideHoldDelayMs: 500,
+        insideHoldFlashDurationMs: 150,
+        placementForTarget: () => 'inside',
+        projectOrder: (order) => [...order],
+      });
+      manager.pointerDown('c', pointer('pointerdown', 1, 10, 70), elements[2].element);
+      manager.pointerMove(pointer('pointermove', 1, 10, 40));
+
+      expect(manager.getSnapshot()).toMatchObject({
+        targetId: 'b',
+        placement: 'inside',
+        insideHold: 'pending',
+        projectedOrder: ['a', 'b', 'c'],
+      });
+      vi.advanceTimersByTime(499);
+      expect(manager.getSnapshot().insideHold).toBe('pending');
+      expect(moves).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      expect(manager.getSnapshot().insideHold).toBe('flashing');
+      expect(manager.getSnapshot().projectedOrder).toEqual(['a', 'b', 'c']);
+      vi.advanceTimersByTime(150);
+      expect(manager.getSnapshot()).toMatchObject({
+        targetId: 'b',
+        placement: 'inside',
+        insideHold: 'ready',
+        projectedOrder: ['a', 'b', 'c'],
+      });
+
+      manager.pointerUp(pointer('pointerup', 1, 10, 40));
+      expect(moves).toHaveBeenCalledTimes(1);
+      const committedMove = moves.mock.calls[0]?.[0] as
+        | { targetId?: string; to?: { placement?: string } }
+        | undefined;
+      expect(committedMove?.targetId).toBe('b');
+      expect(committedMove?.to?.placement).toBe('inside');
+      manager.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not nest when the pointer leaves or releases during the hold', () => {
+    vi.useFakeTimers();
+    try {
+      const moves = vi.fn();
+      const { manager, elements } = setup({
+        onMove: moves,
+        reducedMotion: () => true,
+        insideHoldDelayMs: 500,
+        hasProjectedMove: () => true,
+        placementForTarget: () => 'inside',
+      });
+      manager.pointerDown('a', pointer('pointerdown', 1, 10, 10), elements[0].element);
+      manager.pointerMove(pointer('pointermove', 1, 10, 40));
+      manager.pointerMove(pointer('pointermove', 1, 10, 200));
+      expect(manager.getSnapshot().insideHold).toBe('idle');
+      manager.pointerUp(pointer('pointerup', 1, 10, 200));
+      expect(moves).not.toHaveBeenCalled();
+      expect(manager.getSnapshot().phase).toBe('idle');
+
+      manager.pointerDown('a', pointer('pointerdown', 2, 10, 10), elements[0].element);
+      manager.pointerMove(pointer('pointermove', 2, 10, 40));
+      manager.pointerUp(pointer('pointerup', 2, 10, 40));
+      expect(moves).not.toHaveBeenCalled();
+      manager.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the projected destination active while the pointer crosses its empty row', () => {
+    const { manager, elements } = setup({ reducedMotion: () => true });
+    manager.pointerDown('c', pointer('pointerdown', 1, 10, 70), elements[2].element);
+    manager.pointerMove(pointer('pointermove', 1, 10, 30));
+    expect(manager.getSnapshot()).toMatchObject({
+      targetId: 'b',
+      placement: 'before',
+      projectedOrder: ['a', 'c', 'b'],
+    });
+
+    // The pointer is now over the projected empty row for `c`, while the
+    // captured pre-drag geometry still says it is over the middle of `b`.
+    manager.pointerMove(pointer('pointermove', 1, 10, 40));
+    expect(manager.getSnapshot()).toMatchObject({
+      targetId: 'b',
+      placement: 'before',
+      projectedOrder: ['a', 'c', 'b'],
+    });
+
+    manager.cancel();
+    manager.destroy();
   });
 
   it('settles cancellation back to the source before cleanup', () => {
@@ -165,6 +317,30 @@ describe('DragSortManager', () => {
     Object.defineProperty(nestedEvent, 'target', { value: nested });
     manager.pointerDown('a', nestedEvent, elements[0].element);
     expect(manager.getSnapshot().phase).toBe('idle');
+    manager.destroy();
+  });
+
+  it('supports whole-item activation without a handle and restores item focus', () => {
+    const manager = new DragSortManager({ reducedMotion: () => true });
+    const item = document.createElement('div');
+    item.tabIndex = 0;
+    document.body.append(item);
+    vi.spyOn(item, 'getBoundingClientRect').mockReturnValue(rect(0) as DOMRect);
+    manager.registerItem({
+      id: 'item',
+      index: 0,
+      group: 'list',
+      element: item,
+      target: item,
+      activation: 'item',
+      label: 'item',
+    });
+
+    item.focus();
+    manager.keyDown('item', new KeyboardEvent('keydown', { key: ' ' }));
+    expect(manager.getSnapshot().phase).toBe('dragging');
+    manager.cancel();
+    expect(document.activeElement).toBe(item);
     manager.destroy();
   });
 
@@ -269,6 +445,65 @@ describe('DragSortManager', () => {
     manager.destroy();
   });
 
+  it('does not treat an enclosing tree subtree as a target at pickup', () => {
+    const manager = new DragSortManager({ collision: 'containment', reducedMotion: () => true });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const makeElement = (top: number, height: number) => {
+      const element = document.createElement('div');
+      container.append(element);
+      vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        top,
+        right: 100,
+        bottom: top + height,
+        width: 100,
+        height,
+      } as DOMRect);
+      return element;
+    };
+
+    const parent = makeElement(0, 100);
+    const parentRow = makeElement(0, 20);
+    const active = makeElement(30, 20);
+    const activeRow = makeElement(30, 20);
+    const sibling = makeElement(60, 20);
+    const siblingRow = makeElement(60, 20);
+    manager.registerItem({
+      id: 'parent',
+      index: 0,
+      group: 'tree',
+      element: parent,
+      target: parentRow,
+    });
+    manager.registerItem({
+      id: 'active',
+      index: 1,
+      group: 'tree',
+      element: active,
+      target: activeRow,
+      activation: 'item',
+    });
+    manager.registerItem({
+      id: 'sibling',
+      index: 2,
+      group: 'tree',
+      element: sibling,
+      target: siblingRow,
+    });
+
+    manager.pointerDown('active', pointer('pointerdown', 1, 10, 40), active);
+    manager.pointerMove(pointer('pointermove', 1, 10, 45));
+
+    expect(manager.getSnapshot().targetId).toBeNull();
+    expect(manager.getSnapshot().projectedOrder).toEqual(['parent', 'active', 'sibling']);
+    expect(manager.getItemState('parent').transform).toEqual({ x: 0, y: 0 });
+    expect(manager.getItemState('sibling').transform).toEqual({ x: 0, y: 0 });
+
+    manager.cancel();
+    manager.destroy();
+  });
+
   it('lets a nested adapter carry descendant rows with the active parent', () => {
     const { manager, elements } = setup({
       reducedMotion: () => true,
@@ -276,9 +511,12 @@ describe('DragSortManager', () => {
     });
     manager.pointerDown('a', pointer('pointerdown', 1, 10, 10), elements[0].element);
     manager.pointerMove(pointer('pointermove', 1, 10, 85));
-    expect(manager.getSnapshot().projectedOrder).toEqual(['b', 'c', 'a']);
+    // Carried descendants are omitted from the sortable projection and from
+    // collision candidates; the adapter renders them as part of the parent.
+    expect(manager.getSnapshot().projectedOrder).toEqual(['c', 'a']);
+    expect(manager.getSnapshot().targetId).toBe('c');
     expect(manager.getItemState('b').transform).toEqual({ x: 0, y: 0 });
-    expect(manager.getItemState('c').transform.y).toBe(-30);
+    expect(manager.getItemState('c').transform.y).toBe(-60);
     manager.cancel();
     manager.destroy();
   });

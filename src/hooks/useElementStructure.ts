@@ -30,13 +30,14 @@ import {
   deleteElement,
   duplicateElement,
   ELEMENT_KINDS,
+  type ExactSourceTarget,
   insertElement,
   moveElement,
   pasteElement,
   type ElementKind,
   type InsertPosition,
 } from '../lib/edit-structure';
-import { resolveElementHtml } from '../lib/edit-html';
+import { resolveElementHtml, type ElementHtml } from '../lib/edit-html';
 import { asCommandError, formatCommandError } from '../lib/errors';
 import { useFrameRebind } from './useFrameRebind';
 import { useSelectionCleared } from './useSelectionCleared';
@@ -67,6 +68,30 @@ export interface ElementClipboard {
 
 interface ResolvedDragNode {
   signature: ElementSignature;
+}
+
+/**
+ * Convert a fresh source snapshot into the byte-exact proof understood by
+ * `move_element`. A multi-instance result deliberately has no proof for the
+ * selected row, so it remains on the fail-closed resolver path instead of
+ * moving whichever identical copy happened to be returned first.
+ */
+function exactDragTarget(anchor: ElementHtml): ExactSourceTarget | undefined {
+  if (anchor.locations?.length) return undefined;
+  if (
+    typeof anchor.sourceStart !== 'number' ||
+    typeof anchor.sourceEnd !== 'number' ||
+    typeof anchor.sourceHash !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    file: anchor.file,
+    start: anchor.sourceStart,
+    end: anchor.sourceEnd,
+    expectedHash: anchor.sourceHash,
+    expectedHtml: anchor.html,
+  };
 }
 
 /** Build the truthful identity to replay after a structural reparent/move. */
@@ -503,19 +528,38 @@ export function useElementStructure({ iframeRef, projectPath, enabled, onToast }
     [projectPath, runAction, scheduleReselect, updateClipboard, onToast]
   );
 
-  const move = useCallback(
-    (sourceNodeId: number, targetNodeId: number, position: InsertPosition) =>
-      runAction(async () => {
-        try {
-          const resolved = await resolveDragNodes(sourceNodeId, targetNodeId);
-          // The iframe can only provide rendered DOM markup. React/JSX changes
-          // that representation (`className` -> `class`, drops expressions and
-          // props), so resolve the fresh signatures back to their authored
-          // source spans before invoking the exact backend drift guards.
-          const [sourceHtml, targetHtml] = await Promise.all([
-            resolveElementHtml(projectPath, resolved.source.signature),
-            resolveElementHtml(projectPath, resolved.target.signature),
-          ]);
+  const commitMove = useCallback(
+    async (
+      resolved: { source: ResolvedDragNode; target: ResolvedDragNode },
+      position: InsertPosition,
+      canvasMoveId?: string
+    ) => {
+      try {
+        // The iframe can only provide rendered DOM markup. React/JSX changes
+        // that representation (`className` -> `class`, drops expressions and
+        // props), so resolve the fresh signatures back to their authored
+        // source spans before invoking the exact backend drift guards.
+        const [sourceHtml, targetHtml] = await Promise.all([
+          resolveElementHtml(projectPath, resolved.source.signature),
+          resolveElementHtml(projectPath, resolved.target.signature),
+        ]);
+        const sourceTarget = exactDragTarget(sourceHtml);
+        const targetTarget = exactDragTarget(targetHtml);
+        if (sourceTarget && targetTarget) {
+          await moveElement(
+            projectPath,
+            resolved.source.signature,
+            resolved.target.signature,
+            sourceHtml.html,
+            targetHtml.html,
+            position,
+            sourceTarget,
+            targetTarget
+          );
+        } else {
+          // Keep compatibility with an older backend while it reloads. The
+          // Rust fallback still refuses an unresolved multi-instance class;
+          // never guess by passing the first identical snapshot as exact.
           await moveElement(
             projectPath,
             resolved.source.signature,
@@ -524,29 +568,81 @@ export function useElementStructure({ iframeRef, projectPath, enabled, onToast }
             targetHtml.html,
             position
           );
-          // The iframe observer will request a fresh tree after HMR. Requesting
-          // once here also covers a backend write whose dev server coalesces the
-          // mutation before the observer is ready.
-          post({ type: 'ss:requestTree' });
-          scheduleReselect(
-            movedElementReselectSignature(
-              resolved.source.signature,
-              resolved.target.signature,
-              position
-            )
-          );
-          onToast?.('Element moved', 'success');
-        } catch (error) {
-          // A rejected fresh-resolution or backend drift guard must not leave
-          // the projected DOM order looking authoritative. The iframe remains
-          // the source of truth; ask it for a fresh snapshot before surfacing
-          // the existing structured failure message.
-          post({ type: 'ss:requestTree' });
-          throw error;
         }
-      }),
-    [onToast, post, projectPath, resolveDragNodes, runAction, scheduleReselect]
+        // The iframe observer will request a fresh tree after HMR. Requesting
+        // once here also covers a backend write whose dev server coalesces the
+        // mutation before the observer is ready.
+        post({ type: 'ss:requestTree' });
+        scheduleReselect(
+          movedElementReselectSignature(
+            resolved.source.signature,
+            resolved.target.signature,
+            position
+          )
+        );
+        if (canvasMoveId) {
+          post({ type: 'ss:canvasMoveResult', moveId: canvasMoveId, ok: true });
+        }
+        onToast?.('Element moved', 'success');
+      } catch (error) {
+        // A rejected fresh-resolution or backend drift guard must not leave
+        // the projected DOM order looking authoritative. The iframe remains
+        // the source of truth; ask it for a fresh snapshot before surfacing
+        // the existing structured failure message.
+        post({ type: 'ss:requestTree' });
+        if (canvasMoveId) {
+          post({ type: 'ss:canvasMoveResult', moveId: canvasMoveId, ok: false });
+        }
+        throw error;
+      }
+    },
+    [onToast, post, projectPath, scheduleReselect]
   );
+
+  const move = useCallback(
+    (sourceNodeId: number, targetNodeId: number, position: InsertPosition) =>
+      runAction(async () => {
+        const resolved = await resolveDragNodes(sourceNodeId, targetNodeId);
+        await commitMove(resolved, position);
+      }),
+    [commitMove, resolveDragNodes, runAction]
+  );
+
+  // Canvas sorting is projected inside the iframe so the authored page can
+  // reflow in its own layout engine. The iframe sends signatures captured
+  // before that projection; commit them through the same guarded source path
+  // as an Elements-panel move, then retain or roll back the projection.
+  useEffect(() => {
+    if (!enabled) return;
+    const handler = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const data = event.data as {
+        type?: string;
+        moveId?: string;
+        source?: ResolvedDragNode;
+        target?: ResolvedDragNode;
+        position?: InsertPosition;
+      } | null;
+      if (
+        data?.type !== 'ss:canvasMove' ||
+        !data.moveId ||
+        !data.source?.signature ||
+        !data.target?.signature ||
+        (data.position !== 'before' && data.position !== 'after' && data.position !== 'inside')
+      ) {
+        return;
+      }
+      if (busyRef.current) {
+        post({ type: 'ss:canvasMoveResult', moveId: data.moveId, ok: false });
+        return;
+      }
+      void runAction(() =>
+        commitMove({ source: data.source!, target: data.target! }, data.position!, data.moveId)
+      );
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [commitMove, enabled, iframeRef, post, runAction]);
 
   shortcutActionsRef.current = {
     c: () => void copy(),

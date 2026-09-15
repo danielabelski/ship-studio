@@ -56,6 +56,8 @@
 .ss-vars {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   padding: var(--spacing-sm) var(--editor-panel-inline-pad) var(--spacing-md);
   gap: var(--spacing-sm);
 }
@@ -71,6 +73,132 @@
 .ss-vars__list {
   display: flex;
   flex-direction: column;
+}
+
+/* Editable rows use the same leading, hover-revealed grab affordance as the
+   Projects list. The handle stays mounted for keyboard sorting while its
+   collapsed slot leaves the ordinary variable layout unchanged. */
+.ss-var-sort-item {
+  width: 100%;
+}
+
+.ss-var-sort-item > .ss-var-row {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.ss-var-sort-item > .ss-var-row > .ss-var-row__name,
+.ss-var-sort-item > .ss-var-row > .ss-var-row__drag-handle {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.ss-var-sort-item > .ss-var-row > .ss-var-row__name > .ss-var-row__type-icon,
+.ss-var-sort-item > .ss-var-row > .ss-var-row__name > code {
+  transform: translateX(0);
+  transition-property: transform;
+  transition-duration: var(--duration-slow);
+  transition-timing-function: var(--ease-icon-swap);
+}
+
+.ss-var-sort-item > .ss-var-row > .ss-var-row__colon {
+  grid-column: 2;
+}
+
+.ss-var-sort-item > .ss-var-row > .ss-var-row__value-group {
+  grid-column: 3;
+}
+
+.ss-var-row__drag-handle {
+  position: relative;
+  z-index: var(--z-dropdown);
+  align-self: start;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .ss-var-row:hover
+  .ss-var-row__drag-handle[data-drag-sort-handle-reveal-on='row'],
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .ss-var-row:focus-within
+  .ss-var-row__drag-handle[data-drag-sort-handle-reveal-on='row'],
+.drag-sort__item
+  > .ss-var-row:has(:focus-visible)
+  .ss-var-row__drag-handle[data-drag-sort-handle-reveal-on='row'] {
+  width: var(--size-icon-button);
+  inline-size: var(--size-icon-button);
+  flex-basis: var(--size-icon-button);
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .ss-var-row:hover
+  > .ss-var-row__name
+  > .ss-var-row__type-icon,
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .ss-var-row:hover
+  > .ss-var-row__name
+  > code,
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .ss-var-row:focus-within
+  > .ss-var-row__name
+  > .ss-var-row__type-icon,
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .ss-var-row:focus-within
+  > .ss-var-row__name
+  > code,
+.drag-sort__item > .ss-var-row:has(:focus-visible) > .ss-var-row__name > .ss-var-row__type-icon,
+.drag-sort__item > .ss-var-row:has(:focus-visible) > .ss-var-row__name > code {
+  transform: translateX(calc(var(--size-icon-button) + var(--spacing-xs)));
+}
+
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true'])
+  > .ss-var-row:hover
+  > .ss-var-row__name
+  > code {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    var(--color-black)
+      calc(
+        100% - var(--button-height-compact) - var(--size-icon-button) - var(--spacing-xs) -
+          var(--spacing-md)
+      ),
+    transparent
+      calc(100% - var(--button-height-compact) - var(--size-icon-button) - var(--spacing-xs))
+  );
+  mask-image: linear-gradient(
+    to right,
+    var(--color-black)
+      calc(
+        100% - var(--button-height-compact) - var(--size-icon-button) - var(--spacing-xs) -
+          var(--spacing-md)
+      ),
+    transparent
+      calc(100% - var(--button-height-compact) - var(--size-icon-button) - var(--spacing-xs))
+  );
+}
+
+.ss-var-row__drag-handle:hover:not(:disabled),
+.ss-var-row__drag-handle:focus-visible {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+/* The six-dot glyph is visually top-heavy inside its square viewBox. Keep the
+   button box aligned with the row, then optically center only the artwork. */
+.ss-var-row__drag-handle svg {
+  transform: translateY(var(--space-02));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ss-var-sort-item > .ss-var-row > .ss-var-row__name > .ss-var-row__type-icon,
+  .ss-var-sort-item > .ss-var-row > .ss-var-row__name > code {
+    transition: none;
+  }
 }
 
 /* Scope - the list header (:root) */
@@ -176,6 +304,7 @@
   display: inline-flex;
   align-items: flex-start;
   min-width: 0;
+  position: relative;
   gap: var(--spacing-xs);
   color: var(--text-primary);
   overflow-wrap: anywhere;
@@ -185,11 +314,14 @@
   flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .ss-var-row__name > .ss-dropdown {
-  flex: 0 0 auto;
-  margin-left: auto;
+  position: absolute;
+  z-index: var(--z-dropdown);
+  inset-block-start: 0;
+  inset-inline-end: 0;
 }
 
 /* This menu is portaled to <body>, so it must clear the floating editor panel. */

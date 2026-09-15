@@ -25,6 +25,72 @@ function renderMenu(onSelect = vi.fn()) {
 }
 
 describe('ContextMenu', () => {
+  it('can open from a click trigger as well as a context-menu gesture', () => {
+    render(
+      <ContextMenu>
+        <ContextMenuTrigger asChild openOnClick>
+          <button type="button">More</button>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem>Action</ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Action' })).toHaveFocus();
+  });
+
+  it('right-aligns a click-triggered menu to its trigger', () => {
+    const getBoundingClientRect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains('ss-context-menu')) {
+          return {
+            bottom: 100,
+            height: 80,
+            left: 0,
+            right: 120,
+            top: 20,
+            width: 120,
+            x: 0,
+            y: 20,
+          } as DOMRect;
+        }
+        return {
+          bottom: 60,
+          height: 20,
+          left: 100,
+          right: 200,
+          top: 40,
+          width: 100,
+          x: 100,
+          y: 40,
+        } as DOMRect;
+      });
+
+    try {
+      render(
+        <ContextMenu>
+          <ContextMenuTrigger asChild openOnClick>
+            <button type="button">More</button>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem>Action</ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'More' }));
+
+      expect(screen.getByRole('menu')).toHaveStyle({ left: '80px', top: '60px' });
+    } finally {
+      getBoundingClientRect.mockRestore();
+    }
+  });
+
   it('opens at the context-menu gesture and selects an item', async () => {
     const onSelect = vi.fn();
     renderMenu(onSelect);

@@ -705,7 +705,7 @@ function onDbl(e){if(!active||txtEditing)return;var el=textTarget(e.target);if(!
 
 function reportHover(el){var id=el?treeIdFor(el):null;if(lastHoverTarget===el&&lastHoverNodeId===id)return;lastHoverTarget=el;lastHoverNodeId=id;window.parent.postMessage({type:'ss:hover',nodeId:id},'*');}
 
-function onMove(e){if(!active||txtEditing)return;ensureHover();var t=pickTarget(e.target);if(t&&selectedSet.indexOf(t)!==-1)t=null;place(hoverBox,t);reportHover(t);}
+function onMove(e){if(!active||txtEditing||canvasDragPending||canvasDrag)return;ensureHover();var t=pickTarget(e.target);if(t&&selectedSet.indexOf(t)!==-1)t=null;place(hoverBox,t);reportHover(t);}
 
 /* Let the outline paint before stylesheet/source-signature inspection. A timer
    queued from rAF runs after that rendering opportunity; rAF alone would still
@@ -769,7 +769,55 @@ function findBySignature(sig){
   return best;
 }
 
-function onClick(e){if(!active||txtEditing)return;var el=pickTarget(e.target);if(!el)return;e.preventDefault();e.stopPropagation();selectEl(el);}
+function onClick(e){if(canvasSuppressClick){canvasSuppressClick=false;e.preventDefault();e.stopPropagation();return;}if(!active||txtEditing||canvasDrag)return;var el=pickTarget(e.target);if(!el)return;e.preventDefault();e.stopPropagation();selectEl(el);}
+
+/* ===== Direct canvas structure sorting =====
+   A selected element can be pulled directly in the preview. React owns the page
+   DOM, so the gesture never reparents, clones, hides, or styles an authored node:
+   doing that behind React's back makes its next reconciliation remove a child
+   from the wrong parent. The rendered source remains exactly where it started
+   and a green insertion line previews the guarded source move committed at drop. */
+var canvasDragPending=null,canvasDrag=null,canvasSuppressClick=false,canvasMoveSeq=0;
+var CANVAS_DRAG_THRESHOLD=4,CANVAS_INSIDE_START=.35,CANVAS_INSIDE_END=.65;
+var CANVAS_INSIDE_HOLD_MS=500,CANVAS_INSIDE_FLASH_MS=150;
+var CANVAS_VOID={AREA:1,BASE:1,BR:1,COL:1,EMBED:1,HR:1,IMG:1,INPUT:1,LINK:1,META:1,PARAM:1,SOURCE:1,TRACK:1,WBR:1};
+var CANVAS_DROP_COLOR='rgba(70,231,111,.98)';
+
+function canvasRemoveChrome(d){if(d&&d.line&&d.line.parentNode)d.line.parentNode.removeChild(d.line);}
+
+function canvasResetInside(d){if(!d)return;if(d.insideTimer){clearTimeout(d.insideTimer);d.insideTimer=0;}if(d.insideFlashTimer){clearTimeout(d.insideFlashTimer);d.insideFlashTimer=0;}d.insideTarget=null;d.insideReady=false;}
+
+function canvasCancel(){var d=canvasDrag;if(!d){canvasDragPending=null;return;}canvasResetInside(d);canvasRemoveChrome(d);canvasDrag=null;canvasDragPending=null;document.documentElement.style.cursor=active?'crosshair':'';placeSet();postSelRect();}
+
+function canvasFinish(ok,moveId){var d=canvasDrag;if(!d||d.moveId!==moveId)return;canvasResetInside(d);canvasRemoveChrome(d);canvasDrag=null;document.documentElement.style.cursor=active?'crosshair':'';placeSet();postSelRect();}
+
+function canvasBegin(e,p){var source=p.source;var line=document.createElement('div');line.setAttribute('data-ss-overlay','1');line.style.cssText='position:fixed;pointer-events:none;z-index:2147483647;display:none;background:'+CANVAS_DROP_COLOR+';box-shadow:0 0 0 '+(1/(ssBoxScale>0?ssBoxScale:1))+'px rgba(255,255,255,.9),0 0 '+(8/(ssBoxScale>0?ssBoxScale:1))+'px rgba(70,231,111,.45);transition-property:opacity;transition-duration:150ms;transition-timing-function:cubic-bezier(.2,0,0,1);';document.body.appendChild(line);canvasDrag={source:source,sourceSig:sig(source),parent:source.parentNode,next:source.nextSibling,line:line,target:null,targetSig:null,position:null,insideTarget:null,insideReady:false,insideTimer:0,insideFlashTimer:0,moveId:null};place(hoverBox,null);reportHover(null);document.documentElement.style.cursor='grabbing';}
+
+function canvasAxis(target){var parent=target&&target.parentElement;if(!parent)return'vertical';var cs=window.getComputedStyle(parent);if(cs.display.indexOf('flex')!==-1&&cs.flexDirection.indexOf('row')===0)return'horizontal';if(cs.display.indexOf('grid')!==-1){var prev=target.previousElementSibling,next=target.nextElementSibling,other=prev||next;if(other){var a=target.getBoundingClientRect(),b=other.getBoundingClientRect();if(Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>0)return'horizontal';}}return'vertical';}
+
+function canvasPlacement(target,x,y){var axis=canvasAxis(target),r=target.getBoundingClientRect(),start=axis==='horizontal'?r.left:r.top,size=axis==='horizontal'?r.width:r.height,at=axis==='horizontal'?x:y,ratio=size>0?(at-start)/size:.5;if(ratio<CANVAS_INSIDE_START)return'before';if(ratio>CANVAS_INSIDE_END||CANVAS_VOID[target.tagName])return'after';return'inside';}
+
+function canvasTargetAt(x,y){var at=document.elementFromPoint?document.elementFromPoint(x,y):null;var d=canvasDrag;if(!at||!d)return null;if(at.closest&&at.closest('[data-ss-overlay],[id^="ss-"]'))return null;var target=editable(at);if(!target||target===d.source||d.source.contains(target)||ssInternalNode(target))return null;return target;}
+
+function canvasDestination(target,position,source){var parent,next;if(position==='inside'){parent=target;next=null;}else{parent=target.parentNode;next=position==='before'?target:target.nextSibling;if(next===source)next=source.nextSibling;}return{parent:parent,next:next};}
+
+function canvasIsOriginal(d,dest){var next=d.next&&d.next.parentNode===d.parent?d.next:null;return dest.parent===d.parent&&dest.next===next;}
+
+function canvasShowLine(d,target,position,dimmed){var r=target.getBoundingClientRect(),axis=position==='inside'?'vertical':canvasAxis(target),scale=ssBoxScale>0?ssBoxScale:1,thick=2/scale,inset=position==='inside'?8/scale:0;d.line.style.display='block';d.line.style.opacity=dimmed?'.35':'1';if(axis==='horizontal'){var x=position==='before'?r.left:r.right;d.line.style.left=(x-thick/2)+'px';d.line.style.top=(r.top+inset)+'px';d.line.style.width=thick+'px';d.line.style.height=Math.max(r.height-inset*2,12/scale)+'px';}else{var y=position==='before'?r.top:position==='after'?r.bottom:r.bottom-inset;d.line.style.left=(r.left+inset)+'px';d.line.style.top=(y-thick/2)+'px';d.line.style.width=Math.max(r.width-inset*2,12/scale)+'px';d.line.style.height=thick+'px';}}
+
+function canvasApply(target,position,targetSig){var d=canvasDrag;if(!d)return;var dest=canvasDestination(target,position,d.source);if(!dest.parent||canvasIsOriginal(d,dest)){d.target=null;d.targetSig=null;d.position=null;d.line.style.display='none';return;}d.target=target;d.targetSig=targetSig;d.position=position;canvasShowLine(d,target,position,false);}
+
+function canvasUpdate(e){var d=canvasDrag;if(!d)return;var target=canvasTargetAt(e.clientX,e.clientY);if(!target){canvasResetInside(d);d.target=null;d.targetSig=null;d.position=null;d.line.style.display='none';return;}var position=canvasPlacement(target,e.clientX,e.clientY);var targetSig=sig(target);if(position!=='inside'){canvasResetInside(d);canvasApply(target,position,targetSig);return;}if(d.insideTarget!==target){canvasResetInside(d);d.insideTarget=target;d.line.style.display='none';d.insideTimer=setTimeout(function(){if(!canvasDrag||canvasDrag!==d||d.insideTarget!==target)return;d.insideTimer=0;canvasShowLine(d,target,'inside',true);d.insideFlashTimer=setTimeout(function(){if(!canvasDrag||canvasDrag!==d||d.insideTarget!==target)return;d.insideFlashTimer=0;d.insideReady=true;canvasApply(target,'inside',targetSig);},CANVAS_INSIDE_FLASH_MS);},CANVAS_INSIDE_HOLD_MS);return;}if(d.insideReady)canvasApply(target,'inside',targetSig);}
+
+function canvasMouseDown(e){if(!active||txtEditing||canvasDrag||e.button!==0||!selPrimary||!selPrimary.isConnected)return;var raw=e.target&&e.target.nodeType===1?e.target:null;if(!raw||(!selPrimary.contains(raw)&&raw!==selPrimary))return;canvasDragPending={x:e.clientX,y:e.clientY,source:selPrimary};}
+
+function canvasMouseMove(e){if(canvasDrag){e.preventDefault();e.stopImmediatePropagation();canvasUpdate(e);return;}var p=canvasDragPending;if(!p)return;var dx=e.clientX-p.x,dy=e.clientY-p.y;if(dx*dx+dy*dy<CANVAS_DRAG_THRESHOLD*CANVAS_DRAG_THRESHOLD)return;e.preventDefault();e.stopImmediatePropagation();canvasBegin(e,p);canvasDragPending=null;canvasUpdate(e);}
+
+function canvasMouseUp(e){canvasDragPending=null;var d=canvasDrag;if(!d||e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();canvasSuppressClick=true;if(!d.target||!d.targetSig||!d.position){canvasCancel();return;}canvasResetInside(d);canvasRemoveChrome(d);d.moveId='canvas-'+(++canvasMoveSeq);document.documentElement.style.cursor='progress';placeSet();postSelRect();window.parent.postMessage({type:'ss:canvasMove',moveId:d.moveId,source:{signature:d.sourceSig},target:{signature:d.targetSig},position:d.position},'*');}
+
+function canvasKeyDown(e){if(e.key==='Escape'&&(canvasDrag||canvasDragPending)){e.preventDefault();e.stopImmediatePropagation();canvasCancel();}}
+
+function canvasLosePointer(){if(!canvasDrag&&!canvasDragPending)return;canvasCancel();}
 
 /* ===== Element tree (read-only navigator) =====
    The parent requests a lightweight DOM snapshot; nodes get ephemeral ids so
@@ -795,7 +843,7 @@ function treeResolveNode(id){var el=treeById[id];if(!el||!el.isConnected||ssInte
 
 function treeIsSsNode(n){return n.nodeType===1&&(n.getAttribute('data-ss-overlay')||(n.id&&n.id.indexOf('ss-')===0));}
 
-function treeDirty(){if(!treeOn)return;if(treeTimer)clearTimeout(treeTimer);treeTimer=setTimeout(function(){if(treeOn)window.parent.postMessage({type:'ss:treeDirty'},'*');},300);}
+function treeDirty(){if(!treeOn||canvasDrag)return;if(treeTimer)clearTimeout(treeTimer);treeTimer=setTimeout(function(){if(treeOn&&!canvasDrag)window.parent.postMessage({type:'ss:treeDirty'},'*');},300);}
 
 function treeEnsureObserver(){if(treeObserver)return;treeObserver=new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var m=ms[i],j;for(j=0;j<m.addedNodes.length;j++)if(!treeIsSsNode(m.addedNodes[j])){treeDirty();return;}for(j=0;j<m.removedNodes.length;j++)if(!treeIsSsNode(m.removedNodes[j])){treeDirty();return;}}});treeObserver.observe(document.body,{childList:true,subtree:true});}
 
@@ -1268,11 +1316,11 @@ function ssSyncPage(){
    Ignore animation-related attribute churn and Ship Studio's own overlays. */
 var ssContentTimer=0;
 function ssSyncContent(){
-  if(!ssCanvas)return;
+  if(!ssCanvas||canvasDrag)return;
   if(ssContentTimer)clearTimeout(ssContentTimer);
   ssContentTimer=setTimeout(function(){
     ssContentTimer=0;
-    if(!ssCanvas)return;
+    if(!ssCanvas||canvasDrag)return;
     ssPageSeen=0;ssPageAgreed=0;ssPageWrites=0;ssPageCommitted=[];ssPageLocked=false;
     ssReportPage();
     ssContentTimer=setTimeout(function(){ssContentTimer=0;ssReportPage();},200);
@@ -1390,7 +1438,7 @@ else if(d.type==='ss:deselect'){
   for(var di=0;di<selBoxes.length;di++)place(selBoxes[di],null);
   try{window.parent.postMessage({type:'ss:deselect'},'*');}catch(err){}
 }
-else if(d.type==='ss:deactivate'){reportHover(null);endText(false);finalizePending();hideFmtBar();active=false;cascadeMode=false;clearRulePreview(null);restoreSel();for(var ck in pvDecls){if(String(ck).indexOf('cls:')===0)delete pvDecls[ck];}rebuildSheet();place(hoverBox,null);for(var i=0;i<selBoxes.length;i++)place(selBoxes[i],null);var de=document.documentElement;de.style.cursor='';de.style.userSelect='';de.style.webkitUserSelect='';}
+else if(d.type==='ss:deactivate'){canvasCancel();reportHover(null);endText(false);finalizePending();hideFmtBar();active=false;cascadeMode=false;clearRulePreview(null);restoreSel();for(var ck in pvDecls){if(String(ck).indexOf('cls:')===0)delete pvDecls[ck];}rebuildSheet();place(hoverBox,null);for(var i=0;i<selBoxes.length;i++)place(selBoxes[i],null);var de=document.documentElement;de.style.cursor='';de.style.userSelect='';de.style.webkitUserSelect='';}
 /* Parent's verdict on whether the current selection's text is editable in source. If
    the user already started editing optimistically (verdict hadn't arrived yet) and it
    turns out non-editable, bounce out now rather than failing silently at save. */
@@ -1447,6 +1495,7 @@ else if(d.type==='ss:suppressReload'){window.__ssSuppressUntil=Date.now()+3000;}
 else if(d.type==='ss:commit'){pendingMark=null;txtRevertEl=null;snapshotOrig();window.__ssSuppressUntil=Date.now()+2000;}
 else if(d.type==='ss:requestTree'){treeOn=true;treeEnsureObserver();treeSend();}
 else if(d.type==='ss:resolveDragNodes'){var sr=treeResolveNode(d.sourceId),tr=treeResolveNode(d.targetId);window.parent.postMessage({type:'ss:resolvedDragNodes',requestId:d.requestId,source:sr,target:tr},'*');}
+else if(d.type==='ss:canvasMoveResult'){canvasFinish(!!d.ok,d.moveId);}
 else if(d.type==='ss:treeOff'){treeOn=false;}
 else if(d.type==='ss:selectNode'){var tn=treeById[d.id];if(tn&&tn.isConnected&&!ssInternalNode(tn)&&active&&!txtEditing){try{tn.scrollIntoView({block:'nearest'});}catch(err){}selectEl(tn);}}
 else if(d.type==='ss:hoverNode'){if(!active)return;var th=d.id!=null?treeById[d.id]:null;ensureHover();place(hoverBox,th&&th.isConnected?th:null);}
@@ -1454,6 +1503,12 @@ else if(d.type==='ss:hoverNode'){if(!active)return;var th=d.id!=null?treeById[d.
 /* Re-select the element matching the given signature (after an HMR reload) so the
    panel re-reads its current source — keeps read/write instant after edits. */
 else if(d.type==='ss:reselect'){if(!active)return;var rel=findBySignature(d.signature);if(rel)selectEl(rel);}});
+document.addEventListener('mousedown',canvasMouseDown,true);
+document.addEventListener('mousemove',canvasMouseMove,true);
+document.addEventListener('mouseup',canvasMouseUp,true);
+document.addEventListener('keydown',canvasKeyDown,true);
+window.addEventListener('mouseleave',canvasLosePointer,true);
+window.addEventListener('blur',canvasLosePointer,true);
 document.addEventListener('mousemove',onMove,true);
 document.addEventListener('click',onClick,true);
 document.addEventListener('dblclick',onDbl,true);

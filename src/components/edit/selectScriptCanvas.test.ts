@@ -158,3 +158,86 @@ it('drops the selection and its boxes when the host says the canvas was clicked'
   expect(post).toHaveBeenCalledWith({ type: 'ss:deselect' }, '*');
   post.mockRestore();
 });
+
+it('leaves React-owned elements in place and previews a canvas move with a green line', () => {
+  document.body.innerHTML =
+    '<main class="page"><section class="source">Source</section><section class="target">Target</section></main>';
+  const source = document.querySelector<HTMLElement>('.source')!;
+  const target = document.querySelector<HTMLElement>('.target')!;
+  vi.spyOn(source, 'getBoundingClientRect').mockReturnValue({
+    top: 0,
+    left: 0,
+    bottom: 20,
+    right: 200,
+    width: 200,
+    height: 20,
+  } as DOMRect);
+  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+    top: 40,
+    left: 0,
+    bottom: 60,
+    right: 200,
+    width: 200,
+    height: 20,
+  } as DOMRect);
+  const originalElementFromPoint = Object.getOwnPropertyDescriptor(document, 'elementFromPoint');
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: vi.fn(() => target),
+  });
+  const post = vi.spyOn(window.parent, 'postMessage');
+
+  try {
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'ss:activate' } }));
+    source.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    source.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 10, clientY: 10 })
+    );
+    document.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, button: 0, clientX: 20, clientY: 59 })
+    );
+
+    // React owns these nodes: moving one before its source update makes React
+    // reconcile against a DOM tree it no longer recognises (`removeChild`).
+    expect(Array.from(document.querySelector('main')!.children)).toEqual([source, target]);
+    expect(source.getAttribute('style')).toBeNull();
+    const indicator = Array.from(document.querySelectorAll<HTMLElement>('[data-ss-overlay]')).find(
+      (element) => element.style.display === 'block' && element.style.height === '2px'
+    );
+    expect(indicator?.style.background).toBe('rgba(70, 231, 111, 0.98)');
+    // No synthetic tag-name box follows the cursor; the real element remains rendered.
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>('[data-ss-overlay]')).every(
+        (element) => element.textContent === ''
+      )
+    ).toBe(true);
+
+    document.dispatchEvent(
+      new MouseEvent('mouseup', { bubbles: true, button: 0, clientX: 20, clientY: 59 })
+    );
+    const move = post.mock.calls
+      .map(([data]) => data as Record<string, unknown>)
+      .find((data) => data.type === 'ss:canvasMove')!;
+    expect(move).toMatchObject({
+      position: 'after',
+      source: { signature: { className: 'source' } },
+      target: { signature: { className: 'target' } },
+    });
+    expect(Array.from(document.querySelector('main')!.children)).toEqual([source, target]);
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'ss:canvasMoveResult', moveId: move.moveId, ok: false },
+      })
+    );
+    expect(Array.from(document.querySelector('main')!.children)).toEqual([source, target]);
+  } finally {
+    post.mockRestore();
+    if (originalElementFromPoint) {
+      Object.defineProperty(document, 'elementFromPoint', originalElementFromPoint);
+    } else {
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    }
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'ss:deactivate' } }));
+  }
+});

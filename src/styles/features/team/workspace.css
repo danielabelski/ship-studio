@@ -91,6 +91,9 @@
 .team-float-inner {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -169,6 +172,7 @@
  * inset one the thing you have to ask for. */
 .team-float-body {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   padding: var(--spacing-md) 0;
@@ -211,15 +215,8 @@
 
 /* At 420px a two-pane reader and the wide people rows do not fit, so both
    collapse to a single column rather than being squeezed into unreadability. */
-/* Content-sized, not flex-sized.
- *
- * The two-pane version is a grid that fills a page, so it carries `flex: 1 1 0`
- * and a 340px floor. Dropping that floor here to let the panel be short is what
- * broke it: `.team-float-body` is a scroll container with no height to
- * distribute, so a `flex: 1 1 0` child resolves to zero, and the base
- * `overflow: hidden` then clipped every row out of sight. The filter above it
- * still read "Open (2)", which is exactly what made it look like missing data
- * rather than a collapsed box. */
+/* The compact reader can be shorter than its content when stacked. Let the
+ * bounded body own scrolling while keeping the filter and composer visible. */
 .team-threads.is-compact .team-threads-body {
   display: flex;
   flex-direction: column;
@@ -230,10 +227,8 @@
   background: none;
 }
 
-/* The threads column fills the panel, so the composer sits on the bottom edge
-   instead of floating halfway up with dead space beneath it. Safe to flex now
-   that this has a height to divide: `min-height: 100%` is what supplies it, and
-   its absence is what collapsed this to zero the first time. */
+/* Fill the bounded body so the composer stays on the bottom edge while the
+   thread content scrolls above it. */
 .team-float-body > .team-threads.is-compact {
   min-height: 100%;
   /* Reaches the bottom edge, so the sticky composer sits on it. Every other tab

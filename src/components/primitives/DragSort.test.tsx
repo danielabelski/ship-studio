@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { StrictMode, useSyncExternalStore } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { DragSortHandle, DragSortItem, DragSortScope } from './DragSort';
+import { DragSortHandle, DragSortItem, DragSortScope, DragSortTarget } from './DragSort';
 import { useDragSortContext } from '../../contexts/DragSortContext';
 
 function pointer(type: string, x: number, y: number, pointerId = 1) {
@@ -37,6 +37,32 @@ function Example({
         >
           <span>{id}</span>
           <DragSortHandle visibility={handleVisibility} />
+        </DragSortItem>
+      ))}
+    </DragSortScope>
+  );
+}
+
+function InsideTargetExample() {
+  return (
+    <DragSortScope
+      reducedMotion={() => true}
+      insideHoldDelayMs={50}
+      insideHoldFlashDurationMs={25}
+      placementForTarget={() => 'inside'}
+    >
+      {['a', 'b'].map((id, index) => (
+        <DragSortItem
+          key={id}
+          id={id}
+          index={index}
+          label={id}
+          activation="item"
+          overlay={<span>{id}</span>}
+        >
+          <DragSortTarget>
+            <span>{id}</span>
+          </DragSortTarget>
         </DragSortItem>
       ))}
     </DragSortScope>
@@ -90,6 +116,109 @@ describe('DragSort primitives', () => {
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
   });
 
+  it('does not lift an item when a nested control handles Enter', () => {
+    render(
+      <DragSortScope reducedMotion={() => true}>
+        <DragSortItem id="a" index={0} label="a" activation="item">
+          <button type="button">Expand</button>
+        </DragSortItem>
+      </DragSortScope>
+    );
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Expand' }), { key: 'Enter' });
+
+    expect(screen.getByRole('status')).toHaveTextContent('');
+  });
+
+  it('makes item activation a labelled, keyboard-focusable whole-row control', () => {
+    render(
+      <DragSortScope reducedMotion={() => true} label="Elements">
+        <DragSortItem id="a" index={0} label="div element" activation="item">
+          <span>div</span>
+        </DragSortItem>
+      </DragSortScope>
+    );
+
+    const item = screen.getByRole('button', { name: 'Move div element' });
+    expect(item).toHaveAttribute('tabindex', '0');
+    expect(item).toHaveAttribute('aria-roledescription', 'sortable item');
+    expect(item).toHaveAttribute(
+      'aria-describedby',
+      expect.stringContaining('drag-sort-instructions')
+    );
+    item.focus();
+    expect(item).toHaveFocus();
+  });
+
+  it('starts item activation from row content but ignores interactive descendants', () => {
+    let manager: ReturnType<typeof useDragSortContext>['manager'] | undefined;
+    const { container } = render(
+      <DragSortScope reducedMotion={() => true}>
+        <ManagerCapture capture={(value) => (manager = value)} />
+        <DragSortItem id="a" index={0} label="a" activation="item">
+          <span>content</span>
+          <button type="button">Expand</button>
+          <span role="tab">Tab</span>
+        </DragSortItem>
+      </DragSortScope>
+    );
+    const item = container.querySelector('[data-drag-sort-id="a"]') as HTMLElement;
+    fireEvent.pointerDown(item.querySelector('span:not([role])')!, {
+      pointerId: 1,
+      pointerType: 'mouse',
+      clientX: 10,
+      clientY: 10,
+      button: 0,
+    });
+    expect(manager?.getSnapshot().phase).toBe('pending');
+    act(() => manager?.cancel());
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Expand' }), {
+      pointerId: 2,
+      pointerType: 'mouse',
+      clientX: 10,
+      clientY: 10,
+      button: 0,
+    });
+    expect(manager?.getSnapshot().phase).toBe('idle');
+
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Tab' }), { key: ' ' });
+    expect(screen.getByRole('status')).toHaveTextContent('');
+  });
+
+  it('supports keyboard sorting from the focused item and restores item focus', () => {
+    const onMove = vi.fn();
+    const { container } = render(
+      <DragSortScope reducedMotion={() => true} onMove={onMove}>
+        {['a', 'b'].map((id, index) => (
+          <DragSortItem key={id} id={id} index={index} label={id} activation="item">
+            <span>{id}</span>
+          </DragSortItem>
+        ))}
+      </DragSortScope>
+    );
+    const item = container.querySelector('[data-drag-sort-id="a"]') as HTMLElement;
+    item.focus();
+    fireEvent.keyDown(item, { key: ' ' });
+    expect(item).toHaveAttribute('data-drag-sort-dragging', 'true');
+    fireEvent.keyDown(item, { key: 'ArrowDown' });
+    fireEvent.keyDown(item, { key: ' ' });
+    expect(onMove).toHaveBeenCalledWith(expect.objectContaining({ activeId: 'a' }));
+    expect(item).toHaveFocus();
+  });
+
+  it('does not arm handle-only items from their row content', () => {
+    const { container } = render(<Example />);
+    const item = container.querySelector('[data-drag-sort-id="a"]') as HTMLElement;
+
+    fireEvent(item.querySelector('span')!, pointer('pointerdown', 10, 10));
+    fireEvent(window, pointer('pointermove', 10, 30));
+
+    expect(item).not.toHaveAttribute('data-drag-sort-dragging');
+    expect(document.querySelector('[data-drag-sort-overlay="true"]')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('');
+  });
+
   it('keeps hover-revealed handles mounted and reveals them for keyboard focus', () => {
     render(<Example handleVisibility="hover" />);
     const handle = screen.getByRole('button', { name: 'Move a' });
@@ -116,14 +245,14 @@ describe('DragSort primitives', () => {
         height: 20,
       } as DOMRect);
     });
-    const handle = within(items[0]!).getByRole('button', { name: 'Move a' });
+    const handle = within(items[0]).getByRole('button', { name: 'Move a' });
     fireEvent(handle, pointer('pointerdown', 10, 10));
     fireEvent(window, pointer('pointermove', 10, 55));
     fireEvent(window, pointer('pointerup', 10, 55));
     expect(items[0]).toHaveAttribute('data-drag-sort-hover-reveal-blocked', 'true');
     handle.focus();
     expect(handle).toHaveFocus();
-    fireEvent.pointerEnter(items[0]!);
+    fireEvent.pointerEnter(items[0]);
     expect(items[0]).not.toHaveAttribute('data-drag-sort-hover-reveal-blocked');
   });
 
@@ -196,9 +325,26 @@ describe('DragSort primitives', () => {
     expect(items[0]).toHaveStyle({ '--drag-sort-transform': 'translate3d(0px, 60px, 0)' });
     expect(items[1]).toHaveStyle({ '--drag-sort-transform': 'translate3d(0px, -30px, 0)' });
     expect(items[2]).toHaveStyle({ '--drag-sort-transform': 'translate3d(0px, -30px, 0)' });
+    const placeholder = document.querySelector(
+      '[data-drag-sort-placeholder-gap="true"]'
+    ) as HTMLElement;
+    expect(placeholder).toBeInTheDocument();
+    expect(placeholder).toHaveStyle({
+      '--drag-sort-placeholder-width': '100px',
+      '--drag-sort-placeholder-height': '20px',
+      '--drag-sort-placeholder-x': '0px',
+      '--drag-sort-placeholder-y': '60px',
+    });
 
     fireEvent(window, pointer('pointermove', 10, 35));
     expect(host).toHaveAttribute('data-drag-sort-overlay', 'true');
+    const originalPositionPlaceholder = document.querySelector(
+      '[data-drag-sort-placeholder-gap="true"]'
+    ) as HTMLElement;
+    expect(originalPositionPlaceholder).toBeInTheDocument();
+    expect(originalPositionPlaceholder).toHaveStyle({
+      '--drag-sort-placeholder-y': '0px',
+    });
     expect(items[1]).toHaveStyle({ '--drag-sort-transform': 'translate3d(0px, 0px, 0)' });
 
     fireEvent(items[0], pointer('lostpointercapture', 10, 35));
@@ -262,7 +408,7 @@ describe('DragSort primitives', () => {
     fireEvent(window, pointer('pointercancel', 10, 48));
   });
 
-  it('keeps target-edge indicators opt-in for future tree adapters', () => {
+  it('uses target-edge indicators throughout a projected move', () => {
     const { container } = render(<Example showTargetIndicator />);
     const items = [...container.querySelectorAll<HTMLElement>('[data-drag-sort-item]')];
     items.forEach((item, index) => {
@@ -281,7 +427,54 @@ describe('DragSort primitives', () => {
     );
     fireEvent(window, pointer('pointermove', 10, 32));
     expect(items[1]).toHaveAttribute('data-drag-sort-target-indicator', 'true');
+    fireEvent(window, pointer('pointermove', 10, 48));
+    expect(items[1]).toHaveAttribute('data-drag-sort-placement', 'after');
+    expect(items[1]).toHaveAttribute('data-drag-sort-target-indicator', 'true');
+    expect(
+      document.querySelector('[data-drag-sort-placeholder-gap="true"]')
+    ).not.toBeInTheDocument();
     fireEvent(window, pointer('pointercancel', 10, 32));
+  });
+
+  it('reveals an inside child slot only after the hold confirmation', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<InsideTargetExample />);
+      const targets = [
+        ...container.querySelectorAll<HTMLElement>('[data-drag-sort-target-element]'),
+      ];
+      targets.forEach((target, index) => {
+        vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+          left: 0,
+          top: index * 30,
+          right: 100,
+          bottom: index * 30 + 20,
+          width: 100,
+          height: 20,
+        } as DOMRect);
+      });
+
+      fireEvent(targets[0], pointer('pointerdown', 10, 10));
+      fireEvent(window, pointer('pointermove', 10, 40));
+      expect(
+        container.querySelector('[data-drag-sort-inside-slot="true"]')
+      ).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+      expect(
+        container.querySelector('[data-drag-sort-inside-slot="true"]')
+      ).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(25);
+      });
+      expect(container.querySelector('[data-drag-sort-inside-slot="true"]')).toBeInTheDocument();
+      fireEvent(window, pointer('pointercancel', 10, 40));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('updates intermediate rows when a projection crosses them and resets them', () => {

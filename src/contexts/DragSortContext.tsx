@@ -38,7 +38,10 @@ export function DragSortScope({
   reducedMotion,
   placementForTarget,
   projectOrder,
+  hasProjectedMove,
   isPartOfActiveMove,
+  insideHoldDelayMs,
+  insideHoldFlashDurationMs,
   label = 'Sortable list',
   items,
 }: DragSortScopeProps) {
@@ -53,7 +56,10 @@ export function DragSortScope({
         reducedMotion,
         placementForTarget,
         projectOrder,
+        hasProjectedMove,
         isPartOfActiveMove,
+        insideHoldDelayMs,
+        insideHoldFlashDurationMs,
       })
   );
   const instructionsId = `drag-sort-instructions-${useId().replace(/:/g, '')}`;
@@ -68,19 +74,25 @@ export function DragSortScope({
       reducedMotion,
       placementForTarget,
       projectOrder,
+      hasProjectedMove,
       isPartOfActiveMove,
+      insideHoldDelayMs,
+      insideHoldFlashDurationMs,
     });
   }, [
     announcements,
     axis,
     canMove,
     collision,
+    hasProjectedMove,
     manager,
     isPartOfActiveMove,
     onMove,
     placementForTarget,
     projectOrder,
     reducedMotion,
+    insideHoldDelayMs,
+    insideHoldFlashDurationMs,
   ]);
 
   useEffect(() => {
@@ -133,6 +145,25 @@ function DragSortFeedback({
     activeRegistration?.overlay !== null &&
     activeRegistration?.overlay !== false;
   const overlayActive = Boolean(hasOverlay && overlayRect && snapshot.activeId !== null);
+  const placeholderRect =
+    overlayActive &&
+    snapshot.targetId !== null &&
+    snapshot.placement !== null &&
+    !(snapshot.placement === 'inside' && snapshot.insideHold === 'ready') &&
+    !manager.getItem(snapshot.targetId)?.targetOnly &&
+    !manager.getItem(snapshot.targetId)?.showTargetIndicator &&
+    snapshot.invalidReason === null &&
+    snapshot.phase !== 'cancelling'
+      ? manager.getProjectedRect(snapshot.activeId!)
+      : null;
+  const placeholderStyle: CSSProperties | undefined = placeholderRect
+    ? ({
+        '--drag-sort-placeholder-width': `${placeholderRect.width}px`,
+        '--drag-sort-placeholder-height': `${placeholderRect.height}px`,
+        '--drag-sort-placeholder-x': `${placeholderRect.left}px`,
+        '--drag-sort-placeholder-y': `${placeholderRect.top}px`,
+      } as CSSProperties)
+    : undefined;
   // Mount the body portal with the scope, then only reveal its presentational
   // child after activation has supplied a concrete rect. This removes a
   // WebKit/Tauri paint race where the in-flow source was suppressed in the
@@ -153,6 +184,17 @@ function DragSortFeedback({
     </div>,
     document.body
   );
+  const placeholder = placeholderRect
+    ? createPortal(
+        <div
+          className="drag-sort__placeholder"
+          data-drag-sort-placeholder-gap="true"
+          style={placeholderStyle}
+          aria-hidden="true"
+        />,
+        document.body
+      )
+    : null;
   return (
     <>
       <div id={instructionsId} className="drag-sort__instructions">
@@ -162,6 +204,7 @@ function DragSortFeedback({
       <div className="drag-sort__live-region" role="status" aria-live="polite" aria-atomic="true">
         {snapshot.announcement}
       </div>
+      {placeholder}
       {overlay}
     </>
   );

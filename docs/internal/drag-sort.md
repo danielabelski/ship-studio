@@ -34,17 +34,18 @@ or added to this project.
 
 ### Visual feedback
 
-1. Activation keeps a same-size placeholder at the source and renders a
-   body-portaled overlay aligned to the grabbed point. The source stays in
-   layout but is visually hidden with opacity so pointer capture remains
-   intact.
+1. Handle activation keeps a same-size placeholder at the source and renders a
+   body-portaled overlay aligned to the grabbed point. Item activation can opt
+   out of the overlay so the source row remains the visible in-flow drag
+   surface.
 2. The overlay does not intercept pointer events, uses the drag-overlay z-index
    token, measured source dimensions, an opaque Ship Studio surface, and a
    restrained elevation shadow.
 3. Crossing an eligible item's midpoint projects order immediately. Items move
-   with a short, interruptible reorder transition; the overlay follows the
-   pointer without a drag-phase transition. The DOM is not optimistically
-   reparented and feature state is not committed during pointer movement.
+   with a short, interruptible reorder transition; an overlay, when configured,
+   follows the pointer without a drag-phase transition. The DOM is not
+   optimistically reparented and feature state is not committed during pointer
+   movement.
 4. Ordinary lists use directional midpoint/closest-centre collision. Precise
    nested targets use pointer containment and explicit numeric priority when
    targets overlap.
@@ -64,13 +65,15 @@ or added to this project.
 
 ### Keyboard and accessibility
 
-1. Each sortable item has a focusable handle. Space or Enter lifts it; arrows
-   move the projected target along the list axis; Home and End choose the first
-   and last valid position; Space or Enter drops; Escape cancels.
+1. Each sortable item has a focusable activation surface. Handle-activated items
+   use a focusable handle; item-activated items use the row itself. Space or
+   Enter lifts it; arrows move the projected target along the list axis; Home
+   and End choose the first and last valid position; Space or Enter drops;
+   Escape cancels.
 2. Tree items additionally use Left and Right for before/inside/after where
    valid. Invalid positions are skipped rather than announced as successful.
-3. Focus remains on the handle throughout and is restored after commit or
-   cancellation.
+3. Focus remains on the activation surface throughout and is restored after
+   commit or cancellation.
 4. Handles expose a label such as `Move Variables panel` and describe the
    scope instructions.
 5. A polite live region announces lift, every projected position, invalid
@@ -84,8 +87,9 @@ or added to this project.
 1. IDs are stable and unique within a scope. Array indexes are never IDs.
 2. The engine owns transient interaction state only. Feature state remains the
    source of truth and adapters own persistence/source mutation.
-3. An async commit failure restores the last confirmed order and surfaces a
-   human-readable persistence failure through the feature adapter.
+3. Feature adapters may keep their projected state visible while an async
+   commit is pending. A failure restores the last confirmed order and surfaces
+   a human-readable persistence failure.
 4. A pending commit locks the scope. Speculative mutations are not queued
    against stale positions.
 5. External changes replace confirmed items only while idle; during a drag they
@@ -98,17 +102,17 @@ intentional where the gesture remains a click or is cancelled before lift.
 
 | Case | Initial state | Gesture | Projected state | Release/cancel result | Focus | Announcement |
 | --- | --- | --- | --- | --- | --- | --- |
-| Mouse | Three vertical rows, handle available | Press a handle and move past 4px across row midpoint | Active row remains a placeholder; rows translate to projected gaps | Release commits one move; under 4px is a click | Handle stays focused for keyboard, pointer focus is not stolen | Lift, projected position, drop |
+| Mouse | Three vertical rows, handle or row activation | Press the activation surface and move past 4px across row midpoint | Active row remains a placeholder when an overlay is configured; otherwise rows translate in flow to projected gaps | Release commits one move; under 4px is a click | Activation surface stays focused for keyboard, pointer focus is not stolen | Lift, projected position, drop |
 | Touch emulation | Three rows in a scrollable list | Hold 250ms within 5px, then move; move/scroll early | Overlay follows touch and list may auto-scroll | Release commits; early scroll cancels candidate | Touch does not move focus unexpectedly | Lift and drop, or no announcement on early cancel |
 | Keyboard | Focused handle in a vertical group | Space, arrows/Home/End, Space | Projected order updates without pointer events | Drop commits exactly once; Escape restores order | Handle remains focused throughout and after settle | Lift, each position, drop/cancel |
 | Reduced motion | Same list with reduced-motion preference | Pointer or keyboard reorder | Target and projected state remain visible without settle animation | State commits immediately | Focus restoration is unchanged | Same semantic announcements |
 | Scrolling | Variable-height rows near an inner scroll edge | Drag toward edge while pointer remains in list | Innermost list scrolls and geometry remeasures | Release uses the post-scroll target | Overlay remains aligned to grabbed point | Position updates reflect visible labels |
-| Cancellation | Active drag with a confirmed order | Escape, blur, pointercancel, lost capture, or unmount | Projection disappears and original order returns | No feature commit; transient styles clean up | Original handle is restored when mounted | Cancelled |
-| Invalid targets | Disabled/hidden row or validator-refused destination | Drag/keyboard toward invalid destination | No insertion line is rendered for ordinary lists; valid projection is retained | Invalid release cancels | Handle remains available | Why the target is invalid |
+| Cancellation | Active drag with a confirmed order | Escape, blur, pointercancel, lost capture, or unmount | Projection disappears and original order returns | No feature commit; transient styles clean up | Original activation surface is restored when mounted | Cancelled |
+| Invalid targets | Disabled/hidden row or validator-refused destination | Drag/keyboard toward invalid destination | Any stale projection clears and the target shows its invalid state | Invalid release cancels | Handle remains available | Why the target is invalid |
 | Variable-height items | Rows have different measured heights | Cross each midpoint in both directions | Gap changes at each actual midpoint, not a fixed row height | Final projected order commits | Handle remains usable | One-based final position |
 | Horizontal list | Items laid out left-to-right | Drag across horizontal midpoints or use left/right | Projection follows horizontal axis | Valid release commits | Handle stays focused for keyboard | Axis-neutral positions |
 | Grouped list | Two labelled groups, one empty | Move within and across groups where allowed | Source removal and destination insertion compensate indexes | Commit contains source/destination group and index | Focus stays on source handle | Group labels, positions, totals |
-| Nested tree targets | Nested rows expose before/inside/after zones | Drag into a valid container or beside a sibling | An opt-in zone-specific indicator and indentation projection may appear | Valid placement commits; descendant/void/root targets cancel | Handle remains focused | Placement and target label, or refusal reason |
+| Nested tree targets | Flat sibling rows represent before/inside/after tree zones | Drag into a valid container or beside a sibling | Row order and indentation project the resulting hierarchy immediately | Valid placement commits; descendant/void/root targets cancel | Activation surface remains focused | Placement and target label, or refusal reason |
 
 ## Exact targets versus Ship Studio styling
 

@@ -171,6 +171,11 @@ const OS_SKIP_SELECTOR = [
   // out of CodeMirror's flex row — the line-number gutter collapses to full
   // width and the code stacks below it (Code tab editor, visual editor).
   '.cm-editor',
+  // The Elements tree is a flex child whose body is the scroll owner. The
+  // OverlayScrollbars host styles force that body into a row flex layout and
+  // can make its viewport lose the bounded height in a docked panel, leaving
+  // the tree visibly overflowing without a usable scroll surface.
+  '.ss-tree-panel__body',
   // The Code file browser hides its native scrollbar and owns a flex layout.
   // OverlayScrollbars changes the sidebar's child layout while relocating the
   // tree into a viewport, which can leave visible file rows outside the

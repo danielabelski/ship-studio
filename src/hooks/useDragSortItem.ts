@@ -22,10 +22,12 @@ export interface UseDragSortItemOptions {
   disabled?: boolean;
   hidden?: boolean;
   targetDisabled?: boolean;
+  /** Register the item as a drop surface without including it in sort order. */
+  targetOnly?: boolean;
   collisionPriority?: number;
   overlay?: ReactNode;
   activation?: DragSortActivation;
-  /** Opt in to a target-edge marker for future tree/drop-zone adapters. */
+  /** Opt in to a target-edge marker and suppress the projected full-row slot. */
   showTargetIndicator?: boolean;
 }
 
@@ -45,12 +47,21 @@ export interface DragSortItemBinding {
     'data-drag-sort-target': boolean | undefined;
     'data-drag-sort-invalid': boolean | undefined;
     'data-drag-sort-placement': string | undefined;
+    'data-drag-sort-inside-hold': string | undefined;
     'data-drag-sort-axis': string;
     'data-drag-sort-has-overlay': boolean;
     'data-drag-sort-activation': string;
     'data-drag-sort-placeholder': boolean | undefined;
+    'data-drag-sort-transition-suppressed': boolean | undefined;
     'data-drag-sort-target-indicator': boolean | undefined;
     'data-drag-sort-hover-reveal-blocked': boolean | undefined;
+    /** Whole-item activation exposes the row as the keyboard drag control. */
+    tabIndex?: number;
+    role?: string;
+    'aria-label'?: string;
+    'aria-describedby'?: string;
+    'aria-roledescription'?: string;
+    'aria-disabled'?: boolean;
   };
   itemState: ReturnType<ReturnType<typeof useDragSortContext>['manager']['getItemState']>;
 }
@@ -58,7 +69,7 @@ export interface DragSortItemBinding {
 export const DragSortItemContext = createContext<DragSortItemBinding | null>(null);
 
 export function useDragSortItem(options: UseDragSortItemOptions): DragSortItemBinding {
-  const { manager } = useDragSortContext();
+  const { manager, instructionsId } = useDragSortContext();
   const [itemElement, setItemElement] = useState<HTMLElement | null>(null);
   const [handleElement, setHandleElement] = useState<HTMLElement | null>(null);
   const [targetElement, setTargetElement] = useState<HTMLElement | null>(null);
@@ -91,7 +102,9 @@ export function useDragSortItem(options: UseDragSortItemOptions): DragSortItemBi
       disabled: options.disabled,
       hidden: options.hidden,
       targetDisabled: options.targetDisabled,
+      targetOnly: options.targetOnly,
       collisionPriority: options.collisionPriority,
+      showTargetIndicator: options.showTargetIndicator,
       overlay: options.overlay,
     });
     return unregister;
@@ -115,7 +128,9 @@ export function useDragSortItem(options: UseDragSortItemOptions): DragSortItemBi
       disabled: options.disabled,
       hidden: options.hidden,
       targetDisabled: options.targetDisabled,
+      targetOnly: options.targetOnly,
       collisionPriority: options.collisionPriority,
+      showTargetIndicator: options.showTargetIndicator,
       overlay: options.overlay,
     });
   }, [
@@ -133,8 +148,10 @@ export function useDragSortItem(options: UseDragSortItemOptions): DragSortItemBi
     options.id,
     options.overlay,
     options.targetDisabled,
+    options.targetOnly,
     targetElement,
     options.type,
+    options.showTargetIndicator,
   ]);
 
   useEffect(
@@ -152,6 +169,11 @@ export function useDragSortItem(options: UseDragSortItemOptions): DragSortItemBi
   const snapshot = useSyncExternalStore(subscribe, manager.getSnapshot, manager.getSnapshot);
   const itemState = manager.getItemState(options.id);
   const { isDragging, isTarget } = itemState;
+  const showTargetIndicator =
+    options.showTargetIndicator &&
+    isTarget &&
+    itemState.insideHold !== 'pending' &&
+    itemState.insideHold !== 'flashing';
   const hasOverlay =
     options.overlay !== undefined && options.overlay !== null && options.overlay !== false;
   const binding: DragSortItemBinding = {
@@ -170,12 +192,25 @@ export function useDragSortItem(options: UseDragSortItemOptions): DragSortItemBi
       'data-drag-sort-target': isTarget || undefined,
       'data-drag-sort-invalid': isTarget && Boolean(snapshot.invalidReason) ? true : undefined,
       'data-drag-sort-placement': isTarget ? (itemState.placement ?? undefined) : undefined,
+      'data-drag-sort-inside-hold':
+        isTarget && itemState.insideHold !== 'idle' ? itemState.insideHold : undefined,
       'data-drag-sort-axis': itemState.axis,
       'data-drag-sort-has-overlay': hasOverlay,
       'data-drag-sort-activation': options.activation ?? 'handle',
       'data-drag-sort-placeholder': isDragging && hasOverlay ? true : undefined,
-      'data-drag-sort-target-indicator': options.showTargetIndicator && isTarget ? true : undefined,
+      'data-drag-sort-transition-suppressed': itemState.suppressTransition || undefined,
+      'data-drag-sort-target-indicator': showTargetIndicator ? true : undefined,
       'data-drag-sort-hover-reveal-blocked': hoverRevealBlocked || undefined,
+      ...(options.activation === 'item'
+        ? {
+            tabIndex: options.disabled ? -1 : 0,
+            role: 'button',
+            'aria-label': options.label ? `Move ${options.label}` : undefined,
+            'aria-describedby': instructionsId,
+            'aria-roledescription': 'sortable item',
+            'aria-disabled': options.disabled || undefined,
+          }
+        : {}),
     },
     itemState,
   };

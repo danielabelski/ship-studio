@@ -1,30 +1,14 @@
-/**
- * The rail: every docked panel and the preview, in the order the user chose.
- *
- * This component knows nothing about what any panel *contains*. It renders one
- * empty, measured slot per docked panel and registers it; each panel's
- * `DockablePanel` finds the slot that matches its id and portals its
- * placeholder there, then positions its real surface over it. So a panel and
- * its position are completely decoupled — which is what makes reordering safe
- * for an xterm terminal and a live preview iframe alike.
- *
- * ## Two rules that are load-bearing
- *
- * **The children are always in the same DOM order.** Position comes from the
- * flex `order` property, computed from the layout. Reordering is therefore a
- * style change and never a tree change: nothing is unmounted, remounted or
- * reparented, and the preview iframe — which reloads if it is moved in the DOM
- * — never moves.
- *
- * **A resize is local until it is released.** The slot holds its own width
- * while you drag its edge and commits to the layout on release. Writing every
- * pointer move into the shared layout would re-render the whole workspace at
- * the display refresh rate, for a value only one element uses.
- *
- * @module components/workspace/WorkspaceDock
- */
+/** The workspace rail: a horizontal row of panel columns and the preview. */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { PanelResizeHandle } from '../primitives/PanelResizeHandle';
 import {
@@ -33,95 +17,123 @@ import {
   usePanelDock,
   usePresentPanels,
 } from '../../contexts/PanelDockContext';
-import type { RailBounds, RailSlotRect } from '../../lib/dockDrag';
+import type { RailBounds, RailGeometry, RailPanelRect, RailColumnRect } from '../../lib/dockDrag';
 import {
   PANEL_IDS,
   PANEL_META,
-  PREVIEW,
-  dockedPanels,
-  indexOf,
+  columnWidthOf,
+  columnWidthBounds,
+  isDocked,
   sideOf,
-  widthOf,
+  type PanelColumn,
   type PanelId,
-  type RailItem,
+  type PanelPlacement,
 } from '../../lib/workspaceLayout';
 
-/**
- * The most of the rail every docked panel may take between them.
- *
- * The preview keeps the rest. Without a ceiling, four panels dragged wide leave
- * the canvas a sliver — and the preview toolbar, which lives in that column,
- * collapses into overlapping controls long before the canvas becomes useless.
- */
 const MAX_DOCKED_FRACTION = 0.75;
 
 interface WorkspaceDockProps {
-  /** The preview pane. Always the centre; never portaled, never moved. */
   preview: ReactNode;
-  /**
-   * Focus mode: the preview is put away and the agent takes the room.
-   *
-   * The centre keeps its place in the order — this is a temporary collapse, not
-   * a rearrangement — so leaving focus mode restores the arrangement exactly.
-   */
   previewHidden?: boolean;
-  /**
-   * Panels rendered here for tidiness rather than for position. Where a panel
-   * sits in this tree has no bearing on where it appears: its placeholder is
-   * portaled into whichever slot the layout gives it.
-   */
   children?: ReactNode;
 }
 
+interface RenderPanelColumn {
+  sourceIndex: number;
+  column: PanelColumn;
+  panels: PanelPlacement[];
+}
+
 export function WorkspaceDock({ preview, previewHidden = false, children }: WorkspaceDockProps) {
-  const { layout, measureRef, previewFullscreen } = usePanelDock();
+  const { layout, measureRef, previewFullscreen, setDragDisabled, slots } = usePanelDock();
   const present = usePresentPanels();
   const railRef = useRef<HTMLDivElement>(null);
+  const presentSet = new Set(present);
+  if (previewHidden) presentSet.add('agent');
 
-  /**
-   * Hand the drag resolver a way to read real geometry.
-   *
-   * Read from the DOM rather than from React state: the slots' widths are
-   * whatever the last resize left them at, and mid-drag a slot may have a local
-   * width the layout has not been told about yet.
-   */
+  useLayoutEffect(() => {
+    setDragDisabled(previewHidden);
+    return () => setDragDisabled(false);
+  }, [previewHidden, setDragDisabled]);
+
+  useLayoutEffect(() => {
+    const rail = railRef.current;
+    if (!rail) return;
+
+    // Docked panel surfaces are portaled to the document body and positioned
+    // from their rail slots. A sidebar collapse can move the whole rail while
+    // leaving each slot's size unchanged, so the panel-local ResizeObservers
+    // have nothing to report. Observe the rail's available geometry and tell
+    // every surface to remeasure when its containing workspace moves.
+    const observer = new ResizeObserver(() => slots.pingGeometry());
+    observer.observe(rail);
+    return () => observer.disconnect();
+  }, [slots]);
+
+  const renderColumns: (RenderPanelColumn | { sourceIndex: number; preview: true })[] = [];
+  for (const [sourceIndex, column] of layout.columns.entries()) {
+    if (column.kind === 'preview') {
+      if (!previewHidden) renderColumns.push({ sourceIndex, preview: true });
+      continue;
+    }
+    if (previewHidden && !column.panels.some((placement) => placement.panel === 'agent')) continue;
+    const panels = column.panels.filter(
+      (placement) =>
+        presentSet.has(placement.panel) &&
+        (previewHidden ? placement.panel === 'agent' : isDocked(layout, placement.panel))
+    );
+    if (panels.length > 0) renderColumns.push({ sourceIndex, column, panels });
+  }
+
   useEffect(() => {
     measureRef.current = () => {
       const rail = railRef.current;
       const railRect = rail?.getBoundingClientRect();
       const bounds: RailBounds = railRect
-        ? {
-            left: railRect.left,
-            right: railRect.right,
-            top: railRect.top,
-            bottom: railRect.bottom,
-          }
+        ? { left: railRect.left, right: railRect.right, top: railRect.top, bottom: railRect.bottom }
         : { left: 0, right: 0, top: 0, bottom: 0 };
-
-      const slots: RailSlotRect[] = [];
-      for (const node of rail?.querySelectorAll<HTMLElement>('[data-rail-item]') ?? []) {
-        const item = node.dataset.railItem as RailItem | undefined;
-        if (!item) continue;
+      const columns: RailColumnRect[] = [];
+      const panels: RailPanelRect[] = [];
+      for (const node of rail?.querySelectorAll<HTMLElement>('[data-rail-column]') ?? []) {
+        const sourceIndex = Number(node.dataset.columnIndex);
+        if (!Number.isInteger(sourceIndex)) continue;
         const rect = node.getBoundingClientRect();
-        if (rect.width <= 0) continue;
-        slots.push({ item, left: rect.left, right: rect.right });
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const preview = node.dataset.preview === 'true';
+        columns.push({
+          columnIndex: sourceIndex,
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          preview,
+        });
+        if (preview) continue;
+        for (const panelNode of node.querySelectorAll<HTMLElement>('[data-rail-panel]')) {
+          const panel = panelNode.dataset.railPanel as PanelId | undefined;
+          const panelIndex = Number(panelNode.dataset.panelIndex);
+          if (!panel || !Number.isInteger(panelIndex)) continue;
+          const panelRect = panelNode.getBoundingClientRect();
+          if (panelRect.width <= 0 || panelRect.height <= 0) continue;
+          panels.push({
+            panel,
+            columnIndex: sourceIndex,
+            panelIndex,
+            left: panelRect.left,
+            right: panelRect.right,
+            top: panelRect.top,
+            bottom: panelRect.bottom,
+          });
+        }
       }
-      slots.sort((a, b) => a.left - b.left);
-      return { slots, bounds };
+      columns.sort((a, b) => a.left - b.left);
+      return { columns, panels, bounds } satisfies RailGeometry;
     };
     return () => {
       measureRef.current = null;
     };
-  }, [measureRef]);
+  }, [measureRef, renderColumns.length]);
 
-  /**
-   * Where the workspace chrome ends, for fullscreen.
-   *
-   * The rail covers the window below the header rather than all of it, so the
-   * project name, the navigation and the macOS traffic lights stay reachable.
-   * Measured rather than tokenised because the classic layout has a second
-   * toolbar row and the compact one does not.
-   */
   const [chromeTop, setChromeTop] = useState(0);
   useEffect(() => {
     if (!previewFullscreen) return;
@@ -136,18 +148,15 @@ export function WorkspaceDock({ preview, previewHidden = false, children }: Work
     return () => window.removeEventListener('resize', measure);
   }, [previewFullscreen]);
 
-  // A panel gets a column when the layout docks it *and* it is currently open.
-  //
-  // Focus mode is the exception: putting the preview away docks the agent
-  // whatever the layout says (`WorkspaceTerminalPane` does the same), because
-  // otherwise entering focus mode with a floating agent leaves an empty
-  // workspace with a window over it. It takes the whole rail, which is what
-  // focus mode is.
-  const docked = dockedPanels(layout);
-  const slotted = (
-    previewHidden && !docked.includes('agent') ? [...docked, 'agent' as PanelId] : docked
-  ).filter((panel) => present.includes(panel));
-  const stretched = previewHidden ? (slotted.includes('agent') ? 'agent' : slotted[0]) : null;
+  const panelColumns = renderColumns
+    .filter((column): column is RenderPanelColumn => !('preview' in column))
+    .sort((left, right) => {
+      const leftPanel = left.panels[0]?.panel;
+      const rightPanel = right.panels[0]?.panel;
+      return PANEL_IDS.indexOf(leftPanel) - PANEL_IDS.indexOf(rightPanel);
+    });
+  const previewColumn = renderColumns.find((column) => 'preview' in column);
+  const dockedColumnCount = panelColumns.length;
 
   return (
     <div
@@ -156,30 +165,35 @@ export function WorkspaceDock({ preview, previewHidden = false, children }: Work
       data-fullscreen={previewFullscreen ? 'true' : undefined}
       style={
         previewFullscreen
-          ? ({ '--dock-fullscreen-top': `${chromeTop}px` } as React.CSSProperties)
+          ? ({ '--dock-fullscreen-top': `${chromeTop}px` } as CSSProperties)
           : undefined
       }
     >
-      {/* Fixed DOM order — see the note at the top of this file. A floating
-          panel renders no slot, but the ones around it keep their position in
-          the tree, so nothing is torn down when one is pulled out. */}
-      {PANEL_IDS.map((panel) =>
-        slotted.includes(panel) ? (
-          <WorkspaceDockSlot
-            key={panel}
-            panel={panel}
-            order={indexOf(layout, panel)}
-            side={sideOf(layout, panel)}
-            dockedCount={slotted.length}
-            stretch={stretched === panel}
-          />
-        ) : null
-      )}
+      {/* Keep panel columns in a deterministic DOM order. The preview wrapper
+          is always the next sibling, even when its visual flex order changes;
+          this protects an iframe from being physically reparented/reloaded. */}
+      {panelColumns.map((column) => (
+        <WorkspaceDockColumn
+          key={`column-${column.sourceIndex}`}
+          sourceIndex={column.sourceIndex}
+          column={column.column}
+          panels={column.panels}
+          dockedColumnCount={dockedColumnCount}
+          stretch={previewHidden && column.panels.some((placement) => placement.panel === 'agent')}
+        />
+      ))}
       <div
+        key="preview"
         className="workspace-dock__center"
-        data-rail-item={previewHidden ? undefined : PREVIEW}
+        data-rail-column
+        data-column-index={
+          previewColumn && 'preview' in previewColumn ? previewColumn.sourceIndex : -1
+        }
+        data-preview="true"
         hidden={previewHidden}
-        style={{ order: indexOf(layout, PREVIEW) }}
+        style={{
+          order: previewColumn && 'preview' in previewColumn ? previewColumn.sourceIndex : 0,
+        }}
       >
         {preview}
       </div>
@@ -189,172 +203,318 @@ export function WorkspaceDock({ preview, previewHidden = false, children }: Work
   );
 }
 
-interface SlotProps {
-  panel: PanelId;
-  order: number;
-  side: 'left' | 'right';
-  dockedCount: number;
-  /** Take the room the hidden preview left, instead of a fixed width. */
+interface WorkspaceDockColumnProps {
+  sourceIndex: number;
+  column: PanelColumn;
+  panels: PanelPlacement[];
+  dockedColumnCount: number;
   stretch: boolean;
 }
 
-function WorkspaceDockSlot({ panel, order, side, dockedCount, stretch }: SlotProps) {
-  const { layout, slots, setWidth } = usePanelDock();
+function WorkspaceDockColumn({
+  sourceIndex,
+  column,
+  panels,
+  dockedColumnCount,
+  stretch,
+}: WorkspaceDockColumnProps) {
+  const { layout, slots, setColumnWidth, setPanelWeights } = usePanelDock();
   const drag = useDockDrag();
-  const meta = PANEL_META[panel];
-  const slotRef = useRef<HTMLDivElement>(null);
+  const preferredWidths = {
+    agent: useDefaultWidth('agent'),
+    navigator: useDefaultWidth('navigator'),
+    variables: useDefaultWidth('variables'),
+    editor: useDefaultWidth('editor'),
+    team: useDefaultWidth('team'),
+  };
+  const railColumnRef = useRef<HTMLDivElement>(null);
+  const slotRefs = useRef(new Map<PanelId, HTMLDivElement>());
+  const signature = JSON.stringify(
+    column.panels.map((placement) => [placement.panel, placement.weight])
+  );
+  const initialWeights = Object.fromEntries(
+    column.panels.map((placement) => [placement.panel, placement.weight])
+  );
+  const [weights, setWeights] = useState<Record<string, number>>(() => initialWeights);
+  const weightsRef = useRef(weights);
+  const visiblePanelSignature = panels.map((placement) => placement.panel).join('|');
+  // A floating panel keeps its structural weight so it can return to the same
+  // place and size, but it must not reserve visual space while it is away.
+  // Renormalise only the rendered slots; the committed layout remains intact.
+  const visibleWeightTotal = Math.max(
+    Number.EPSILON,
+    panels.reduce((total, placement) => total + (weights[placement.panel] ?? placement.weight), 0)
+  );
+  useLayoutEffect(() => {
+    // The structural layout is the committed source of truth. Local weights
+    // are only a transient view while a divider is held.
+    const next = Object.fromEntries(JSON.parse(signature) as [PanelId, number][]) as Record<
+      string,
+      number
+    >;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWeights(next);
+    weightsRef.current = next;
+  }, [signature]);
 
-  // The committed width is the source of truth; this is the live one during a
-  // drag of this slot's edge. Seeded from the layout and re-seeded whenever the
-  // layout changes it from elsewhere (a preset, a reset, another window).
-  // The panel's own preference is the fallback, not an override: a width the
-  // person dragged always wins over one the panel would like.
-  const preferred = useDefaultWidth(panel);
-  const committed = widthOf(layout, panel, preferred);
-  const [width, setWidthState] = useState(committed);
-  const [committedAt, setCommittedAt] = useState(committed);
-  if (committedAt !== committed) {
-    setCommittedAt(committed);
-    setWidthState(committed);
-  }
+  const columnBounds = columnWidthBounds(column);
+  const preferredWidth = Math.max(
+    columnBounds.defaultWidth,
+    ...panels.map(
+      (placement) => preferredWidths[placement.panel] ?? PANEL_META[placement.panel].defaultWidth
+    )
+  );
+  const fallbackWidth = Math.max(
+    columnBounds.minWidth,
+    Math.min(columnBounds.maxWidth, preferredWidth)
+  );
+  const committedWidth = columnWidthOf(layout, sourceIndex, fallbackWidth);
+  const [width, setWidth] = useState(committedWidth);
+  const widthRef = useRef(committedWidth);
+  useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWidth(committedWidth);
+    widthRef.current = committedWidth;
+  }, [committedWidth]);
 
-  /**
-   * The live width, readable synchronously.
-   *
-   * `PanelResizeHandle` applies the final pointer position and *then* reports
-   * that the drag ended, both in one tick — so a `commit` reading `width` from
-   * its closure reads the render before that last move and silently drops it.
-   * The gap is however far the pointer travelled between the last frame and the
-   * release, which on a fast drag is most of it.
-   */
-  const widthRef = useRef(committed);
   const setLocalWidth = useCallback((next: number) => {
     widthRef.current = next;
-    setWidthState(next);
+    setWidth(next);
   }, []);
 
-  // The other writer: a preset, a reset, or the panel changing its preferred
-  // width. Never mid-drag, so an effect is soon enough — the drag path above
-  // is the one that has to be synchronous.
   useLayoutEffect(() => {
-    widthRef.current = committed;
-  }, [committed]);
+    widthRef.current = committedWidth;
+  }, [committedWidth]);
 
-  useLayoutEffect(() => {
-    const element = slotRef.current;
-    slots.set(panel, element);
-    return () => slots.set(panel, null);
-  }, [panel, slots]);
-
-  // Widening this slot moves every panel to its right. Their surfaces sit over
-  // placeholders whose own size did not change, so nothing they observe would
-  // tell them — say so.
   useLayoutEffect(() => {
     slots.pingGeometry();
-  }, [slots, width, order, stretch]);
+  }, [slots, width, weights, panels.length, stretch]);
 
-  /**
-   * The most this panel may be, right now.
-   *
-   * Its own maximum, and never so wide that the docked panels together pass
-   * `MAX_DOCKED_FRACTION` of the rail. The share is divided by how many panels
-   * are docked so that four panels cannot each take three quarters.
-   */
+  const [slotHeights, setSlotHeights] = useState<Record<string, number>>({});
+  useLayoutEffect(() => {
+    const panelIds = visiblePanelSignature.split('|').filter(Boolean) as PanelId[];
+    const next = Object.fromEntries(
+      panelIds.flatMap((panel) => {
+        const height = slotRefs.current.get(panel)?.getBoundingClientRect().height;
+        return height && height > 0 ? [[panel, height]] : [];
+      })
+    );
+    setSlotHeights(next);
+  }, [visiblePanelSignature, weights, width, stretch]);
+
+  const minWidth = Math.max(...panels.map((placement) => PANEL_META[placement.panel].minWidth));
+  const maxWidthForColumn = Math.min(
+    ...panels.map((placement) => PANEL_META[placement.panel].maxWidth)
+  );
   const maxWidth = useCallback(() => {
-    const rail = slotRef.current?.parentElement?.clientWidth ?? 0;
-    if (rail <= 0) return meta.maxWidth;
-    const share = (rail * MAX_DOCKED_FRACTION) / Math.max(1, dockedCount);
-    return Math.max(meta.minWidth, Math.min(meta.maxWidth, share));
-  }, [dockedCount, meta.maxWidth, meta.minWidth]);
-
-  const clamp = useCallback(
-    (next: number) => Math.round(Math.max(meta.minWidth, Math.min(next, maxWidth()))),
-    [maxWidth, meta.minWidth]
+    const railWidth = railColumnRef.current?.parentElement?.clientWidth ?? 0;
+    if (railWidth <= 0) return maxWidthForColumn;
+    const share = (railWidth * MAX_DOCKED_FRACTION) / Math.max(1, dockedColumnCount);
+    return Math.max(minWidth, Math.min(maxWidthForColumn, share));
+  }, [dockedColumnCount, maxWidthForColumn, minWidth]);
+  const clampWidth = useCallback(
+    (next: number) => Math.round(Math.max(minWidth, Math.min(next, maxWidth()))),
+    [maxWidth, minWidth]
   );
 
-  // The pointer is on the edge facing the preview, so which direction "wider"
-  // is depends on which side of it this panel sits.
-  const resizeTo = useCallback(
+  const resizeWidthTo = useCallback(
     (clientX: number) => {
-      const rect = slotRef.current?.getBoundingClientRect();
+      const rect = railColumnRef.current?.getBoundingClientRect();
       if (!rect) return;
-      setLocalWidth(clamp(side === 'left' ? clientX - rect.left : rect.right - clientX));
+      const next =
+        sideOf(layout, panels[0].panel) === 'left' ? clientX - rect.left : rect.right - clientX;
+      setLocalWidth(clampWidth(next));
     },
-    [clamp, setLocalWidth, side]
+    [clampWidth, layout, panels, setLocalWidth]
   );
-
-  const resizeBy = useCallback(
-    (delta: number) => setLocalWidth(clamp(widthRef.current + delta)),
-    [clamp, setLocalWidth]
+  const resizeWidthBy = useCallback(
+    (delta: number) => setLocalWidth(clampWidth(widthRef.current + delta)),
+    [clampWidth, setLocalWidth]
   );
-
-  const commit = useCallback(
+  const commitWidth = useCallback(
     (dragging: boolean) => {
       if (dragging) return;
-      setWidth(panel, widthRef.current);
-      // Terminals and the preview measure themselves off a resize; without
-      // this the agent's xterm keeps the columns it had before the drag.
+      setColumnWidth(sourceIndex, widthRef.current);
       window.dispatchEvent(new Event('resize'));
     },
-    [panel, setWidth]
+    [setColumnWidth, sourceIndex]
   );
 
-  const isDragging = drag?.panel === panel;
+  const updatePair = useCallback(
+    (before: PanelId, after: PanelId, beforePixels: number) => {
+      const beforeNode = slotRefs.current.get(before);
+      const afterNode = slotRefs.current.get(after);
+      const columnNode = railColumnRef.current;
+      if (!beforeNode || !afterNode || !columnNode) return;
+      const beforeRect = beforeNode.getBoundingClientRect();
+      const afterRect = afterNode.getBoundingClientRect();
+      const span = Math.max(1, afterRect.bottom - beforeRect.top);
+      const minBefore = PANEL_META[before].minHeight;
+      const minAfter = PANEL_META[after].minHeight;
+      const pixels = Math.max(minBefore, Math.min(span - minAfter, beforePixels));
+      const beforeWeight = weightsRef.current[before] ?? 1;
+      const afterWeight = weightsRef.current[after] ?? 1;
+      const total = beforeWeight + afterWeight;
+      const ratio = pixels / span;
+      const next = {
+        ...weightsRef.current,
+        [before]: total * ratio,
+        [after]: total * (1 - ratio),
+      };
+      weightsRef.current = next;
+      setWeights(next);
+    },
+    [setWeights]
+  );
+
+  const renderPanel = (placement: PanelPlacement, panelIndex: number) => {
+    const panel = placement.panel;
+    const next = panels[panelIndex + 1]?.panel;
+    const value = slotHeights[panel] ?? PANEL_META[panel].minHeight;
+    const handle = next ? (
+      <PanelResizeHandle
+        value={value}
+        min={PANEL_META[panel].minHeight}
+        max={Math.max(
+          PANEL_META[panel].minHeight,
+          value + (slotHeights[next] ?? PANEL_META[next].minHeight) - PANEL_META[next].minHeight
+        )}
+        label={`Resize ${PANEL_META[panel].label} and ${PANEL_META[next].label} panels`}
+        orientation="horizontal"
+        onResize={(clientY) => {
+          const rect = slotRefs.current.get(panel)?.getBoundingClientRect();
+          if (rect) updatePair(panel, next, clientY - rect.top);
+        }}
+        onResizeBy={(delta) => updatePair(panel, next, value + delta)}
+        onDragChange={(dragging) => {
+          if (!dragging) {
+            setPanelWeights(sourceIndex, weightsRef.current);
+            window.dispatchEvent(new Event('resize'));
+          }
+        }}
+        className="workspace-dock__stack-resize"
+      />
+    ) : null;
+    return (
+      <WorkspaceDockPanelSlot
+        key={panel}
+        panel={panel}
+        panelIndex={panelIndex}
+        weight={(weights[panel] ?? placement.weight) / visibleWeightTotal}
+        slotRefs={slotRefs}
+        slots={slots}
+        dragPanel={drag?.panel === panel}
+        resizeHandle={handle}
+      />
+    );
+  };
 
   return (
     <div
-      ref={slotRef}
-      className={`workspace-dock__slot${isDragging ? ' workspace-dock__slot--lifted' : ''}`}
-      data-rail-item={panel}
-      data-panel={panel}
+      ref={railColumnRef}
+      className="workspace-dock__column"
+      data-rail-column
+      data-column-index={sourceIndex}
       style={
         stretch
-          ? { order, flex: '1 1 auto', minWidth: 0 }
-          : { order, width, minWidth: width, maxWidth: width }
+          ? { order: sourceIndex, flex: '1 1 auto', minWidth: 0 }
+          : { order: sourceIndex, width, minWidth: width, maxWidth: width }
       }
     >
+      {panels.map(renderPanel)}
       {!stretch && (
         <PanelResizeHandle
           value={width}
-          min={meta.minWidth}
-          max={meta.maxWidth}
-          label={`Resize ${meta.label} panel`}
-          className={`workspace-dock__resize workspace-dock__resize--${side}`}
-          onResize={resizeTo}
-          onResizeBy={resizeBy}
-          onDragChange={commit}
+          min={minWidth}
+          max={maxWidthForColumn}
+          label={`Resize ${panels.map((placement) => PANEL_META[placement.panel].label).join(' and ')} column`}
+          onResize={resizeWidthTo}
+          onResizeBy={resizeWidthBy}
+          onDragChange={commitWidth}
+          className={`workspace-dock__resize workspace-dock__resize--${sideOf(layout, panels[0].panel)}`}
         />
       )}
     </div>
   );
 }
 
-/**
- * Where the panel you are holding would land.
- *
- * A line at the seam, or — out over the canvas, where no seam is near enough —
- * the outline of the window it would become. Both carry the same chip saying it
- * in words, because an insertion line a few pixels from another one is not, on
- * its own, an answer to "which side of the preview is this going".
- */
+interface WorkspaceDockPanelSlotProps {
+  panel: PanelId;
+  panelIndex: number;
+  weight: number;
+  slotRefs: React.MutableRefObject<Map<PanelId, HTMLDivElement>>;
+  slots: ReturnType<typeof usePanelDock>['slots'];
+  dragPanel: boolean;
+  resizeHandle: ReactNode;
+}
+
+function assignSlotNode(
+  slotRefs: React.MutableRefObject<Map<PanelId, HTMLDivElement>>,
+  slots: ReturnType<typeof usePanelDock>['slots'],
+  panel: PanelId,
+  node: HTMLDivElement | null
+) {
+  if (node) {
+    slotRefs.current.set(panel, node);
+    slots.set(panel, node);
+  } else {
+    slotRefs.current.delete(panel);
+    slots.set(panel, null);
+  }
+}
+
+function WorkspaceDockPanelSlot({
+  panel,
+  panelIndex,
+  weight,
+  slotRefs,
+  slots,
+  dragPanel,
+  resizeHandle,
+}: WorkspaceDockPanelSlotProps) {
+  const assignRef = useCallback(
+    (node: HTMLDivElement | null) => assignSlotNode(slotRefs, slots, panel, node),
+    [panel, slotRefs, slots]
+  );
+
+  return (
+    <div
+      ref={assignRef}
+      className={`workspace-dock__slot${dragPanel ? ' workspace-dock__slot--lifted' : ''}`}
+      data-rail-panel={panel}
+      data-panel={panel}
+      data-panel-index={panelIndex}
+      style={{ flex: `${weight} 1 0`, minHeight: PANEL_META[panel].minHeight }}
+    >
+      {resizeHandle}
+    </div>
+  );
+}
+
 function DockDropIndicator() {
   const drag = useDockDrag();
   if (!drag) return null;
-
   const label = PANEL_META[drag.panel].label;
-
   return createPortal(
     <>
-      {drag.target.kind === 'dock' && (
+      {drag.target.kind === 'column' && (
         <div
-          className="workspace-dock__drop-line"
-          // Bounded by the rail rather than by the window: the line is fixed so
-          // it can sit above the portaled panel surfaces, and a CSS `inset`
-          // ran it up through the header and the titlebar.
+          className="workspace-dock__drop-line workspace-dock__drop-line--column"
           style={{
             left: drag.target.x,
             top: drag.target.top,
             height: drag.target.bottom - drag.target.top,
+          }}
+          aria-hidden
+        />
+      )}
+      {drag.target.kind === 'stack' && (
+        <div
+          className="workspace-dock__drop-line workspace-dock__drop-line--stack"
+          style={{
+            left: drag.target.left,
+            top: drag.target.y,
+            width: drag.target.right - drag.target.left,
           }}
           aria-hidden
         />

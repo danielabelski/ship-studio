@@ -15,6 +15,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useLayoutEffect,
   useSyncExternalStore,
   type ReactNode,
   type CSSProperties,
@@ -66,10 +67,15 @@ import type {
   DragSortMove,
   DragSortPlacement,
   DragSortPoint,
-  DragSortTarget,
+  DragSortTarget as DragSortCollisionTarget,
 } from '../../lib/drag-sort/types';
 import { useCommands } from '../../commands/useCommands';
 import type { PaletteCtx } from '../../commands/types';
+import {
+  flattenElementTree,
+  projectElementTree,
+  type ElementTreeRow,
+} from '../../lib/element-tree-drag';
 
 /** The structural-edit actions the panel's context menu drives
  *  (from `useElementStructure`). */
@@ -122,6 +128,10 @@ interface Props {
 /** Rows at depth < this start expanded so the tree isn't a single chevron. */
 const AUTO_EXPAND_DEPTH = 3;
 const SHOW_TAG_ICONS_STORAGE_KEY = 'elementTreeShowTagIcons';
+const TREE_INSIDE_ZONE_START = 0.35;
+const TREE_INSIDE_ZONE_END = 0.65;
+const TREE_INSIDE_HOLD_DELAY_MS = 500;
+const TREE_INSIDE_HOLD_FLASH_DURATION_MS = 150;
 
 /** Map of node id → ancestor id chain, for auto-expanding to a selection. */
 function buildAncestors(root: ElementTreeNode): Map<number, number[]> {
@@ -185,31 +195,8 @@ function selectorForNode(node: ElementTreeNode): string {
     .join('')}`;
 }
 
-function TreeDragOverlay({ node, depth }: { node: ElementTreeNode; depth: number }) {
-  return (
-    <div
-      className="ss-tree-row ss-tree-row--overlay"
-      style={{ paddingLeft: depth * 14 + 6 }}
-      data-drag-sort-overlay-content="true"
-    >
-      <span className="ss-tree-chevron-spacer" />
-      <RowLabel node={node} showTagIcons={false} />
-    </div>
-  );
-}
-
-function treeNodeById(root: ElementTreeNode | null, id: number): ElementTreeNode | null {
-  if (!root) return null;
-  if (root.id === id) return root;
-  for (const child of root.children) {
-    const found = treeNodeById(child, id);
-    if (found) return found;
-  }
-  return null;
-}
-
 export function treePlacementForTarget(
-  target: DragSortTarget,
+  target: DragSortCollisionTarget,
   point: DragSortPoint,
   axis: 'vertical' | 'horizontal'
 ): DragSortPlacement {
@@ -217,41 +204,27 @@ export function treePlacementForTarget(
   const start = axis === 'horizontal' ? target.rect.left : target.rect.top;
   const size = axis === 'horizontal' ? target.rect.width : target.rect.height;
   const ratio = size > 0 ? (coordinate - start) / size : 0.5;
-  if (ratio < 0.25) return 'before';
-  if (ratio > 0.75) return 'after';
+  if (ratio < TREE_INSIDE_ZONE_START) return 'before';
+  if (ratio > TREE_INSIDE_ZONE_END) return 'after';
   return 'inside';
 }
 
-export function projectTreeVisibleOrder(
-  order: readonly (string | number)[],
-  activeId: string | number,
-  targetId: string | number,
-  placement: DragSortPlacement,
-  movingIds: ReadonlySet<string>
-): readonly (string | number)[] {
-  const key = (id: string | number) => `${typeof id}:${String(id)}`;
-  const activeIndex = order.findIndex((id) => key(id) === key(activeId));
-  const targetIndex = order.findIndex((id) => key(id) === key(targetId));
-  if (activeIndex < 0 || targetIndex < 0 || activeIndex === targetIndex) return [...order];
-  const moving = order.filter((id) => movingIds.has(key(id)));
-  const next = order.filter((id) => !movingIds.has(key(id)));
-  const targetAfterRemoval = next.findIndex((id) => key(id) === key(targetId));
-  const insertion =
-    targetAfterRemoval + (placement === 'after' ? 1 : placement === 'inside' ? 1 : 0);
-  next.splice(Math.max(0, Math.min(insertion, next.length)), 0, ...moving);
-  return next;
-}
-
-function TreeDragLifecycle({
+function TreeSortableRows({
   root,
-  isCollapsed,
-  onExpand,
-  children,
+  rows,
+  isExpanded,
+  renderRow,
+  onDragActiveChange,
 }: {
-  root: ElementTreeNode | null;
-  isCollapsed: (id: number) => boolean;
-  onExpand: (id: number) => void;
-  children: ReactNode;
+  root: ElementTreeNode;
+  rows: readonly ElementTreeRow[];
+  isExpanded: (id: number, depth: number) => boolean;
+  renderRow: (
+    row: ElementTreeRow,
+    projectedDepth: number,
+    activeDragId: number | null
+  ) => ReactNode;
+  onDragActiveChange: (id: number | null) => void;
 }) {
   const { manager } = useDragSortContext();
   const snapshot = useSyncExternalStore(
@@ -259,33 +232,99 @@ function TreeDragLifecycle({
     manager.getSnapshot,
     manager.getSnapshot
   );
-  useEffect(() => {
+  const activeDragId =
+    snapshot.phase !== 'idle' && snapshot.phase !== 'pending' && snapshot.activeId !== null
+      ? Number(snapshot.activeId)
+      : null;
+  // Parent expansion is a presentation detail of the Elements tree. Derive
+  // the active row from the manager's dragging phase so a pointer-down that
+  // never crosses the activation threshold behaves like an ordinary click.
+  // Keep the state in the panel as well so optimistic drop rows remain
+  // collapsed until the manager has finished settling and returned to idle.
+  useLayoutEffect(() => {
+    const activeNode = activeDragId === null ? null : findTreeNode(root, activeDragId);
+    onDragActiveChange(activeNode?.children.length ? activeDragId : null);
+  }, [activeDragId, onDragActiveChange, root]);
+
+  const dragIsExpanded = useCallback(
+    (id: number, depth: number) => id !== activeDragId && isExpanded(id, depth),
+    [activeDragId, isExpanded]
+  );
+  const descendantIds = useMemo(() => {
+    if (activeDragId === null) return null;
+    const ids = new Set<number>();
+    const activeNode = findTreeNode(root, activeDragId);
+    const collect = (node: ElementTreeNode) => {
+      node.children.forEach((child) => {
+        ids.add(child.id);
+        collect(child);
+      });
+    };
+    if (activeNode) collect(activeNode);
+    return ids;
+  }, [activeDragId, root]);
+  const renderedRows = useMemo(
+    () => (descendantIds ? rows.filter((row) => !descendantIds.has(row.node.id)) : rows),
+    [descendantIds, rows]
+  );
+  const visibleIds = useMemo(() => new Set(renderedRows.map((row) => row.node.id)), [renderedRows]);
+  // Once the active parent has been removed from the rendered row set, refresh
+  // the manager's captured geometry. This keeps projected positions atomic
+  // with the collapsed subtree instead of retaining stale child rectangles.
+  useLayoutEffect(() => {
+    if (activeDragId !== null) manager.remeasure();
+  }, [activeDragId, manager, renderedRows.length]);
+  const projection = useMemo(() => {
     if (
-      snapshot.phase !== 'dragging' ||
-      snapshot.invalidReason ||
+      (snapshot.phase !== 'dragging' && snapshot.phase !== 'dropping') ||
+      snapshot.activeId === null ||
       snapshot.targetId === null ||
-      snapshot.placement !== 'inside'
+      snapshot.placement === null ||
+      snapshot.invalidReason !== null
     ) {
-      return;
+      return null;
     }
-    const targetId = Number(snapshot.targetId);
-    const target = treeNodeById(root, targetId);
-    if (!target?.children.length || !isCollapsed(targetId)) return;
-    const timer = window.setTimeout(() => {
-      onExpand(targetId);
-      window.requestAnimationFrame(() => manager.remeasure());
-    }, 600);
-    return () => window.clearTimeout(timer);
-  }, [
-    isCollapsed,
-    onExpand,
-    root,
-    snapshot.invalidReason,
-    snapshot.phase,
-    snapshot.placement,
-    snapshot.targetId,
-  ]);
-  return <>{children}</>;
+    if (
+      snapshot.input === 'pointer' &&
+      snapshot.placement === 'inside' &&
+      (snapshot.insideHold === 'pending' || snapshot.insideHold === 'flashing')
+    ) {
+      return null;
+    }
+    return projectElementTree(
+      root,
+      Number(snapshot.activeId),
+      Number(snapshot.targetId),
+      snapshot.placement,
+      dragIsExpanded,
+      visibleIds
+    );
+  }, [dragIsExpanded, root, snapshot, visibleIds]);
+  const depthById = useMemo(() => {
+    const depths = new Map(renderedRows.map((row) => [row.node.id, row.depth]));
+    projection?.rows.forEach((row) => depths.set(row.node.id, row.depth));
+    return depths;
+  }, [projection, renderedRows]);
+
+  // Keep the source DOM order stable. DragSortManager owns the translated
+  // positions; changing this order as the pointer moves would apply the
+  // projection twice and make the list jump.
+  return (
+    <>
+      {renderedRows.map((row) =>
+        renderRow(row, depthById.get(row.node.id) ?? row.depth, activeDragId)
+      )}
+    </>
+  );
+}
+
+function findTreeNode(root: ElementTreeNode, id: number): ElementTreeNode | null {
+  if (root.id === id) return root;
+  for (const child of root.children) {
+    const found = findTreeNode(child, id);
+    if (found) return found;
+  }
+  return null;
 }
 
 export function ElementTreePanel({
@@ -306,6 +345,11 @@ export function ElementTreePanel({
   onClose,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const [collapsedDragId, setCollapsedDragId] = useState<number | null>(null);
+  const [pendingRows, setPendingRows] = useState<{
+    tree: ElementTreeNode;
+    rows: readonly ElementTreeRow[];
+  } | null>(null);
   const [view, setView] = useState<'visual' | 'code'>('visual');
   const [showTagIcons, , toggleShowTagIcons] = useLocalStorageFlag(
     SHOW_TAG_ICONS_STORAGE_KEY,
@@ -363,7 +407,7 @@ export function ElementTreePanel({
         when: ({ kind }: PaletteCtx) => kind === 'project' && index > 0,
         run: () => {
           const destination = siblings[index - 1];
-          if (destination) move(destination, 'before');
+          if (destination) void move(destination, 'before');
         },
       },
       {
@@ -375,27 +419,13 @@ export function ElementTreePanel({
           kind === 'project' && index >= 0 && index < siblings.length - 1,
         run: () => {
           const destination = siblings[index + 1];
-          if (destination) move(destination, 'after');
+          if (destination) void move(destination, 'after');
         },
       },
     ];
   }, [selectedId, structure, tree]);
-  const handleTreeMove = useCallback(
-    (move: DragSortMove) => {
-      const target = move.targetId;
-      if (target === undefined) return;
-      if (target === move.activeId) return;
-      return structure?.move?.(
-        Number(move.activeId),
-        Number(target),
-        (move.to.placement ?? 'after') as InsertPosition
-      );
-    },
-    [structure]
-  );
-
   // Selecting on the canvas should reveal the row: expand its ancestor chain
-  // (presence in `collapsed` is depth-inverted — see collapsedState). Done as
+  // (presence in `collapsed` is depth-inverted). Done as
   // a render-time state adjustment (the sanctioned "derive from prop change"
   // pattern) rather than an effect, so there's no cascading re-render.
   const [revealedFor, setRevealedFor] = useState<number | null>(null);
@@ -439,23 +469,19 @@ export function ElementTreePanel({
     });
   };
 
-  // Presence in `collapsed` flips the depth-based default: shallow nodes
-  // default open (presence = collapsed), deep nodes default closed
-  // (presence = expanded).
-  const collapsedState = (id: number, depth: number) =>
-    depth < AUTO_EXPAND_DEPTH ? collapsed.has(id) : !collapsed.has(id);
-
-  const visibleOrder = useMemo(() => {
-    const ids: number[] = [];
-    const walk = (node: ElementTreeNode, depth: number) => {
-      ids.push(node.id);
-      if (node.children.length > 0 && !collapsedState(node.id, depth)) {
-        node.children.forEach((child) => walk(child, depth + 1));
-      }
-    };
-    if (tree) walk(tree, 0);
-    return ids;
-  }, [collapsed, tree]);
+  const isExpanded = useCallback(
+    (id: number, depth: number) =>
+      id !== collapsedDragId &&
+      (depth < AUTO_EXPAND_DEPTH ? !collapsed.has(id) : collapsed.has(id)),
+    [collapsed, collapsedDragId]
+  );
+  const sourceVisibleRows = useMemo(
+    () => (tree ? flattenElementTree(tree, isExpanded).rows : []),
+    [isExpanded, tree]
+  );
+  if (pendingRows && pendingRows.tree !== tree) setPendingRows(null);
+  const visibleRows = pendingRows?.tree === tree ? pendingRows.rows : sourceVisibleRows;
+  const visibleOrder = useMemo(() => visibleRows.map((row) => row.node.id), [visibleRows]);
   const visibleIndex = useMemo(
     () => new Map(visibleOrder.map((id, index) => [id, index])),
     [visibleOrder]
@@ -476,18 +502,74 @@ export function ElementTreePanel({
       targetId: string | number,
       placement: DragSortPlacement
     ) => {
-      const movingIds = new Set<string>();
-      const activeNode = nodeById.get(Number(activeId));
-      const key = (id: string | number) => `${typeof id}:${String(id)}`;
-      const collect = (node: ElementTreeNode) => {
-        movingIds.add(key(node.id));
-        node.children.forEach(collect);
-      };
-      if (activeNode) collect(activeNode);
-      return projectTreeVisibleOrder(order, activeId, targetId, placement, movingIds);
+      if (!tree) return [...order];
+      const sourceIds = new Map(order.map((id) => [String(id), id]));
+      const projection = projectElementTree(
+        tree,
+        Number(activeId),
+        Number(targetId),
+        placement,
+        isExpanded,
+        new Set(order.map(Number))
+      );
+      return projection.order.map((id) => sourceIds.get(String(id)) ?? id);
     },
-    [nodeById]
+    [isExpanded, tree]
   );
+  const hasProjectedTreeMove = useCallback(
+    (activeId: string | number, targetId: string | number, placement: DragSortPlacement) =>
+      Boolean(
+        tree &&
+        projectElementTree(
+          tree,
+          Number(activeId),
+          Number(targetId),
+          placement,
+          isExpanded,
+          new Set(visibleOrder)
+        ).changed
+      ),
+    [isExpanded, tree, visibleOrder]
+  );
+  const isPartOfActiveMove = useCallback(
+    (activeId: string | number, itemId: string | number) => {
+      const active = Number(activeId);
+      const item = Number(itemId);
+      if (active === item) return false;
+      return ancestors?.get(item)?.includes(active) ?? false;
+    },
+    [ancestors]
+  );
+  const handleTreeMove = useCallback(
+    (move: DragSortMove) => {
+      const target = move.targetId;
+      if (!tree || target === undefined || target === move.activeId || !structure?.move) return;
+      const placement = (move.to.placement ?? 'after') as InsertPosition;
+      const projection = projectElementTree(
+        tree,
+        Number(move.activeId),
+        Number(target),
+        placement,
+        isExpanded,
+        new Set(visibleOrder)
+      );
+      setPendingRows({ tree, rows: projection.rows });
+      try {
+        const result = structure.move(Number(move.activeId), Number(target), placement);
+        return result instanceof Promise
+          ? result.catch((error: unknown) => {
+              setPendingRows(null);
+              throw error;
+            })
+          : result;
+      } catch (error) {
+        setPendingRows(null);
+        throw error;
+      }
+    },
+    [isExpanded, structure, tree, visibleOrder]
+  );
+  const treeMoveBusy = structure?.busy ?? false;
   const canTreeMove = useCallback(
     (
       destination: { index: number; group: string | number; placement?: InsertPosition },
@@ -511,21 +593,63 @@ export function ElementTreePanel({
       if (destination.placement !== 'inside' && STRUCTURAL_ELEMENTS.has(target.tag)) {
         return { allowed: false, reason: `Nothing can be placed beside <${target.tag}>.` };
       }
-      if (structure?.busy)
-        return { allowed: false, reason: 'Another element move is in progress.' };
+      if (treeMoveBusy) return { allowed: false, reason: 'Another element move is in progress.' };
       return { allowed: true as const };
     },
-    [ancestors, nodeById, structure?.busy]
+    [ancestors, nodeById, treeMoveBusy]
   );
 
-  const renderNode = (node: ElementTreeNode, depth: number) => {
+  const renderReadOnlyNode = (node: ElementTreeNode, depth: number): ReactNode => {
     const hasChildren = node.children.length > 0;
     const isSelected = node.id === selectedId;
     const isHovered = node.id === hoveredId;
     const isAffected = !isSelected && affectedSet.has(node.id);
     // Collapsed = explicitly collapsed, or deep and never explicitly expanded.
     // The `collapsed` set tracks explicit toggles both ways via presence.
-    const isCollapsed = hasChildren && collapsedState(node.id, depth);
+    const isCollapsed = hasChildren && !isExpanded(node.id, depth);
+    const rowClassName = `ss-tree-row${isSelected ? ' selected' : ''}${
+      isHovered ? ' hovered' : ''
+    }${isAffected ? ' affected' : ''}`;
+    return (
+      <div key={node.id} className="ss-tree-node">
+        <div
+          className={rowClassName}
+          style={{ '--element-tree-depth': depth } as CSSProperties}
+          data-tree-id={node.id}
+          onClick={() => onSelect(node.id)}
+          onMouseEnter={() => onHover(node.id)}
+          onMouseLeave={() => onHover(null)}
+        >
+          {hasChildren ? (
+            <button
+              type="button"
+              className={`ss-tree-chevron${isCollapsed ? '' : ' open'}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggle(node.id);
+              }}
+              aria-label={isCollapsed ? 'Expand' : 'Collapse'}
+            >
+              <ChevronRightIcon size={10} />
+            </button>
+          ) : (
+            <span className="ss-tree-chevron-spacer" />
+          )}
+          <RowLabel node={node} showTagIcons={showTagIcons} />
+        </div>
+        {hasChildren && !isCollapsed && node.children.map((c) => renderReadOnlyNode(c, depth + 1))}
+      </div>
+    );
+  };
+
+  const renderSortableRow = (row: ElementTreeRow, depth: number, activeDragId: number | null) => {
+    const { node } = row;
+    const hasChildren = node.children.length > 0;
+    const isSelected = node.id === selectedId;
+    const isHovered = node.id === hoveredId;
+    const isAffected = !isSelected && affectedSet.has(node.id);
+    const isCollapsed =
+      hasChildren && (node.id === activeDragId || !isExpanded(node.id, row.depth));
     const clipboardSourceNodeId = structure?.clipboardSourceNodeId;
     const pasteDisabled =
       !structure?.hasClipboard ||
@@ -535,121 +659,23 @@ export function ElementTreePanel({
     const rowClassName = `ss-tree-row${isSelected ? ' selected' : ''}${
       isHovered ? ' hovered' : ''
     }${isAffected ? ' affected' : ''}`;
-    const renderedNode = (
-      <div key={node.id} className="ss-tree-node">
-        {structure ? (
-          <ContextMenu>
-            <ContextMenuTrigger
-              asChild
-              onContextMenu={(e) => {
-                onSelect(node.id); // select first, so the canvas shows the target
-                contextTargetRef.current = {
-                  nodeId: node.id,
-                  tag: node.tag,
-                  cls: node.cls,
-                  x: e.clientX,
-                  y: e.clientY,
-                };
-              }}
-            >
-              <div
-                className={rowClassName}
-                style={{ paddingLeft: depth * 14 + 6 }}
-                data-tree-id={node.id}
-                onClick={() => onSelect(node.id)}
-                onMouseEnter={() => onHover(node.id)}
-                onMouseLeave={() => onHover(null)}
-              >
-                {hasChildren ? (
-                  <button
-                    type="button"
-                    className={`ss-tree-chevron${isCollapsed ? '' : ' open'}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggle(node.id);
-                    }}
-                    aria-label={isCollapsed ? 'Expand' : 'Collapse'}
-                  >
-                    <ChevronRightIcon size={10} />
-                  </button>
-                ) : (
-                  <span className="ss-tree-chevron-spacer" />
-                )}
-                <RowLabel node={node} showTagIcons={showTagIcons} />
-              </div>
-            </ContextMenuTrigger>
-            <ContextMenuContent aria-label={`Actions for ${node.tag}`}>
-              <ContextMenuItem
-                onSelect={() => {
-                  const target = contextTargetRef.current;
-                  if (!target || target.nodeId !== node.id) return;
-                  setInsertFor({
-                    nodeId: node.id,
-                    tag: node.tag,
-                    anchor: { left: target.x, top: target.y, bottom: target.y },
-                  });
-                }}
-              >
-                <PlusIcon size={12} />
-                <span>Insert element…</span>
-              </ContextMenuItem>
-              <ContextMenuItem
-                onSelect={() => {
-                  void copyElementId(selectorForNode(node));
-                }}
-              >
-                {elementIdCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-                <span>{elementIdCopied ? 'Copied' : 'Copy ID'}</span>
-              </ContextMenuItem>
-              <ContextMenuItem
-                onSelect={() => {
-                  void copySelector(elementSelector(node.tag, node.cls));
-                }}
-              >
-                <CopyIcon size={12} />
-                <span>Copy selector</span>
-              </ContextMenuItem>
-              <ContextMenuItem
-                onSelect={() => structure.selectAndRun(node.id, structure.duplicate)}
-              >
-                <DuplicateIcon size={12} />
-                <span>Duplicate</span>
-                <ContextMenuShortcut>{kbd('mod', 'D')}</ContextMenuShortcut>
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              <ContextMenuItem onSelect={() => structure.selectAndRun(node.id, structure.cut)}>
-                <CutIcon size={12} />
-                <span>Cut</span>
-                <ContextMenuShortcut>{kbd('mod', 'X')}</ContextMenuShortcut>
-              </ContextMenuItem>
-              <ContextMenuItem onSelect={() => structure.selectAndRun(node.id, structure.copy)}>
-                <CopyIcon size={12} />
-                <span>Copy</span>
-                <ContextMenuShortcut>{kbd('mod', 'C')}</ContextMenuShortcut>
-              </ContextMenuItem>
-              <ContextMenuItem
-                disabled={pasteDisabled}
-                onSelect={() => structure.selectAndRun(node.id, structure.paste)}
-              >
-                <PasteIcon size={12} />
-                <span>Paste</span>
-                <ContextMenuShortcut>{kbd('mod', 'V')}</ContextMenuShortcut>
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              <ContextMenuItem
-                variant="destructive"
-                onSelect={() => structure.selectAndRun(node.id, structure.remove)}
-              >
-                <TrashIcon size={12} />
-                <span>Delete</span>
-                <ContextMenuShortcut>{kbd('⌫')}</ContextMenuShortcut>
-              </ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
-        ) : (
+    const rowContent = (
+      <ContextMenu>
+        <ContextMenuTrigger
+          asChild
+          onContextMenu={(e) => {
+            onSelect(node.id);
+            contextTargetRef.current = {
+              nodeId: node.id,
+              tag: node.tag,
+              cls: node.cls,
+              x: e.clientX,
+              y: e.clientY,
+            };
+          }}
+        >
           <div
             className={rowClassName}
-            style={{ paddingLeft: depth * 14 + 6 }}
             data-tree-id={node.id}
             onClick={() => onSelect(node.id)}
             onMouseEnter={() => onHover(node.id)}
@@ -672,26 +698,84 @@ export function ElementTreePanel({
             )}
             <RowLabel node={node} showTagIcons={showTagIcons} />
           </div>
-        )}
-        {hasChildren && !isCollapsed && node.children.map((c) => renderNode(c, depth + 1))}
-      </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent aria-label={`Actions for ${node.tag}`}>
+          <ContextMenuItem
+            onSelect={() => {
+              const target = contextTargetRef.current;
+              if (!target || target.nodeId !== node.id) return;
+              setInsertFor({
+                nodeId: node.id,
+                tag: node.tag,
+                anchor: { left: target.x, top: target.y, bottom: target.y },
+              });
+            }}
+          >
+            <PlusIcon size={12} />
+            <span>Insert element…</span>
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => void copyElementId(selectorForNode(node))}>
+            {elementIdCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+            <span>{elementIdCopied ? 'Copied' : 'Copy ID'}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => void copySelector(elementSelector(node.tag, node.cls))}>
+            <CopyIcon size={12} />
+            <span>Copy selector</span>
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => structure!.selectAndRun(node.id, structure!.duplicate)}>
+            <DuplicateIcon size={12} />
+            <span>Duplicate</span>
+            <ContextMenuShortcut>{kbd('mod', 'D')}</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => structure!.selectAndRun(node.id, structure!.cut)}>
+            <CutIcon size={12} />
+            <span>Cut</span>
+            <ContextMenuShortcut>{kbd('mod', 'X')}</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => structure!.selectAndRun(node.id, structure!.copy)}>
+            <CopyIcon size={12} />
+            <span>Copy</span>
+            <ContextMenuShortcut>{kbd('mod', 'C')}</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem
+            disabled={pasteDisabled}
+            onSelect={() => structure!.selectAndRun(node.id, structure!.paste)}
+          >
+            <PasteIcon size={12} />
+            <span>Paste</span>
+            <ContextMenuShortcut>{kbd('mod', 'V')}</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            variant="destructive"
+            onSelect={() => structure!.selectAndRun(node.id, structure!.remove)}
+          >
+            <TrashIcon size={12} />
+            <span>Delete</span>
+            <ContextMenuShortcut>{kbd('⌫')}</ContextMenuShortcut>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     );
-    if (!structure) return renderedNode;
     return (
       <DragSortItem
         key={node.id}
         id={node.id}
         group="elements"
         index={visibleIndex.get(node.id) ?? 0}
-        label={`Move ${node.tag} element`}
+        label={`${node.tag} element`}
         activation="item"
         disabled={STRUCTURAL_ELEMENTS.has(node.tag)}
-        collisionPriority={depth}
         showTargetIndicator
-        style={{ '--drag-sort-tree-depth': depth } as CSSProperties}
-        overlay={<TreeDragOverlay node={node} depth={depth} />}
+        style={
+          {
+            '--drag-sort-tree-depth': depth,
+            '--element-tree-depth': depth,
+          } as CSSProperties
+        }
       >
-        {renderedNode}
+        {rowContent}
       </DragSortItem>
     );
   };
@@ -699,6 +783,19 @@ export function ElementTreePanel({
   const sigKey = selectedSignature
     ? `${selectedSignature.tagName}|${selectedSignature.className}|${(selectedSignature.text ?? '').slice(0, 60)}`
     : '';
+
+  const tagToggle = (
+    <ToggleButton
+      variant="ghost"
+      size="compact"
+      className="button--icon-only ss-tree-panel__tag-toggle"
+      onClick={toggleShowTagIcons}
+      title={showTagIcons ? 'Show tag names' : 'Show tag icons'}
+      aria-label={showTagIcons ? 'Show tag names' : 'Show tag icons'}
+      pressed={showTagIcons}
+      leftIcon={<ElementsIcon size={14} />}
+    />
+  );
 
   return (
     <div
@@ -737,6 +834,7 @@ export function ElementTreePanel({
               />
             )}
           </div>
+          <div className="ss-tree-panel__controls">{tagToggle}</div>
           <TabsPanel value={visibleView} className="ss-tree-panel__active-view">
             {visibleView === 'visual' ? (
               <div className="ss-tree-panel__body" ref={bodyRef} onMouseLeave={() => onHover(null)}>
@@ -747,30 +845,19 @@ export function ElementTreePanel({
                     canMove={canTreeMove}
                     onMove={handleTreeMove}
                     placementForTarget={treePlacementForTarget}
+                    insideHoldDelayMs={TREE_INSIDE_HOLD_DELAY_MS}
+                    insideHoldFlashDurationMs={TREE_INSIDE_HOLD_FLASH_DURATION_MS}
                     projectOrder={projectTreeOrder}
-                    isPartOfActiveMove={(activeId, itemId) =>
-                      ancestors?.get(Number(itemId))?.includes(Number(activeId)) ?? false
-                    }
+                    hasProjectedMove={hasProjectedTreeMove}
+                    isPartOfActiveMove={isPartOfActiveMove}
                   >
-                    <TreeDragLifecycle
+                    <TreeSortableRows
                       root={tree}
-                      isCollapsed={(id) => {
-                        const node = nodeById.get(id);
-                        const depth = ancestors?.get(id)?.length ?? 0;
-                        return Boolean(node?.children.length && collapsedState(id, depth));
-                      }}
-                      onExpand={(id) =>
-                        setCollapsed((prev) => {
-                          const next = new Set(prev);
-                          const depth = ancestors?.get(id)?.length ?? 0;
-                          if (depth < AUTO_EXPAND_DEPTH) next.delete(id);
-                          else next.add(id);
-                          return next;
-                        })
-                      }
-                    >
-                      {renderNode(tree, 0)}
-                    </TreeDragLifecycle>
+                      rows={visibleRows}
+                      isExpanded={isExpanded}
+                      renderRow={renderSortableRow}
+                      onDragActiveChange={setCollapsedDragId}
+                    />
                   </DragSortScope>
                 ) : (
                   <div className="ss-tree-panel__empty">Loading elements…</div>
@@ -830,9 +917,10 @@ export function ElementTreePanel({
               />
             )}
           </div>
+          <div className="ss-tree-panel__controls">{tagToggle}</div>
           <div className="ss-tree-panel__body" ref={bodyRef} onMouseLeave={() => onHover(null)}>
             {tree ? (
-              renderNode(tree, 0)
+              renderReadOnlyNode(tree, 0)
             ) : (
               <div className="ss-tree-panel__empty">Loading elements…</div>
             )}
@@ -844,18 +932,6 @@ export function ElementTreePanel({
           </div>
         </>
       )}
-      <div className="ss-tree-panel__footer">
-        <ToggleButton
-          variant="ghost"
-          size="compact"
-          className="button--icon-only ss-tree-panel__tag-toggle"
-          onClick={toggleShowTagIcons}
-          title={showTagIcons ? 'Show tag names' : 'Show tag icons'}
-          aria-label={showTagIcons ? 'Show tag names' : 'Show tag icons'}
-          pressed={showTagIcons}
-          leftIcon={<ElementsIcon size={14} />}
-        />
-      </div>
       {structure && (
         <>
           <InsertMenu

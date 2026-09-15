@@ -560,6 +560,109 @@ describe('useElementStructure', () => {
     expect(posts(iframeRef).some((p) => p.type === 'ss:requestTree')).toBe(true);
   });
 
+  it('commits an iframe-projected canvas move through the guarded move path', async () => {
+    const { iframeRef } = setup();
+    const sourceWindow = iframeRef.current!.contentWindow as unknown as MessageEventSource;
+    const sourceSignature = { ...SIG, className: 'source', tagName: 'article', text: 'Source' };
+    const targetSignature = { ...SIG, className: 'target', tagName: 'section', text: 'Target' };
+
+    await dispatch(
+      {
+        type: 'ss:canvasMove',
+        moveId: 'canvas-1',
+        source: { signature: sourceSignature },
+        target: { signature: targetSignature },
+        position: 'after',
+      },
+      sourceWindow
+    );
+
+    expect(resolveElementHtml as Fn).toHaveBeenNthCalledWith(1, '/proj', sourceSignature);
+    expect(resolveElementHtml as Fn).toHaveBeenNthCalledWith(2, '/proj', targetSignature);
+    expect(moveElement as Fn).toHaveBeenCalledWith(
+      '/proj',
+      sourceSignature,
+      targetSignature,
+      '<section class="hero"><p class="child">Child</p></section>',
+      '<section class="hero"><p class="child">Child</p></section>',
+      'after'
+    );
+    expect(posts(iframeRef)).toContainEqual({
+      type: 'ss:canvasMoveResult',
+      moveId: 'canvas-1',
+      ok: true,
+    });
+    expect(posts(iframeRef).some((post) => post.type === 'ss:resolveDragNodes')).toBe(false);
+  });
+
+  it('passes exact source proofs so repeated class literals move only the dragged rows', async () => {
+    const { result, iframeRef } = setup();
+    const source = iframeRef.current!.contentWindow as unknown as MessageEventSource;
+    const sourceSignature = { ...SIG, className: 'card', tagName: 'div', text: 'Second' };
+    const targetSignature = { ...SIG, className: 'target', tagName: 'section', text: 'Target' };
+    const sourceMarkup = '<div className="card">Second</div>';
+    const targetMarkup = '<section className="target">Target</section>';
+    const sourceProof = {
+      file: 'src/pages/index.tsx',
+      line: 8,
+      html: sourceMarkup,
+      sourceStart: 120,
+      sourceEnd: 120 + sourceMarkup.length,
+      sourceHash: 'hash-1',
+    };
+    const targetProof = {
+      file: 'src/pages/index.tsx',
+      line: 9,
+      html: targetMarkup,
+      sourceStart: 160,
+      sourceEnd: 160 + targetMarkup.length,
+      sourceHash: 'hash-1',
+    };
+    (resolveElementHtml as Fn)
+      .mockResolvedValueOnce(sourceProof)
+      .mockResolvedValueOnce(targetProof);
+    let promise!: Promise<void>;
+    act(() => {
+      promise = result.current.move(7, 8, 'after');
+    });
+    const request = posts(iframeRef).find((p) => p.type === 'ss:resolveDragNodes');
+    await dispatch(
+      {
+        type: 'ss:resolvedDragNodes',
+        requestId: request?.requestId,
+        source: { signature: sourceSignature },
+        target: { signature: targetSignature },
+      },
+      source
+    );
+    await act(async () => {
+      await promise;
+    });
+
+    expect(moveElement as Fn).toHaveBeenCalledWith(
+      '/proj',
+      sourceSignature,
+      targetSignature,
+      sourceMarkup,
+      targetMarkup,
+      'after',
+      {
+        file: sourceProof.file,
+        start: sourceProof.sourceStart,
+        end: sourceProof.sourceEnd,
+        expectedHash: sourceProof.sourceHash,
+        expectedHtml: sourceMarkup,
+      },
+      {
+        file: targetProof.file,
+        start: targetProof.sourceStart,
+        end: targetProof.sourceEnd,
+        expectedHash: targetProof.sourceHash,
+        expectedHtml: targetMarkup,
+      }
+    );
+  });
+
   it('reselects a moved element using its post-move target ancestry', async () => {
     const { result, iframeRef } = setup();
     const source = iframeRef.current!.contentWindow as unknown as MessageEventSource;

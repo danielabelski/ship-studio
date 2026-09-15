@@ -24,6 +24,7 @@ use crate::errors::CommandError;
 use crate::types::ProjectType;
 use crate::utils::{classify_fs_error, validate_project_path, validate_workspace_path};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// Source file extensions we index for class literals, by project shape. `.html`
@@ -42,6 +43,12 @@ fn source_exts(root: &Path) -> &'static [&'static str] {
         ProjectType::Statichtml => SOURCE_EXTS_STATIC,
         _ => SOURCE_EXTS_FRAMEWORK,
     }
+}
+
+/// Hash exact source bytes for the optimistic-concurrency guards shared by
+/// element resolution and structural edits.
+pub(crate) fn content_hash(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
 }
 
 /// Class-bearing attribute names to scan, by file extension. React/JSX
@@ -3443,6 +3450,19 @@ pub struct ElementHtml {
     pub file: String,
     pub line: usize,
     pub html: String,
+    /// Exact UTF-8 byte range and complete-file hash for the resolved instance.
+    /// Structural moves use this proof to preserve the selected DOM instance
+    /// when its class literal is shared by several authored elements.
+    #[serde(rename = "sourceStart")]
+    pub source_start: usize,
+    #[serde(rename = "sourceEnd")]
+    pub source_end: usize,
+    #[serde(rename = "sourceHash")]
+    pub source_hash: String,
+    #[serde(rename = "sourceLine")]
+    pub source_line: usize,
+    #[serde(rename = "sourceColumn")]
+    pub source_column: usize,
     /// Present when the element's class string resolves to several identical
     /// source spots whose markup is byte-identical: every candidate location.
     /// Edits write to all of them by default; a `location` argument targets one.
@@ -3715,6 +3735,11 @@ pub fn resolve_element_html(
         file: first.file.clone(),
         line: first.line,
         html: first.src[first.start..first.end].to_string(),
+        source_start: first.start,
+        source_end: first.end,
+        source_hash: content_hash(first.src.as_bytes()),
+        source_line: line_col(&first.src, first.start).0,
+        source_column: line_col(&first.src, first.start).1,
         locations,
     })
 }

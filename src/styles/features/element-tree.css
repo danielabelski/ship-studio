@@ -5,6 +5,7 @@
   grid-area: 1 / 1 / -1 / 2;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   min-height: 0;
   min-width: 0;
   background: var(--surface-panel);
@@ -120,13 +121,12 @@
   overflow: hidden;
 }
 
-.ss-tree-panel__footer {
+.ss-tree-panel__controls {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   flex-shrink: 0;
-  padding: var(--spacing-xs) var(--spacing-md);
-  border-top: var(--border-width-default) solid var(--border-subtle);
+  padding: var(--spacing-sm);
   background: var(--surface-panel);
 }
 
@@ -198,6 +198,7 @@
 }
 
 .ss-tree-row {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -206,12 +207,26 @@
   box-sizing: border-box;
   height: var(--size-control-medium);
   margin-inline: 0;
-  padding-right: var(--spacing-sm);
+  padding-inline-start: calc(
+    var(--element-tree-depth, 0) * var(--size-icon-sm) + var(--spacing-xs)
+  );
+  padding-inline-end: var(--spacing-sm);
   border-radius: var(--radius-sm);
-  cursor: pointer;
+  cursor: default;
   white-space: nowrap;
   overflow: hidden;
   color: var(--text-secondary);
+  transition:
+    padding-inline-start var(--drag-sort-reorder-transition),
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+/* Keep the row neutral until the drag manager has crossed the activation
+   threshold. Pointer-down alone is still an ordinary click. */
+.drag-sort__item[data-drag-sort-activation='item']:not(.is-disabled)[data-drag-sort-dragging='true']
+  > .ss-tree-row {
+  cursor: grabbing;
 }
 
 .ss-tree-row:hover,
@@ -243,24 +258,32 @@
 
 /* Tree drop zones are deliberately richer than the ordinary sortable gap:
    before/after use the shared edge marker, while a valid inside target gets a
-   contained highlight so nesting is legible without changing source state. */
-.drag-sort__item[data-drag-sort-target-indicator='true'].is-target[data-drag-sort-placement='inside']
-  > .ss-tree-node
-  > .ss-tree-row {
+   contained highlight so nesting is legible without changing source state.
+   The transition is state-based so changing direction mid-drag can reverse
+   cleanly. */
+.drag-sort__item.is-target[data-drag-sort-placement='inside'] > .ss-tree-row,
+.drag-sort__target.is-target[data-drag-sort-placement='inside'] {
   background: var(--surface-selected);
-  box-shadow: inset 0 0 0 var(--focus-ring-width) var(--accent-focus);
+  box-shadow: inset 0 0 0 var(--border-width-default) var(--accent-focus);
 }
 
-.drag-sort__item[data-drag-sort-target-indicator='true'].is-target[data-drag-sort-invalid='true']
-  > .ss-tree-node
-  > .ss-tree-row {
+.drag-sort__item.is-target[data-drag-sort-invalid='true'] > .ss-tree-row,
+.drag-sort__target.is-target[data-drag-sort-invalid='true'] {
   background: var(--surface-control-hover);
   color: var(--text-muted);
+  box-shadow: none;
+}
+
+.drag-sort__item[data-drag-sort-placement='inside']::after,
+.drag-sort__target[data-drag-sort-placement='inside']::after {
+  content: none;
 }
 
 .drag-sort__item[data-drag-sort-target-indicator='true'].is-target[data-drag-sort-placement='before']::after,
 .drag-sort__item[data-drag-sort-target-indicator='true'].is-target[data-drag-sort-placement='after']::after {
-  inset-inline-start: calc(var(--drag-sort-tree-depth, 0) * var(--spacing-md));
+  inset-inline-start: calc(
+    var(--drag-sort-tree-depth, 0) * var(--size-icon-sm) + var(--spacing-xs)
+  );
   inset-inline-end: var(--spacing-xs);
 }
 
@@ -322,4 +345,10 @@
 .ss-tree-panel__note {
   padding: var(--spacing-md);
   color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ss-tree-row {
+    transition: none;
+  }
 }

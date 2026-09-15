@@ -6,6 +6,8 @@
   --size-control-large: 36px;
   --size-control-medium: 24px;
   --size-control-compact: 20px;
+  --workspace-layout-menu-width: 360px;
+  --workspace-layout-menu-row-height: 40px;
   --size-boot-progress: 180px;
 
   --size-titlebar-project-path: 30ch;
@@ -284,16 +286,23 @@
   /* Header popovers must paint above preview error/status overlays. */
   --z-workspace-header: 200;
   --z-preview-fullscreen: 900;
+  /* Dock drop indicators sit above pinned/fixed workspace surfaces, including
+     the fullscreen rail, but below floating panels. */
+  --z-dock-drop-indicator: 940;
   --z-floating-panel: 950;
   /* The overlay must paint above portaled menus while remaining below
      notifications and app-level surfaces. */
   --z-drag-sort-overlay: 1110;
+  /* The projected destination stays below the dragged overlay so its full
+     slot remains visible without covering the item being moved. */
+  --z-drag-sort-placeholder: 1109;
 
   /* Drag-sort owns the interaction surface but follows the global visual
      language. The transition includes the exact settle easing from the
      frozen drag-sort contract. */
   --drag-sort-overlay-shadow: var(--shadow-md);
   --drag-sort-overlay-opacity: 1;
+  --drag-sort-placeholder-opacity: 0.5;
   --drag-sort-source-opacity: 0;
   --drag-sort-overlay-border-width: var(--stroke-1);
   --drag-sort-target-indicator: var(--accent-active);

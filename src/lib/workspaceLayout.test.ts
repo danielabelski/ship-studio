@@ -2,269 +2,379 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_LAYOUT,
   LAYOUT_PRESETS,
+  LAYOUT_VERSION,
   PANEL_IDS,
   PANEL_META,
   PREVIEW,
+  columnWidthBounds,
   dockedPanels,
+  findPanelPlacement,
   isFloating,
   layoutFromLegacyPreferences,
   layoutsEqual,
-  movePanel,
+  moveColumn,
+  moveColumnToGap,
+  movePanelToColumnGap,
   normalizeLayout,
-  nudgePanel,
+  reorderPanelInStack,
+  setAdjacentPanelWeights,
+  setColumnWidth,
   setFloating,
-  setPanelWidth,
   sideOf,
+  stackPanel,
+  unstackPanel,
+  visibleColumns,
   widthOf,
+  type PanelId,
   type WorkspaceLayout,
 } from './workspaceLayout';
 
-/**
- * A layout exactly as written, without repair.
- *
- * `normalizeLayout` deliberately fills in every panel it knows about, so using
- * it to build fixtures would bury the three-item order a test is about under
- * three more panels it does not care about.
- */
-const layout = (partial: Partial<WorkspaceLayout>): WorkspaceLayout => ({
-  order: partial.order ?? [...DEFAULT_LAYOUT.order],
-  floating: partial.floating ?? [],
-  widths: partial.widths ?? {},
+const panelColumn = (...panels: PanelId[]) => ({
+  kind: 'panels' as const,
+  panels: panels.map((panel) => ({ panel, weight: 1 / panels.length })),
+});
+
+const layout = (
+  columns: WorkspaceLayout['columns'],
+  floating: PanelId[] = []
+): WorkspaceLayout => ({
+  version: LAYOUT_VERSION,
+  columns,
+  floating,
 });
 
 describe('normalizeLayout', () => {
-  it('gives an empty preference the arrangement Ship Studio has always had', () => {
-    expect(normalizeLayout(null)).toEqual(normalizeLayout(DEFAULT_LAYOUT));
-    expect(normalizeLayout(undefined).order).toEqual(DEFAULT_LAYOUT.order);
+  it('returns a complete v2 layout for an empty preference', () => {
+    const result = normalizeLayout(null);
+    expect(result.version).toBe(LAYOUT_VERSION);
+    expect(result).toEqual(normalizeLayout(DEFAULT_LAYOUT));
+    expect(result.columns.filter((column) => column.kind === 'preview')).toHaveLength(1);
   });
 
-  it('keeps every panel exactly once, whatever the input claimed', () => {
-    // A duplicate is not a second copy of a panel — there is only one Agent
-    // panel — so the rail can only honour the first mention.
+  it('migrates the old flat order/floating/widths shape to singleton columns', () => {
     const result = normalizeLayout({
-      order: ['agent', 'agent', PREVIEW, 'agent'],
-      floating: [],
-      widths: {},
+      order: ['editor', 'agent', PREVIEW, 'navigator', 'variables', 'team'],
+      floating: ['team'],
+      widths: { agent: 600, navigator: 5000 },
     });
-    expect(result.order.filter((item) => item === 'agent')).toHaveLength(1);
-    expect(result.order.filter((item) => item === PREVIEW)).toHaveLength(1);
-    expect(new Set(result.order).size).toBe(result.order.length);
+    expect(result.version).toBe(2);
+    expect(
+      result.columns.map((column) => (column.kind === 'preview' ? PREVIEW : column.panels[0].panel))
+    ).toEqual(['editor', 'agent', PREVIEW, 'navigator', 'variables', 'team']);
+    expect(findPanelPlacement(result, 'agent')?.column.width).toBe(600);
+    expect(findPanelPlacement(result, 'navigator')?.column.width).toBe(
+      PANEL_META.navigator.maxWidth
+    );
+    expect(isFloating(result, 'team')).toBe(true);
   });
 
-  it('drops ids it does not recognise instead of rendering an empty column for them', () => {
+  it('repairs unknown ids, duplicates, empty columns, bad weights and duplicate previews', () => {
     const result = normalizeLayout({
-      order: ['agent', 'ghost-panel', PREVIEW],
-      floating: ['ghost-panel'],
-      widths: { 'ghost-panel': 300 },
+      version: 2,
+      columns: [
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'agent', weight: 0 },
+            { panel: 'ghost', weight: 3 },
+          ],
+        },
+        { kind: 'panels', panels: [] },
+        { kind: 'preview' },
+        { kind: 'preview' },
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'agent', weight: 3 },
+            { panel: 'navigator', weight: 'bad' },
+          ],
+        },
+      ],
+      floating: ['ghost', 'agent', 'agent'],
     } as unknown);
-    expect(result.order).not.toContain('ghost-panel');
-    expect(result.floating).not.toContain('ghost-panel');
-    expect(result.widths).not.toHaveProperty('ghost-panel');
+    expect(result.columns.filter((column) => column.kind === 'preview')).toHaveLength(1);
+    expect(
+      result.columns.flatMap((column) =>
+        column.kind === 'preview' ? [] : column.panels.map((item) => item.panel)
+      )
+    ).toHaveLength(PANEL_IDS.length);
+    expect(new Set(dockedPanels(result)).size).toBe(PANEL_IDS.length - 1);
+    const agent = findPanelPlacement(result, 'agent')!;
+    expect(agent.placement.weight).toBe(1);
+    expect(result.floating).toEqual(['agent']);
   });
 
-  it('places a panel the saved layout has never seen where the default puts it', () => {
-    // The upgrade case: a layout written before `variables` existed must not
-    // strand it at an end, on the wrong side of the preview.
+  it('inserts missing panels at their default side without disturbing an existing stack', () => {
     const result = normalizeLayout({
-      order: ['team', 'agent', 'navigator', PREVIEW, 'editor'],
+      version: 2,
+      columns: [
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'agent', weight: 1 },
+            { panel: 'navigator', weight: 1 },
+          ],
+        },
+        { kind: 'preview' },
+      ],
       floating: [],
-      widths: {},
     });
-    expect(result.order).toContain('variables');
-    expect(result.order.indexOf('variables')).toBeLessThan(result.order.indexOf(PREVIEW));
-    expect(result.order.indexOf('variables')).toBeLessThan(result.order.indexOf('navigator'));
-  });
-
-  it('restores a missing preview to the middle rather than to an end', () => {
-    // Dropping it at an end would silently move every panel to one side.
-    const result = normalizeLayout({ order: ['agent', 'navigator', 'editor'], floating: [] });
-    const at = result.order.indexOf(PREVIEW);
-    expect(at).toBeGreaterThan(0);
-    expect(at).toBeLessThan(result.order.length - 1);
-  });
-
-  it('clamps a width to what the panel can actually be used at', () => {
-    const result = normalizeLayout({ order: DEFAULT_LAYOUT.order, widths: { navigator: 5000 } });
-    expect(result.widths.navigator).toBe(PANEL_META.navigator.maxWidth);
-
-    const narrow = normalizeLayout({ order: DEFAULT_LAYOUT.order, widths: { navigator: 1 } });
-    expect(narrow.widths.navigator).toBe(PANEL_META.navigator.minWidth);
-  });
-
-  it('ignores a width that is not a usable number', () => {
-    const result = normalizeLayout({
-      widths: { navigator: 'wide', variables: NaN, editor: -10 },
-    } as unknown);
-    expect(result.widths.navigator).toBeUndefined();
-    expect(result.widths.variables).toBeUndefined();
-    expect(result.widths.editor).toBeUndefined();
-  });
-
-  it('survives shapes no version of this app ever wrote', () => {
-    for (const junk of [42, 'layout', [], { order: 'agent' }, { floating: 3 }]) {
-      const result = normalizeLayout(junk as unknown);
-      expect(result.order).toContain(PREVIEW);
-      expect(result.order).toHaveLength(PANEL_IDS.length + 1);
-    }
+    expect(
+      result.columns.find(
+        (column) => column.kind === 'panels' && column.panels.some((item) => item.panel === 'agent')
+      )
+    ).toMatchObject({
+      panels: [{ panel: 'agent' }, { panel: 'navigator' }],
+    });
+    expect(sideOf(result, 'variables')).toBe('left');
+    expect(sideOf(result, 'editor')).toBe('right');
   });
 });
 
-describe('sideOf', () => {
-  it('reads the side off the one order, so the two can never disagree', () => {
-    const l = layout({ order: ['agent', PREVIEW, 'editor'] });
-    expect(sideOf(l, 'agent')).toBe('left');
-    expect(sideOf(l, 'editor')).toBe('right');
+describe('placement helpers', () => {
+  it('finds placements and reads side from the preview column', () => {
+    const result = layout([
+      panelColumn('agent', 'navigator'),
+      { kind: 'preview' },
+      panelColumn('editor'),
+    ]);
+    expect(findPanelPlacement(result, 'navigator')).toMatchObject({
+      columnIndex: 0,
+      panelIndex: 1,
+    });
+    expect(sideOf(result, 'agent')).toBe('left');
+    expect(sideOf(result, 'editor')).toBe('right');
+    expect(dockedPanels(result)).toEqual(['agent', 'navigator', 'editor']);
+  });
+
+  it('projects visible docked columns without losing floating placement', () => {
+    const result = layout(
+      [panelColumn('agent', 'navigator'), { kind: 'preview' }, panelColumn('editor')],
+      ['navigator']
+    );
+    expect(
+      visibleColumns(result).map((column) =>
+        column.kind === 'preview' ? PREVIEW : column.panels.map((item) => item.panel)
+      )
+    ).toEqual([['agent'], PREVIEW, ['editor']]);
+    expect(findPanelPlacement(result, 'navigator')?.columnIndex).toBe(0);
+    expect(dockedPanels(result)).toEqual(['agent', 'editor']);
   });
 });
 
-describe('movePanel', () => {
-  it('moves a panel to the right of the preview', () => {
-    const before = layout({ order: ['agent', PREVIEW, 'editor'] });
-    const after = movePanel(before, 'agent', before.order.length);
-    expect(sideOf(after, 'agent')).toBe('right');
-    expect(after.order.indexOf(PREVIEW)).toBe(0);
+describe('stacking and column movement', () => {
+  it('stacks before/after a target and docks the moved panel', () => {
+    const before = layout(
+      [panelColumn('agent'), { kind: 'preview' }, panelColumn('navigator', 'editor')],
+      ['agent']
+    );
+    const after = stackPanel(before, 'agent', 'navigator', 'before');
+    const column = after.columns[1];
+    expect(column).toMatchObject({
+      kind: 'panels',
+      panels: [{ panel: 'agent' }, { panel: 'navigator' }, { panel: 'editor' }],
+    });
+    expect(isFloating(after, 'agent')).toBe(false);
+    expect(after.columns).toHaveLength(2);
+    expect(
+      after.columns[1].kind === 'panels' && after.columns[1].panels.map((item) => item.weight)
+    ).toEqual([1 / 3, 1 / 3, 1 / 3]);
   });
 
-  it('treats the target as a gap in the current order, not in the order minus the panel', () => {
-    // Dragging left-to-right past one neighbour must land after that neighbour.
-    // Removing first and then splicing at the raw index lands *before* it, which
-    // is the classic off-by-one that makes a drag feel like it did nothing.
-    const before = layout({ order: ['agent', 'navigator', PREVIEW, 'editor'] });
-    const after = movePanel(before, 'agent', 2);
-    expect(after.order).toEqual(['navigator', 'agent', PREVIEW, 'editor']);
+  it('docks a floating panel when it is stacked into its remembered column', () => {
+    const before = layout(
+      [
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'agent', weight: 0.5 },
+            { panel: 'navigator', weight: 0.5 },
+          ],
+        },
+        { kind: 'preview' },
+      ],
+      ['navigator']
+    );
+    const after = stackPanel(before, 'navigator', 'agent', 'before');
+    expect(isFloating(after, 'navigator')).toBe(false);
+    expect(after.columns[0]).toMatchObject({
+      panels: [{ panel: 'navigator' }, { panel: 'agent' }],
+    });
   });
 
-  it('is a no-op when dropped back where it already was', () => {
-    const before = layout({ order: ['agent', 'navigator', PREVIEW, 'editor'] });
-    expect(movePanel(before, 'navigator', 1).order).toEqual(before.order);
-    expect(movePanel(before, 'navigator', 2).order).toEqual(before.order);
+  it('moves a panel to a column gap, preserving its source width', () => {
+    const before = layout([
+      { ...panelColumn('agent'), width: 500 },
+      panelColumn('navigator'),
+      { kind: 'preview' },
+    ]);
+    const after = movePanelToColumnGap(before, 'agent', 3);
+    expect(
+      after.columns.map((column) => (column.kind === 'preview' ? PREVIEW : column.panels[0].panel))
+    ).toEqual(['navigator', PREVIEW, 'agent']);
+    expect(findPanelPlacement(after, 'agent')?.column.width).toBe(500);
   });
 
-  it('docks a floating panel, because dropping it in the rail is asking for it there', () => {
-    const before = layout({ order: ['agent', PREVIEW, 'editor'], floating: ['editor'] });
-    const after = movePanel(before, 'editor', 0);
-    expect(isFloating(after, 'editor')).toBe(false);
-    expect(after.order[0]).toBe('editor');
+  it('reorders within a stack while preserving the panel ratios', () => {
+    const before = layout([
+      {
+        kind: 'panels',
+        panels: [
+          { panel: 'agent', weight: 0.2 },
+          { panel: 'navigator', weight: 0.3 },
+          { panel: 'editor', weight: 0.5 },
+        ],
+      },
+      { kind: 'preview' },
+    ]);
+    const after = reorderPanelInStack(before, 'editor', 0);
+    expect(after.columns[0]).toMatchObject({
+      panels: [{ panel: 'editor' }, { panel: 'agent' }, { panel: 'navigator' }],
+    });
+    expect(
+      after.columns[0].kind === 'panels' && after.columns[0].panels.map((item) => item.weight)
+    ).toEqual([0.5, 0.2, 0.3]);
   });
 
-  it('clamps a target beyond either end instead of losing the panel', () => {
-    const before = layout({ order: ['agent', PREVIEW, 'editor'] });
-    expect(movePanel(before, 'editor', -5).order[0]).toBe('editor');
-    expect(movePanel(before, 'agent', 99).order[before.order.length - 1]).toBe('agent');
+  it('unstack creates a singleton column and inherits the source width', () => {
+    const before = layout([
+      {
+        kind: 'panels',
+        panels: [
+          { panel: 'agent', weight: 0.5 },
+          { panel: 'navigator', weight: 0.5 },
+        ],
+        width: 400,
+      },
+      { kind: 'preview' },
+    ]);
+    const after = unstackPanel(before, 'navigator', 'before');
+    expect(after.columns[1]).toMatchObject({ panels: [{ panel: 'agent' }] });
+    expect(after.columns[1].kind === 'panels' && after.columns[1].width).toBe(400);
+    expect(after.columns[0]).toMatchObject({ panels: [{ panel: 'navigator' }], width: 400 });
   });
 });
 
-describe('nudgePanel', () => {
-  it('swaps with the neighbour in that direction', () => {
-    const before = layout({ order: ['agent', 'navigator', PREVIEW] });
-    expect(nudgePanel(before, 'navigator', -1).order).toEqual(['navigator', 'agent', PREVIEW]);
-    expect(nudgePanel(before, 'navigator', 1).order).toEqual(['agent', PREVIEW, 'navigator']);
+describe('widths and vertical ratios', () => {
+  it('clamps a stack width to the intersection of its panel limits', () => {
+    const result = layout([panelColumn('agent', 'navigator'), { kind: 'preview' }]);
+    expect(
+      columnWidthBounds(
+        result.columns[0] as Extract<WorkspaceLayout['columns'][number], { kind: 'panels' }>
+      )
+    ).toEqual({
+      minWidth: PANEL_META.agent.minWidth,
+      maxWidth: PANEL_META.navigator.maxWidth,
+      defaultWidth: PANEL_META.agent.defaultWidth,
+    });
+    const resized = setColumnWidth(result, 0, 1000);
+    expect(widthOf(resized, 'agent')).toBe(PANEL_META.navigator.maxWidth);
   });
 
-  it('stops at the ends', () => {
-    const before = layout({ order: ['agent', PREVIEW, 'editor'] });
-    expect(nudgePanel(before, 'agent', -1).order).toEqual(before.order);
-    expect(nudgePanel(before, 'editor', 1).order).toEqual(before.order);
+  it('changes only adjacent shares in a three-panel stack', () => {
+    const before = layout([
+      {
+        kind: 'panels',
+        panels: [
+          { panel: 'agent', weight: 0.3 },
+          { panel: 'navigator', weight: 0.3 },
+          { panel: 'editor', weight: 0.4 },
+        ],
+      },
+      { kind: 'preview' },
+    ]);
+    const after = setAdjacentPanelWeights(before, 0, 'agent', 'navigator', 0.2, 0.8);
+    expect(
+      after.columns[0].kind === 'panels' && after.columns[0].panels.map((item) => item.weight)
+    ).toEqual([0.12, 0.48, 0.4]);
   });
 });
 
-describe('setFloating', () => {
-  it('keeps the panel in the rail order so re-docking returns it to its slot', () => {
-    // This is the whole reason floating is reversible. Removing it from `order`
-    // would make "dock it again" land the panel at an end.
-    const before = layout({ order: ['agent', 'navigator', PREVIEW, 'editor'] });
+describe('floating, equality and presets', () => {
+  it('moves a whole column within its side without moving Preview', () => {
+    const before = layout([
+      panelColumn('agent'),
+      panelColumn('navigator'),
+      { kind: 'preview' },
+      panelColumn('editor'),
+      panelColumn('team'),
+    ]);
+
+    const after = moveColumn(before, 0, 1, 'after');
+    expect(
+      after.columns.map((column) => (column.kind === 'preview' ? PREVIEW : column.panels[0]?.panel))
+    ).toEqual(['navigator', 'agent', PREVIEW, 'editor', 'team']);
+    expect(moveColumn(after, 0, 2, 'after')).toEqual(after);
+  });
+
+  it('moves a whole column across Preview without splitting its stack', () => {
+    const before = layout([
+      panelColumn('agent', 'navigator'),
+      { kind: 'preview' },
+      panelColumn('editor', 'team'),
+    ]);
+
+    const after = moveColumn(before, 0, 2, 'after');
+
+    expect(
+      after.columns.map((column) =>
+        column.kind === 'preview' ? PREVIEW : column.panels.map((item) => item.panel)
+      )
+    ).toEqual([PREVIEW, ['editor', 'team'], ['agent', 'navigator']]);
+  });
+
+  it('moves a whole column to an empty side gap without splitting its stack', () => {
+    const before = layout([
+      panelColumn('agent', 'navigator'),
+      { kind: 'preview' },
+      panelColumn('editor', 'team'),
+    ]);
+
+    const after = moveColumnToGap(before, 0, 3);
+
+    expect(
+      after.columns.map((column) =>
+        column.kind === 'preview' ? PREVIEW : column.panels.map((item) => item.panel)
+      )
+    ).toEqual([PREVIEW, ['editor', 'team'], ['agent', 'navigator']]);
+  });
+
+  it('keeps a floating panel in its placement for reversible docking', () => {
+    const before = layout([panelColumn('agent', 'navigator'), { kind: 'preview' }]);
     const floated = setFloating(before, 'navigator', true);
-    expect(floated.order).toEqual(before.order);
-    expect(dockedPanels(floated)).not.toContain('navigator');
-
-    const redocked = setFloating(floated, 'navigator', false);
-    expect(redocked.order.indexOf('navigator')).toBe(1);
-    expect(dockedPanels(redocked)).toContain('navigator');
+    expect(findPanelPlacement(floated, 'navigator')?.panelIndex).toBe(1);
+    expect(setFloating(floated, 'navigator', false).columns).toEqual(before.columns);
   });
 
-  it('is idempotent', () => {
-    const l = layout({ order: DEFAULT_LAYOUT.order, floating: ['team'] });
-    expect(setFloating(l, 'team', true)).toBe(l);
-    expect(setFloating(l, 'agent', false)).toBe(l);
-  });
-});
-
-describe('widths', () => {
-  it('falls back to the panel default until somebody drags an edge', () => {
-    const l = layout({ order: DEFAULT_LAYOUT.order });
-    expect(widthOf(l, 'navigator')).toBe(PANEL_META.navigator.defaultWidth);
-    expect(widthOf(l, 'navigator', 420)).toBe(420);
-    expect(widthOf(setPanelWidth(l, 'navigator', 300), 'navigator', 420)).toBe(300);
+  it('compares columns, ratios and floating membership', () => {
+    const before = normalizeLayout(DEFAULT_LAYOUT);
+    expect(layoutsEqual(before, normalizeLayout(JSON.parse(JSON.stringify(before))))).toBe(true);
+    expect(layoutsEqual(before, stackPanel(before, 'agent', 'navigator', 'after'))).toBe(false);
   });
 
-  it('clamps on write as well as on read', () => {
-    const l = layout({ order: DEFAULT_LAYOUT.order });
-    expect(setPanelWidth(l, 'editor', 10_000).widths.editor).toBe(PANEL_META.editor.maxWidth);
+  it('includes an explicit Agent + Elements stacked preset', () => {
+    const preset = LAYOUT_PRESETS.find((item) => item.id === 'stacked')!;
+    const stack = preset.layout.columns.find(
+      (column) => column.kind === 'panels' && column.panels.some((item) => item.panel === 'agent')
+    );
+    expect(stack).toMatchObject({ panels: [{ panel: 'agent' }, { panel: 'navigator' }] });
+    expect(preset.layout.version).toBe(LAYOUT_VERSION);
   });
 });
 
-describe('layoutsEqual', () => {
-  it('ignores the order floating was recorded in', () => {
-    const a = layout({ order: DEFAULT_LAYOUT.order, floating: ['team', 'editor'] });
-    const b = layout({ order: DEFAULT_LAYOUT.order, floating: ['editor', 'team'] });
-    expect(layoutsEqual(a, b)).toBe(true);
-  });
-
-  it('notices a reorder, a float and a resize', () => {
-    const base = layout({ order: DEFAULT_LAYOUT.order });
-    expect(layoutsEqual(base, movePanel(base, 'agent', 0))).toBe(false);
-    expect(layoutsEqual(base, setFloating(base, 'agent', true))).toBe(false);
-    expect(layoutsEqual(base, setPanelWidth(base, 'agent', 500))).toBe(false);
-  });
-});
-
-describe('presets', () => {
-  it('are all real layouts', () => {
-    for (const preset of LAYOUT_PRESETS) {
-      expect(layoutsEqual(preset.layout, normalizeLayout(preset.layout))).toBe(true);
-      expect(preset.layout.order).toContain(PREVIEW);
-    }
-  });
-
-  it('Focus leaves only the agent beside the preview', () => {
-    const focus = LAYOUT_PRESETS.find((preset) => preset.id === 'focus')!.layout;
-    expect(dockedPanels(focus)).toEqual(['agent']);
-  });
-
-  it('Design puts the navigator and the editor either side of the canvas', () => {
-    const design = LAYOUT_PRESETS.find((preset) => preset.id === 'design')!.layout;
-    expect(sideOf(design, 'navigator')).toBe('left');
-    expect(sideOf(design, 'editor')).toBe('right');
-  });
-});
-
-describe('layoutFromLegacyPreferences', () => {
-  it('reproduces the arrangement a default install was already showing', () => {
-    // Agent and Navigator pinned, everything else floating — the pre-rail
-    // defaults. An upgrade must not look rearranged.
+describe('legacy panel preferences', () => {
+  it('preserves pin state and old widths in singleton v2 columns', () => {
     const migrated = layoutFromLegacyPreferences({
       agentPinned: true,
       navigatorPinned: true,
       variablesPinned: false,
       editorPinned: false,
       teamPinned: false,
-      widths: {},
-    });
-    expect(dockedPanels(migrated)).toEqual(['agent', 'navigator']);
-    expect(migrated.order).toEqual(DEFAULT_LAYOUT.order);
-  });
-
-  it('carries the widths people had already dragged', () => {
-    const migrated = layoutFromLegacyPreferences({
-      agentPinned: true,
-      navigatorPinned: true,
-      variablesPinned: true,
-      editorPinned: true,
-      teamPinned: true,
       widths: { navigator: 320, team: 500 },
     });
-    expect(migrated.widths.navigator).toBe(320);
-    expect(migrated.widths.team).toBe(500);
-    expect(dockedPanels(migrated)).toHaveLength(PANEL_IDS.length);
+    expect(dockedPanels(migrated)).toEqual(['agent', 'navigator']);
+    expect(widthOf(migrated, 'navigator')).toBe(320);
+    expect(widthOf(migrated, 'team')).toBe(500);
+    expect(migrated.version).toBe(LAYOUT_VERSION);
   });
 });

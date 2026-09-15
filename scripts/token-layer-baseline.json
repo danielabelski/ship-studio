@@ -51,6 +51,24 @@
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
+      "path": "src/styles/components/drag-sort.css",
+      "token": "--duration-slow",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/components/drag-sort.css",
+      "token": "--ease-icon-swap",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/components/drag-sort.css",
+      "token": "--space-04",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
       "path": "src/styles/components/dropdown.css",
       "token": "--shadow",
       "count": 1,
@@ -1757,7 +1775,7 @@
     {
       "path": "src/styles/features/workspace/dock.css",
       "token": "--stroke-1",
-      "count": 7,
+      "count": 9,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
@@ -1841,13 +1859,13 @@
     {
       "path": "src/styles/features/workspace/sidebar.css",
       "token": "--space-04",
-      "count": 1,
+      "count": 2,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
       "path": "src/styles/features/workspace/sidebar.css",
       "token": "--space-06",
-      "count": 9,
+      "count": 10,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {

@@ -198,10 +198,15 @@ export function DockablePanel({
    * only told a drag has begun once the pointer has actually travelled.
    */
   const pressRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
-  // A drag of a *docked* panel's header. It moves the panel in the layout
-  // rather than on screen, so it carries no offset — only the pointer id, to
-  // tell its moves apart from a floating drag's.
-  const layoutDragRef = useRef<number | null>(null);
+  // A drag of a *docked* panel's header. The rail still decides where it lands,
+  // but the real surface follows the pointer in the meantime. Keeping the
+  // grab offset makes the header stay under the same point of the cursor.
+  const layoutDragRef = useRef<{
+    pointerId: number;
+    dx: number;
+    dy: number;
+  } | null>(null);
+  const [draggingFromDock, setDraggingFromDock] = useState(false);
   const cornerResizePointerRef = useRef<number | null>(null);
 
   const updateFloatingSize = useCallback((next: Size) => {
@@ -339,7 +344,13 @@ export function DockablePanel({
 
       if (docked) {
         if (!dock) return;
-        layoutDragRef.current = event.pointerId;
+        const rect = surfaceRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        layoutDragRef.current = {
+          pointerId: event.pointerId,
+          dx: event.clientX - rect.left,
+          dy: event.clientY - rect.top,
+        };
         surfaceRef.current?.setPointerCapture?.(event.pointerId);
         event.preventDefault();
         return;
@@ -366,8 +377,19 @@ export function DockablePanel({
       const point = { x: event.clientX, y: event.clientY };
       const started = beginDragOnce(pressRef, event.pointerId, point, dock);
 
-      if (layoutDragRef.current === event.pointerId) {
-        if (started) dock?.onDragMove(point);
+      const layoutDrag = layoutDragRef.current;
+      if (layoutDrag !== null && layoutDrag.pointerId === event.pointerId) {
+        if (started) {
+          setDraggingFromDock(true);
+          setPosition(
+            clampPosition(
+              { left: event.clientX - layoutDrag.dx, top: event.clientY - layoutDrag.dy },
+              floatingSize,
+              keepWithinViewport
+            )
+          );
+          dock?.onDragMove(point);
+        }
         return;
       }
 
@@ -400,10 +422,22 @@ export function DockablePanel({
       const moved = press !== null && press.pointerId === event.pointerId && press.moved;
       pressRef.current = null;
 
-      if (layoutDragRef.current === event.pointerId) {
+      const layoutDrag = layoutDragRef.current;
+      if (layoutDrag !== null && layoutDrag.pointerId === event.pointerId) {
         layoutDragRef.current = null;
         surfaceRef.current?.releasePointerCapture?.(event.pointerId);
-        if (moved) dock?.onDragEnd({ x: event.clientX, y: event.clientY });
+        if (moved) {
+          const finalPosition = clampPosition(
+            { left: event.clientX - layoutDrag.dx, top: event.clientY - layoutDrag.dy },
+            floatingSize,
+            keepWithinViewport
+          );
+          setPosition(finalPosition);
+          if (dock?.onDragEnd({ x: event.clientX, y: event.clientY })) {
+            localStorage.setItem(positionKey, JSON.stringify(finalPosition));
+          }
+        }
+        setDraggingFromDock(false);
         return;
       }
 
@@ -419,14 +453,18 @@ export function DockablePanel({
       });
       if (moved) dock?.onDragEnd({ x: event.clientX, y: event.clientY });
     },
-    [dock, positionKey]
+    [dock, floatingSize, keepWithinViewport, positionKey]
   );
 
   const handlePointerCancel = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       pressRef.current = null;
-      if (layoutDragRef.current === event.pointerId) {
+      if (
+        layoutDragRef.current !== null &&
+        layoutDragRef.current.pointerId === event.pointerId
+      ) {
         layoutDragRef.current = null;
+        setDraggingFromDock(false);
         surfaceRef.current?.releasePointerCapture?.(event.pointerId);
       } else if (dragRef.current?.pointerId === event.pointerId) {
         dragRef.current = null;
@@ -585,7 +623,15 @@ export function DockablePanel({
   // Feature classes such as `--preview` must never promote a docked panel
   // above a floating one merely because both surfaces share that feature.
   const surfaceStyle: CSSProperties = docked
-    ? { ...dockStyle, zIndex: dock?.dockedZIndex ?? dockedZIndex ?? 'var(--z-dropdown)' }
+    ? draggingFromDock
+      ? {
+          left: position.left,
+          top: position.top,
+          width: dockStyle?.width ?? renderedFloatingSize.width,
+          height: dockStyle?.height ?? renderedFloatingSize.height,
+          zIndex: 'var(--z-floating-panel)',
+        }
+      : { ...dockStyle, zIndex: dock?.dockedZIndex ?? dockedZIndex ?? 'var(--z-dropdown)' }
     : floatingStyle;
   // A docked surface with no measured slot has no geometry, so it would paint
   // at its natural size in the corner. That never happened while placeholders
@@ -624,9 +670,9 @@ export function DockablePanel({
           ref={surfaceRef}
           className={`dockable-panel__surface ${
             docked ? 'dockable-panel__surface--docked' : 'dockable-panel__surface--floating'
-          }${!visible || awaitingDock ? ' is-hidden' : ''}${
-            surfaceClassName ? ` ${surfaceClassName}` : ''
-          }`}
+          }${draggingFromDock ? ' dockable-panel__surface--dragging' : ''}${
+            !visible || awaitingDock ? ' is-hidden' : ''
+          }${surfaceClassName ? ` ${surfaceClassName}` : ''}`}
           style={surfaceStyle}
           aria-label={ariaLabel}
           aria-hidden={!visible}

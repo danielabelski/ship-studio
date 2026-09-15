@@ -26,26 +26,22 @@
   --team-review-surface: var(--color-purple-500-o15);
 }
 
-/* `min-content`, not 0.
-   The Inbox can floor its panel at 0 because everything inside it scrolls, so
-   the panel never has more content than the height it is given. This one has
-   the "How this works" disclosure, which is prose that expands the card — with
-   a 0 floor the panel shrinks under it and the text renders straight through
-   the bottom border. Flooring at the content's own minimum lets the card grow
-   and the page scroll, while the feed and the comment reader keep scrolling
-   inside their own bounded regions. */
+/* Panel cells may be shorter than their content when stacked. Keep the outer
+   panel bounded so each tab/body can scroll inside the height it is given. */
 .team-panel {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: min-content;
+  min-width: 0;
+  min-height: 0;
 }
 
 .team-panel-body {
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
-  min-height: 360px;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* `tabs__panel`, not `tabs-panel` — the primitive is BEM. Getting this wrong

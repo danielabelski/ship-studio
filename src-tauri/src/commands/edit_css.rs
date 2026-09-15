@@ -28,7 +28,7 @@ use crate::commands::edit::Location;
 use crate::errors::CommandError;
 use crate::utils::validate_project_path;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -1209,7 +1209,23 @@ fn locate_declarations(css: &str, inner_start: usize, inner_end: usize) -> Vec<D
     let mut depth = 0i32;
 
     let flush = |seg_start: usize, seg_end: usize, terminated: bool, out: &mut Vec<DeclSpan>| {
-        let (ds, de) = trim_range(css, seg_start, seg_end);
+        // Comments between declarations belong to the surrounding source, not
+        // to the next property's name. Skip only leading comments here; their
+        // bytes remain untouched because `decl_start` begins at the property.
+        let mut significant_start = seg_start;
+        loop {
+            let (candidate, _) = trim_range(css, significant_start, seg_end);
+            if candidate + 1 >= seg_end || bytes[candidate] != b'/' || bytes[candidate + 1] != b'*'
+            {
+                significant_start = candidate;
+                break;
+            }
+            let Some(close) = css[candidate + 2..seg_end].find("*/") else {
+                return;
+            };
+            significant_start = candidate + 2 + close + 2;
+        }
+        let (ds, de) = trim_range(css, significant_start, seg_end);
         if ds >= de {
             return;
         }
@@ -1705,6 +1721,133 @@ fn set_custom_property_in_source(
     }
     out.push_str(&src[definition.value_end..]);
     Ok(out)
+}
+
+/// A custom-property identity supplied by the Variables panel when committing a
+/// projected order. Every identity must point back to the same source rule.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CssVariableOrderEntry {
+    pub name: String,
+    pub file: String,
+    pub selector: String,
+    pub line: usize,
+}
+
+/// Reorder only custom-property declaration text within one exact rule. The
+/// surrounding bytes — including comments, whitespace, non-variable
+/// declarations, declaration spelling/value and `!important` — are left in
+/// place. This is intentionally a slot replacement rather than a rule
+/// reserializer so a reorder remains a small, reviewable source diff.
+fn reorder_custom_properties_in_source(
+    src: &str,
+    selector: &str,
+    line: usize,
+    ordered: &[CssVariableOrderEntry],
+) -> Result<String, CommandError> {
+    let matches: Vec<RuleSpan> = index_rules(src)
+        .into_iter()
+        .filter(|rule| rule.selector == selector && rule.selector_line == line)
+        .collect();
+    if matches.len() != 1 {
+        return Err(CommandError::Validation {
+            field: "variable".into(),
+            reason:
+                "the :root rule moved or is ambiguous — reload the variables panel and try again"
+                    .into(),
+        });
+    }
+    let rule = &matches[0];
+    let declarations: Vec<DeclSpan> =
+        locate_declarations(src, rule.block_inner_start, rule.block_inner_end);
+    let variable_declarations: Vec<&DeclSpan> = declarations
+        .iter()
+        .filter(|declaration| declaration.property.starts_with("--"))
+        .collect();
+    if variable_declarations.is_empty() {
+        return Err(CommandError::Validation {
+            field: "variable".into(),
+            reason: "the source rule has no custom-property definitions — reload the variables panel and try again".into(),
+        });
+    }
+
+    let mut existing_by_name: HashMap<&str, &DeclSpan> = HashMap::new();
+    for declaration in &variable_declarations {
+        if existing_by_name
+            .insert(declaration.property.as_str(), declaration)
+            .is_some()
+        {
+            return Err(CommandError::Validation {
+                field: "variable".into(),
+                reason:
+                    "a custom-property definition is duplicated in its source rule — not editable"
+                        .into(),
+            });
+        }
+    }
+    let mut requested_names = HashSet::with_capacity(ordered.len());
+    for entry in ordered {
+        validate_custom_property(&entry.name)?;
+        if !requested_names.insert(entry.name.as_str()) {
+            return Err(CommandError::Validation {
+                field: "ordered".into(),
+                reason: "the requested variable order contains a duplicate definition".into(),
+            });
+        }
+        if !existing_by_name.contains_key(entry.name.as_str()) {
+            return Err(CommandError::Validation {
+                field: "ordered".into(),
+                reason:
+                    "the requested variable order is stale — a definition is missing or was added"
+                        .into(),
+            });
+        }
+    }
+    if requested_names.len() != existing_by_name.len() {
+        return Err(CommandError::Validation {
+            field: "ordered".into(),
+            reason: "the requested variable order is stale — a definition is missing or was added"
+                .into(),
+        });
+    }
+
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0usize;
+    // The destination slots are the existing custom-property spans in source
+    // order. Only their declaration text changes; every other source span is
+    // copied directly from the original string.
+    for (destination, entry) in variable_declarations.iter().zip(ordered) {
+        let source = existing_by_name[entry.name.as_str()];
+        out.push_str(&src[cursor..destination.decl_start]);
+        out.push_str(&src[source.decl_start..source.decl_end]);
+        cursor = destination.decl_end;
+    }
+    out.push_str(&src[cursor..]);
+    Ok(out)
+}
+
+fn validate_variable_order_entries(
+    file: &str,
+    selector: &str,
+    line: usize,
+    ordered: &[CssVariableOrderEntry],
+) -> Result<(), CommandError> {
+    if ordered.is_empty() {
+        return Err(CommandError::Validation {
+            field: "ordered".into(),
+            reason: "at least one variable definition is required".into(),
+        });
+    }
+    if ordered
+        .iter()
+        .any(|entry| entry.file != file || entry.selector != selector || entry.line != line)
+    {
+        return Err(CommandError::Validation {
+            field: "ordered".into(),
+            reason: "the requested variable order crosses source rules".into(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -2607,6 +2750,31 @@ pub fn set_css_variable(
     Ok(())
 }
 
+/// Reorder custom-property declarations within the exact `:root` rule reported
+/// by `get_css_variables`. It never moves declarations across source rules.
+#[tauri::command]
+#[tracing::instrument(skip(ordered), fields(project = %project_path, file = %file, selector = %selector, line))]
+pub fn reorder_css_variables(
+    project_path: String,
+    file: String,
+    selector: String,
+    line: usize,
+    ordered: Vec<CssVariableOrderEntry>,
+) -> Result<(), CommandError> {
+    if selector != ":root" {
+        return Err(CommandError::Validation {
+            field: "selector".into(),
+            reason: "only variables defined on an exact :root rule can be reordered".into(),
+        });
+    }
+    validate_variable_order_entries(&file, &selector, line, &ordered)?;
+    let root = validate_project_path(&project_path)?;
+    let ec = load_editable_css(&root, &file)?;
+    let updated = reorder_custom_properties_in_source(&ec.css, &selector, line, &ordered)?;
+    ec.write_back(&root, &updated)?;
+    Ok(())
+}
+
 /// Count the authored impact of deleting a project CSS variable without changing
 /// any files. The replacement value comes from the selected Variables-panel row
 /// and is checked against every definition so conflicting cascade values fail closed.
@@ -3292,6 +3460,109 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    fn variable_order_entry(name: &str, line: usize) -> CssVariableOrderEntry {
+        CssVariableOrderEntry {
+            name: name.into(),
+            file: "styles.css".into(),
+            selector: ":root".into(),
+            line,
+        }
+    }
+
+    #[test]
+    fn reorders_variables_without_reserializing_other_source() {
+        let css = ":root {\n  /* keep this comment */\n  --first: red !important;\n  color: red;\n\n  --second : blue;\n}";
+        let out = reorder_custom_properties_in_source(
+            css,
+            ":root",
+            1,
+            &[
+                variable_order_entry("--second", 1),
+                variable_order_entry("--first", 1),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            ":root {\n  /* keep this comment */\n  --second : blue;\n  color: red;\n\n  --first: red !important;\n}"
+        );
+    }
+
+    #[test]
+    fn rejects_stale_duplicate_and_ambiguous_variable_orders() {
+        let css = ":root { --first: red; --second: blue; }";
+        let stale = reorder_custom_properties_in_source(
+            css,
+            ":root",
+            1,
+            &[variable_order_entry("--first", 1)],
+        )
+        .unwrap_err();
+        assert!(matches!(stale, CommandError::Validation { field, .. } if field == "ordered"));
+
+        let added = reorder_custom_properties_in_source(
+            css,
+            ":root",
+            1,
+            &[
+                variable_order_entry("--first", 1),
+                variable_order_entry("--new", 1),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(added, CommandError::Validation { field, .. } if field == "ordered"));
+
+        let duplicate = reorder_custom_properties_in_source(
+            css,
+            ":root",
+            1,
+            &[
+                variable_order_entry("--first", 1),
+                variable_order_entry("--first", 1),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(duplicate, CommandError::Validation { field, .. } if field == "ordered"));
+
+        let ambiguous = reorder_custom_properties_in_source(
+            ":root { --first: red; } :root { --second: blue; }",
+            ":root",
+            1,
+            &[variable_order_entry("--first", 1)],
+        )
+        .unwrap_err();
+        assert!(matches!(ambiguous, CommandError::Validation { field, .. } if field == "variable"));
+    }
+
+    #[test]
+    fn rejects_an_order_that_crosses_source_rules() {
+        let mut cross_rule = variable_order_entry("--second", 1);
+        cross_rule.line = 2;
+        let err = validate_variable_order_entries(
+            "styles.css",
+            ":root",
+            1,
+            &[variable_order_entry("--first", 1), cross_rule],
+        )
+        .unwrap_err();
+        assert!(matches!(err, CommandError::Validation { field, .. } if field == "ordered"));
+    }
+
+    #[test]
+    fn rejects_duplicate_source_definitions() {
+        let err = reorder_custom_properties_in_source(
+            ":root { --first: red; --first: blue; }",
+            ":root",
+            1,
+            &[
+                variable_order_entry("--first", 1),
+                variable_order_entry("--first", 1),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(err, CommandError::Validation { field, .. } if field == "variable"));
     }
 
     #[test]

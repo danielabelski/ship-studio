@@ -37,8 +37,12 @@ import {
 
 const DEFAULT_KEY = 'shipstudio.layout.default';
 const PROJECT_PREFIX = 'shipstudio.layout.project:';
+/** The one app-level preference controlling whether edits are shared. */
+export const LAYOUT_SCOPE_KEY = 'shipstudio.layout.scope';
 /** Set once the one-time read of the pre-rail per-panel flags has happened. */
 const MIGRATED_KEY = 'shipstudio.layout.migratedFromPins';
+
+export type LayoutScope = 'project' | 'global';
 
 function read(key: string): unknown {
   try {
@@ -62,6 +66,30 @@ function remove(key: string): void {
     localStorage.removeItem(key);
   } catch {
     // Same bargain as `write`.
+  }
+}
+
+/**
+ * Read the selected persistence scope. Missing and invalid values intentionally
+ * fall back to the pre-scope behaviour: an unarranged project follows the
+ * shared default, while an arranged project keeps its own override.
+ */
+export function readLayoutScope(): LayoutScope {
+  try {
+    const value = localStorage.getItem(LAYOUT_SCOPE_KEY);
+    if (value === 'global' || value === JSON.stringify('global')) return 'global';
+    return 'project';
+  } catch {
+    return 'project';
+  }
+}
+
+/** Persist the selected scope without allowing storage failures to escape. */
+export function writeLayoutScope(scope: LayoutScope): void {
+  try {
+    localStorage.setItem(LAYOUT_SCOPE_KEY, scope);
+  } catch {
+    // The current session still uses the selected scope; it just won't survive.
   }
 }
 
@@ -151,7 +179,13 @@ function migrateLegacyDefault(): WorkspaceLayout | null {
 /** The layout projects start from. */
 export function readDefaultLayout(): WorkspaceLayout {
   const saved = read(DEFAULT_KEY);
-  if (saved !== null) return normalizeLayout(saved);
+  if (saved !== null) {
+    const normalized = normalizeLayout(saved);
+    // Persist the canonical v2 shape when an older flat layout is encountered
+    // so the migration is one-time rather than repeated on every launch.
+    write(DEFAULT_KEY, normalized);
+    return normalized;
+  }
 
   const migrated = migrateLegacyDefault();
   if (migrated) {
@@ -172,7 +206,12 @@ export function hasProjectLayout(projectPath: string): boolean {
 /** This project's arrangement, or the default it is still following. */
 export function readProjectLayout(projectPath: string): WorkspaceLayout {
   const saved = read(projectKey(projectPath));
-  return saved === null ? readDefaultLayout() : normalizeLayout(saved);
+  if (saved === null) return readDefaultLayout();
+  const normalized = normalizeLayout(saved);
+  // Project layouts written by pre-v2 builds are migrated on first read and
+  // then remain canonical in storage.
+  write(projectKey(projectPath), normalized);
+  return normalized;
 }
 
 export function writeProjectLayout(projectPath: string, layout: WorkspaceLayout): void {

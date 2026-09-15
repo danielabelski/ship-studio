@@ -20,8 +20,8 @@
 //! span is preserved byte-for-byte.
 
 use crate::commands::edit::{
-    attrs_for_path, class_token_in_index, find_attr_spans, invalidate_index_cache, locate_element,
-    open_tag_end, ElementSignature,
+    attrs_for_path, class_token_in_index, content_hash, element_span, find_attr_spans,
+    invalidate_index_cache, locate_element, open_tag_end, ElementSignature,
 };
 use crate::commands::edit_css::css_class_exists;
 use crate::errors::CommandError;
@@ -29,6 +29,19 @@ use crate::utils::{classify_fs_error, validate_project_path};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
+
+/// Exact source markup selected by the drag gesture. The class resolver remains
+/// the default fallback, but a drag may have selected one of several identical
+/// class literals; this proof keeps the move tied to that authored span.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExactSourceTarget {
+    pub file: String,
+    pub start: usize,
+    pub end: usize,
+    pub expected_hash: String,
+    pub expected_html: String,
+}
 
 /// Where the new element lands relative to the selected anchor element.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -185,6 +198,102 @@ fn line_of(src: &str, offset: usize) -> usize {
         .filter(|&&b| b == b'\n')
         .count()
         + 1
+}
+
+/// Read and validate a byte-exact element span supplied by the drag resolver.
+/// This path deliberately does not consult the class index: repeated class
+/// literals are valid here because the preview supplied the selected instance.
+fn locate_exact_element(
+    project_path: &str,
+    target: ExactSourceTarget,
+) -> Result<(String, std::path::PathBuf, String, usize, usize, usize), CommandError> {
+    if target.file.is_empty()
+        || target.file.contains('\0')
+        || target.file.contains('\\')
+        || Path::new(&target.file).is_absolute()
+        || target
+            .file
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(validation(
+            "sourceTarget.file",
+            "the drag source target must be a normalized project-relative path",
+        ));
+    }
+    if target.start >= target.end
+        || target.expected_hash.is_empty()
+        || target.expected_html.is_empty()
+    {
+        return Err(validation(
+            "sourceTarget",
+            "the drag source target must include a non-empty range, hash, and markup",
+        ));
+    }
+
+    let root = validate_project_path(project_path)?;
+    let abs = root.join(&target.file);
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| classify_fs_error("inspect the project root", &root, &error))?;
+    let canonical_file = abs
+        .canonicalize()
+        .map_err(|error| classify_fs_error("open this drag source file", &abs, &error))?;
+    if !canonical_file.starts_with(&canonical_root) {
+        return Err(validation(
+            "sourceTarget.file",
+            "the drag source target is outside the project",
+        ));
+    }
+    if std::fs::symlink_metadata(&abs)
+        .map_err(|error| classify_fs_error("inspect this drag source file", &abs, &error))?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(validation(
+            "sourceTarget.file",
+            "the drag source target is a symlink",
+        ));
+    }
+    let src = std::fs::read_to_string(&abs)
+        .map_err(|error| classify_fs_error("open this drag source file", &abs, &error))?;
+    if content_hash(src.as_bytes()) != target.expected_hash {
+        return Err(validation(
+            "sourceTarget.expectedHash",
+            "the source changed before the move; refresh and try again",
+        ));
+    }
+    if target.end > src.len()
+        || !src.is_char_boundary(target.start)
+        || !src.is_char_boundary(target.end)
+        || src.as_bytes().get(target.start) != Some(&b'<')
+        || src[target.start..target.end] != target.expected_html
+    {
+        return Err(validation(
+            "sourceTarget",
+            "the dragged element no longer matches its source markup",
+        ));
+    }
+    let (start, end) = element_span(&src, target.start).ok_or_else(|| {
+        validation(
+            "sourceTarget",
+            "the drag source range is not a complete element",
+        )
+    })?;
+    if start != target.start || end != target.end {
+        return Err(validation(
+            "sourceTarget",
+            "the drag source range does not cover exactly the selected element",
+        ));
+    }
+    Ok((
+        target.file,
+        abs,
+        src.clone(),
+        line_of(&src, start),
+        start,
+        end,
+    ))
 }
 
 // ───────────────────────────── splice core ──────────────────────────────────
@@ -667,11 +776,19 @@ pub fn move_element(
     source_html: String,
     target_html: String,
     position: InsertPosition,
+    source_target: Option<ExactSourceTarget>,
+    target_target: Option<ExactSourceTarget>,
 ) -> Result<InsertedElement, CommandError> {
     let (source_file, _source_abs, source_src, _source_line, source_start, source_end) =
-        locate_element(&project_path, source_signature)?;
+        match source_target {
+            Some(target) => locate_exact_element(&project_path, target)?,
+            None => locate_element(&project_path, source_signature)?,
+        };
     let (target_file, target_abs, target_src, _target_line, target_start, target_end) =
-        locate_element(&project_path, target_signature)?;
+        match target_target {
+            Some(target) => locate_exact_element(&project_path, target)?,
+            None => locate_element(&project_path, target_signature)?,
+        };
     if source_file != target_file {
         return Err(validation(
             "target",
@@ -1180,6 +1297,8 @@ mod tests {
             "<div className=\"a\">A</div>".into(),
             "<section className=\"b\">B</section>".into(),
             InsertPosition::After,
+            None,
+            None,
         )
         .unwrap();
         let updated = std::fs::read_to_string(file).unwrap();
@@ -1203,6 +1322,8 @@ mod tests {
             "<div class=\"source\">S</div>".into(),
             "<section class=\"target\">T</section>".into(),
             InsertPosition::After,
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -1224,6 +1345,8 @@ mod tests {
             "<div className=\"a\">changed</div>".into(),
             "<section className=\"b\">B</section>".into(),
             InsertPosition::Before,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{err:?}").contains("source_html"));
@@ -1243,6 +1366,8 @@ mod tests {
             "<div class=\"a\">A</div>".into(),
             "<section class=\"b\">changed</section>".into(),
             InsertPosition::Before,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{err:?}").contains("target_html"));
@@ -1262,6 +1387,8 @@ mod tests {
             "<div className=\"outer\"><span className=\"inner\">I</span></div>".into(),
             "<span className=\"inner\">I</span>".into(),
             InsertPosition::Inside,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{descendant:?}").contains("descendant"));
@@ -1272,6 +1399,8 @@ mod tests {
             "<div className=\"outer\"><span className=\"inner\">I</span></div>".into(),
             "<img className=\"image\" />".into(),
             InsertPosition::Inside,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{void_target:?}").contains("cannot contain"));
@@ -1299,6 +1428,8 @@ mod tests {
             "<div className=\"a\">A</div>".into(),
             "<section className=\"b\">B</section>".into(),
             InsertPosition::After,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{cross_file:?}").contains("same source file"));
@@ -1310,6 +1441,8 @@ mod tests {
             "<main className=\"root\"><div className=\"a\">A</div></main>".into(),
             "<div className=\"a\">A</div>".into(),
             InsertPosition::After,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{root_move:?}").contains("cannot be moved"));
@@ -1329,9 +1462,47 @@ mod tests {
             "<div className=\"a\">A</div>".into(),
             "<section className=\"b\">B</section>".into(),
             InsertPosition::After,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{ambiguous:?}").contains("identical places"));
+    }
+
+    #[test]
+    fn move_element_uses_exact_drag_targets_for_repeated_class_literals() {
+        let dir = test_project_dir();
+        let file = dir.path().join("Repeated.tsx");
+        let source = "export const Repeated = () => <main>\n  <div className=\"card\">A</div>\n  <div className=\"card\">B</div>\n  <section className=\"target\">T</section>\n</main>;\n";
+        std::fs::write(&file, source).unwrap();
+
+        let exact_target = |needle: &str| {
+            let start = source.find(needle).unwrap();
+            let end = element_span(source, start).unwrap().1;
+            ExactSourceTarget {
+                file: "Repeated.tsx".into(),
+                start,
+                end,
+                expected_hash: content_hash(source.as_bytes()),
+                expected_html: source[start..end].into(),
+            }
+        };
+
+        move_element(
+            dir.path().to_string_lossy().into_owned(),
+            test_signature("card", "div", "B"),
+            test_signature("target", "section", "T"),
+            "<div className=\"card\">B</div>".into(),
+            "<section className=\"target\">T</section>".into(),
+            InsertPosition::After,
+            Some(exact_target("<div className=\"card\">B")),
+            Some(exact_target("<section className=\"target\">T")),
+        )
+        .unwrap();
+
+        let updated = std::fs::read_to_string(file).unwrap();
+        assert!(updated.find(">A</div>").unwrap() < updated.find(">T</section>").unwrap());
+        assert!(updated.find(">T</section>").unwrap() < updated.find(">B</div>").unwrap());
     }
 
     #[test]
@@ -1350,6 +1521,8 @@ mod tests {
             "<div className=\"a\">A</div>".into(),
             "<section className=\"b\">B</section>".into(),
             InsertPosition::After,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{err:?}").contains("component root"));
@@ -1372,6 +1545,8 @@ mod tests {
             r#"<button class="save">Save</button>"#.into(),
             r#"<section className="target">Target</section>"#.into(),
             InsertPosition::After,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(format!("{err:?}").contains("source_html"));

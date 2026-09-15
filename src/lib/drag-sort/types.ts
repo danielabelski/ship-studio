@@ -5,6 +5,7 @@ export type DragSortInput = 'pointer' | 'keyboard';
 export type DragSortAxis = 'vertical' | 'horizontal';
 export type DragSortPlacement = 'before' | 'inside' | 'after';
 export type DragSortActivation = 'handle' | 'item';
+export type DragSortInsideHold = 'idle' | 'pending' | 'flashing' | 'ready';
 
 export interface DragSortPosition {
   group: DragSortId;
@@ -41,6 +42,8 @@ export interface DragSortTarget {
   disabled?: boolean;
   /** A locked item may not be lifted but can still be a drop target. */
   targetDisabled?: boolean;
+  /** A drop surface that should not participate in projected ordering. */
+  targetOnly?: boolean;
   /** Higher priority wins when nested target rectangles overlap. */
   priority?: number;
   type?: string;
@@ -62,8 +65,12 @@ export interface DragSortRegistration {
   disabled?: boolean;
   /** A locked item may not be lifted but can still be a drop target. */
   targetDisabled?: boolean;
+  /** A drop surface that should not participate in projected ordering. */
+  targetOnly?: boolean;
   hidden?: boolean;
   collisionPriority?: number;
+  /** Render an edge marker instead of a projected full-row placeholder. */
+  showTargetIndicator?: boolean;
   /** Explicit React content supplied for the body-portaled overlay. */
   overlay?: unknown;
 }
@@ -112,6 +119,7 @@ export interface DragSortSnapshot {
   point: DragSortPoint | null;
   targetId: DragSortId | null;
   placement: DragSortPlacement | null;
+  insideHold: DragSortInsideHold;
   projectedOrder: readonly DragSortId[] | null;
   overlayRect: DragSortOverlayRect | null;
   announcement: string;
@@ -127,6 +135,7 @@ export const IDLE_DRAG_SORT_SNAPSHOT: DragSortSnapshot = Object.freeze({
   point: null,
   targetId: null,
   placement: null,
+  insideHold: 'idle',
   projectedOrder: null,
   overlayRect: null,
   announcement: '',

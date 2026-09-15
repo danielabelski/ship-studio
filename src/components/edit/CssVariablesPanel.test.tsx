@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CssVariablesPanel } from './CssVariablesPanel';
 
@@ -19,6 +19,144 @@ vi.mock('./EditPopover', () => ({
 }));
 
 describe('CssVariablesPanel', () => {
+  function pointer(type: string, x: number, y: number, pointerId = 1) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperties(event, {
+      pointerId: { value: pointerId },
+      pointerType: { value: 'mouse' },
+      clientX: { value: x },
+      clientY: { value: y },
+    });
+    return event;
+  }
+
+  function sortableVariables() {
+    return ['first', 'second', 'third'].map((name, index) => ({
+      name: `--${name}`,
+      value: `${index + 1}px`,
+      selector: ':root' as const,
+      file: 'styles.css',
+      line: 1,
+      editable: true,
+    }));
+  }
+
+  it('sorts editable rows with a leading hover handle and in-flow movement', async () => {
+    vi.useFakeTimers();
+    try {
+      const variables = sortableVariables();
+      const onReorderVariables = vi.fn().mockResolvedValue(undefined);
+      const { container } = render(
+        <CssVariablesPanel
+          variables={variables}
+          loading={false}
+          variableNames={variables.map((variable) => variable.name)}
+          onSetValue={vi.fn()}
+          onAddVariable={vi.fn()}
+          onAnalyzeDelete={vi.fn()}
+          onDeleteVariable={vi.fn()}
+          onReorderVariables={onReorderVariables}
+        />
+      );
+      const items = [...container.querySelectorAll<HTMLElement>('[data-drag-sort-item]')];
+      items.forEach((item, index) => {
+        Object.defineProperty(item, 'getBoundingClientRect', {
+          configurable: true,
+          value: () => ({
+            left: 0,
+            top: index * 30,
+            right: 280,
+            bottom: index * 30 + 20,
+            width: 280,
+            height: 20,
+          }),
+        });
+      });
+      const firstRow = items[0]?.querySelector('.ss-var-row');
+      const handle = screen.getByRole('button', { name: 'Move --first variable' });
+      expect(firstRow?.firstElementChild).toBe(handle);
+      expect(handle).toHaveAttribute('data-drag-sort-handle-visibility', 'hover');
+
+      fireEvent(handle, pointer('pointerdown', 10, 10));
+      fireEvent(window, pointer('pointermove', 10, 75));
+      expect(items[0]).toHaveAttribute('data-drag-sort-dragging', 'true');
+      expect(items[0]).toHaveAttribute('data-drag-sort-has-overlay', 'false');
+      expect(items[0]).not.toHaveAttribute('data-drag-sort-placeholder');
+      expect(document.querySelector('[data-drag-sort-overlay="true"]')).not.toBeInTheDocument();
+
+      fireEvent(window, pointer('pointerup', 10, 75));
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+        await Promise.resolve();
+      });
+      expect(onReorderVariables).toHaveBeenCalledWith([variables[1], variables[2], variables[0]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('supports keyboard sorting from the mounted row handle', async () => {
+    vi.useFakeTimers();
+    try {
+      const variables = sortableVariables();
+      const onReorderVariables = vi.fn().mockResolvedValue(undefined);
+      render(
+        <CssVariablesPanel
+          variables={variables}
+          loading={false}
+          variableNames={variables.map((variable) => variable.name)}
+          onSetValue={vi.fn()}
+          onAddVariable={vi.fn()}
+          onAnalyzeDelete={vi.fn()}
+          onDeleteVariable={vi.fn()}
+          onReorderVariables={onReorderVariables}
+        />
+      );
+      const handle = screen.getByRole('button', { name: 'Move --second variable' });
+      fireEvent.keyDown(handle, { key: ' ' });
+      fireEvent.keyDown(handle, { key: 'ArrowDown' });
+      fireEvent.keyDown(handle, { key: ' ' });
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+        await Promise.resolve();
+      });
+      expect(onReorderVariables).toHaveBeenCalledWith([variables[0], variables[2], variables[1]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves singleton source groups unsortable', () => {
+    const variables = [
+      ...sortableVariables().slice(0, 2),
+      {
+        name: '--singleton',
+        value: '4px',
+        selector: ':root',
+        file: 'other.css',
+        line: 1,
+        editable: true,
+      },
+    ];
+    const { container } = render(
+      <CssVariablesPanel
+        variables={variables}
+        loading={false}
+        variableNames={variables.map((variable) => variable.name)}
+        onSetValue={vi.fn()}
+        onAddVariable={vi.fn()}
+        onAnalyzeDelete={vi.fn()}
+        onDeleteVariable={vi.fn()}
+        onReorderVariables={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(
+      screen.queryByRole('button', { name: 'Move --singleton variable' })
+    ).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-drag-sort-item]')).toHaveLength(2);
+  });
+
   it('analyzes impact before confirming variable deletion', async () => {
     const variable = {
       name: '--space-sm',

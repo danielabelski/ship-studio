@@ -600,6 +600,7 @@ pub fn run() {
             commands::edit_css::set_css_declaration,
             commands::edit_css::add_css_variable,
             commands::edit_css::set_css_variable,
+            commands::edit_css::reorder_css_variables,
             commands::edit_css::analyze_css_variable_deletion,
             commands::edit_css::delete_css_variable,
             commands::edit_css::create_css_class,

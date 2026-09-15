@@ -85,6 +85,8 @@
   position: fixed;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   width: var(--editor-panel-visual-w);
   /* Header + footer are fixed; only the body scrolls. Panel clips; max-height is
      set inline by the component. */
