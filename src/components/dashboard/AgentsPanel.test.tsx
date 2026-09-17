@@ -83,6 +83,7 @@ vi.mock('./WorkspaceConnectTerminal', () => ({
 // Strip heavy icon SVGs; only need predictable DOM.
 vi.mock('../icons', () => ({
   CloseIcon: () => <span data-testid="close-icon" />,
+  ChevronIcon: () => <span data-testid="chevron-icon" />,
   ClaudeIcon: () => <span data-testid="claude-icon" />,
   CodexIcon: () => <span data-testid="codex-icon" />,
   OpencodeIcon: () => <span data-testid="opencode-icon" />,

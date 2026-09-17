@@ -1,29 +1,9 @@
 /* Agents panel — dashboard surface for managing coding agents */
 
-.agents-panel {
-  margin: 0 0 var(--dashboard-section-gap);
-  padding: var(--spacing-lg);
-  background: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
-}
-
-.agents-panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--spacing-md);
-  margin-bottom: var(--spacing-lg);
-}
-
-.agents-panel-title {
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.agents-panel-subtitle {
-  color: var(--text-secondary);
-  margin: var(--spacing-xs) 0 0;
+/* The shell comes from .dashboard-card; this card adds nothing to it. The
+   wrapper exists so the panel's modals live outside the collapsible card. */
+.agents-panel-host {
+  display: contents;
 }
 
 .agents-panel-spinner {
@@ -53,8 +33,8 @@
   margin: var(--spacing-md) 0 var(--spacing-sm);
 }
 
-/* First subheader sits right under the header — trim its top gap. */
-.agents-panel-header + .agents-section-title {
+/* First subheader opens the card body — trim its top gap. */
+.dashboard-disclosure__body > .agents-section-title:first-child {
   margin-top: 0;
 }
 

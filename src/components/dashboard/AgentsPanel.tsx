@@ -34,6 +34,7 @@ import {
 import { OnboardingTerminal } from '../setup/OnboardingTerminal';
 import { ClaudeConnectTerminal } from './ClaudeConnectTerminal';
 import { ModalFrame } from '../primitives/ModalFrame';
+import { DashboardCardDisclosure } from './DashboardCardDisclosure';
 import { Button } from '../primitives/Button';
 import { DropdownItem } from '../primitives/Dropdown';
 import { MenuButton } from '../primitives/MenuButton';
@@ -491,11 +492,14 @@ export function AgentsPanel() {
   );
 
   return (
-    <section className="agents-panel" ref={panelRef}>
-      <header className="agents-panel-header">
-        <div>
-          <h3 className="agents-panel-title text-style-h4">Workspace accounts</h3>
-          <p className="agents-panel-subtitle text-style-body-medium">
+    <div className="agents-panel-host" ref={panelRef}>
+      <DashboardCardDisclosure
+        storageKey="shipstudio.dashboard.workspaceAccountsExpanded"
+        defaultExpanded
+        title="Workspace accounts"
+        className="agents-panel"
+        subtitle={
+          <p className="dashboard-card-subtitle text-style-body-medium">
             Logins for{' '}
             {activeAccount && (
               <span className="agents-panel-workspace-name">
@@ -508,266 +512,266 @@ export function AgentsPanel() {
             )}{' '}
             — each workspace signs in separately, like a separate client.
           </p>
-        </div>
-        {loading && <Spinner size="sm" className="agents-panel-spinner" />}
-      </header>
+        }
+        aside={loading && <Spinner size="sm" className="agents-panel-spinner" />}
+      >
+        <p className="agents-section-title text-style-label">AGENTS</p>
+        <div className="agents-panel-list">
+          {agents.map((agent) => {
+            // "Ready" (eligible to be the default agent) means connected AND valid.
+            // A needs-reconnect agent is excluded so it shows Reconnect, not the pill.
+            const ready = agent.installed && agent.authed && !agent.needsReconnect;
+            const isBusy = busy === agent.id;
+            const menuOpen = openMenuId === agent.id;
+            // A valid connection is shown by the outlined Installed status;
+            // attention still gets the red row state so a broken session is clear.
+            const stateClass = agent.needsReconnect
+              ? 'needs-reconnect'
+              : agent.authed
+                ? 'is-connected'
+                : '';
 
-      <p className="agents-section-title text-style-label">AGENTS</p>
-      <div className="agents-panel-list">
-        {agents.map((agent) => {
-          // "Ready" (eligible to be the default agent) means connected AND valid.
-          // A needs-reconnect agent is excluded so it shows Reconnect, not the pill.
-          const ready = agent.installed && agent.authed && !agent.needsReconnect;
-          const isBusy = busy === agent.id;
-          const menuOpen = openMenuId === agent.id;
-          // A valid connection is shown by the outlined Installed status;
-          // attention still gets the red row state so a broken session is clear.
-          const stateClass = agent.needsReconnect
-            ? 'needs-reconnect'
-            : agent.authed
-              ? 'is-connected'
-              : '';
+            return (
+              <div
+                key={agent.id}
+                className={`agents-panel-row ${agent.isDefault ? 'is-default' : ''} ${stateClass}`}
+              >
+                <div className="agents-panel-row-icon">{iconFor(agent.id)}</div>
 
-          return (
-            <div
-              key={agent.id}
-              className={`agents-panel-row ${agent.isDefault ? 'is-default' : ''} ${stateClass}`}
-            >
-              <div className="agents-panel-row-icon">{iconFor(agent.id)}</div>
-
-              <div className="agents-panel-row-main">
-                <div className="agents-panel-row-name text-style-body-medium">
-                  {agent.displayName}
+                <div className="agents-panel-row-main">
+                  <div className="agents-panel-row-name text-style-body-medium">
+                    {agent.displayName}
+                  </div>
+                  <div className="agents-panel-row-status text-style-control">
+                    {statusLine(agent)}
+                  </div>
                 </div>
-                <div className="agents-panel-row-status text-style-control">
-                  {statusLine(agent)}
-                </div>
-              </div>
 
-              <div className="agents-panel-row-actions">
-                {!agent.installed && agent.installSupported && (
-                  <Button
-                    variant="primary"
-                    width="hug"
-                    leftIcon={<DownloadIcon size={14} />}
-                    onClick={() => openTerminal(agent, 'install')}
-                    disabled={isBusy}
-                  >
-                    Install
-                  </Button>
-                )}
-
-                {agent.installed && !agent.authed && (
-                  <Button
-                    variant="primary"
-                    width="hug"
-                    leftIcon={<LoginIcon size={14} />}
-                    onClick={() => startAuth(agent, false)}
-                    disabled={isBusy}
-                  >
-                    Sign in
-                  </Button>
-                )}
-
-                {agent.installed && agent.needsReconnect && (
-                  <Button
-                    variant="default"
-                    width="hug"
-                    leftIcon={<PlugIcon size={14} />}
-                    className="agents-reconnect-btn"
-                    onClick={() => startAuth(agent, true)}
-                    disabled={isBusy}
-                  >
-                    Reconnect
-                  </Button>
-                )}
-
-                {ready && (
-                  <Button
-                    variant="secondary"
-                    width="hug"
-                    className="agents-panel-status-button"
-                    disabled
-                  >
-                    Installed
-                  </Button>
-                )}
-
-                {agent.installed && (
-                  <div className="agents-panel-menu-wrap">
-                    <MenuButton
-                      variant="ghost"
-                      size="default"
+                <div className="agents-panel-row-actions">
+                  {!agent.installed && agent.installSupported && (
+                    <Button
+                      variant="primary"
                       width="hug"
-                      leftIcon={<MoreHorizontalIcon />}
-                      className="agents-panel-kebab"
-                      expanded={menuOpen}
-                      onClick={() => setOpenMenuId(menuOpen ? null : agent.id)}
-                      title={`More actions for ${agent.displayName}`}
-                      aria-label={`More actions for ${agent.displayName}`}
+                      leftIcon={<DownloadIcon size={14} />}
+                      onClick={() => openTerminal(agent, 'install')}
                       disabled={isBusy}
-                    ></MenuButton>
-                    {menuOpen && (
-                      <div className="ss-dropdown__menu agents-panel-menu" role="menu">
-                        {ready && !agent.isDefault && (
-                          <DropdownItem onSelect={() => void handleSetDefault(agent.id)}>
-                            Set as default
-                          </DropdownItem>
-                        )}
-                        {agent.installSupported && (
-                          <DropdownItem onSelect={() => openTerminal(agent, 'install')}>
-                            Update
-                          </DropdownItem>
-                        )}
-                        {agent.authed && (
-                          <DropdownItem onSelect={() => void handleSignOut(agent)}>
-                            Sign out
-                          </DropdownItem>
-                        )}
-                        {!agent.authed && (
-                          <DropdownItem onSelect={() => startAuth(agent, false)}>
-                            Sign in
-                          </DropdownItem>
-                        )}
-                        {agent.uninstallSupported && (
-                          <DropdownItem
-                            variant="danger"
-                            onSelect={() => {
-                              setOpenMenuId(null);
-                              setConfirmUninstall({
-                                agentId: agent.id,
-                                displayName: agent.displayName,
-                              });
-                            }}
-                          >
-                            Uninstall
-                          </DropdownItem>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                    >
+                      Install
+                    </Button>
+                  )}
 
-      {activeAccount && (
-        <>
-          <p className="agents-section-title text-style-label">SERVICES</p>
-          <div className="agents-panel-list">
-            {(
-              [
-                {
-                  id: 'github' as const,
-                  name: 'GitHub',
-                  icon: <GitHubIcon size={18} />,
-                  identity: credStatus?.githubAuthEmail ?? null,
-                },
-                {
-                  id: 'vercel' as const,
-                  name: 'Vercel',
-                  icon: <VercelIcon size={16} />,
-                  identity: credStatus?.vercelUsername ?? null,
-                },
-              ] as const
-            ).map((svc) => {
-              const connected = !!svc.identity;
-              const menuKey = `service:${svc.id}`;
-              const menuOpen = openMenuId === menuKey;
-              // Until the (slow) status fetch resolves, say "Checking…" rather
-              // than flashing a false "Not connected".
-              const statusText = connected
-                ? svc.identity
-                : credStatus
-                  ? 'Not connected'
-                  : 'Checking…';
-              // Services never show the red reconnect stroke — there's no expiry
-              // signal here, only connected vs. never-connected (neutral border).
-              const stateClass = connected ? 'is-connected' : '';
-              // Disconnect manages the workspace's own credential; the Default
-              // workspace's logins are the machine's native ones — leave untouched.
-              const canDisconnect = connected && !activeAccount.isDefault;
+                  {agent.installed && !agent.authed && (
+                    <Button
+                      variant="primary"
+                      width="hug"
+                      leftIcon={<LoginIcon size={14} />}
+                      onClick={() => startAuth(agent, false)}
+                      disabled={isBusy}
+                    >
+                      Sign in
+                    </Button>
+                  )}
 
-              return (
-                <div key={svc.id} className={`agents-panel-row ${stateClass}`}>
-                  <div className="agents-panel-row-icon">{svc.icon}</div>
+                  {agent.installed && agent.needsReconnect && (
+                    <Button
+                      variant="default"
+                      width="hug"
+                      leftIcon={<PlugIcon size={14} />}
+                      className="agents-reconnect-btn"
+                      onClick={() => startAuth(agent, true)}
+                      disabled={isBusy}
+                    >
+                      Reconnect
+                    </Button>
+                  )}
 
-                  <div className="agents-panel-row-main">
-                    <div className="agents-panel-row-name text-style-body-medium">{svc.name}</div>
-                    <div className="agents-panel-row-status text-style-control">{statusText}</div>
-                  </div>
+                  {ready && (
+                    <Button
+                      variant="secondary"
+                      width="hug"
+                      className="agents-panel-status-button"
+                      disabled
+                    >
+                      Installed
+                    </Button>
+                  )}
 
-                  <div className="agents-panel-row-actions">
-                    {!connected && (
-                      <Button
-                        variant="primary"
+                  {agent.installed && (
+                    <div className="agents-panel-menu-wrap">
+                      <MenuButton
+                        variant="ghost"
                         size="default"
                         width="hug"
-                        leftIcon={<PlugIcon size={14} />}
-                        onClick={() => connectService(svc.id)}
-                      >
-                        Connect
-                      </Button>
-                    )}
-
-                    {connected && (
-                      <Button
-                        variant="secondary"
-                        width="hug"
-                        className="agents-panel-status-button"
-                        disabled
-                      >
-                        Connected
-                      </Button>
-                    )}
-
-                    {connected && (
-                      <div className="agents-panel-menu-wrap">
-                        <MenuButton
-                          variant="ghost"
-                          size="default"
-                          width="hug"
-                          leftIcon={<MoreHorizontalIcon />}
-                          className="agents-panel-kebab"
-                          expanded={menuOpen}
-                          onClick={() => setOpenMenuId(menuOpen ? null : menuKey)}
-                          title={`More actions for ${svc.name}`}
-                          aria-label={`More actions for ${svc.name}`}
-                        ></MenuButton>
-                        {menuOpen && (
-                          <div className="ss-dropdown__menu agents-panel-menu" role="menu">
+                        leftIcon={<MoreHorizontalIcon />}
+                        className="agents-panel-kebab"
+                        expanded={menuOpen}
+                        onClick={() => setOpenMenuId(menuOpen ? null : agent.id)}
+                        title={`More actions for ${agent.displayName}`}
+                        aria-label={`More actions for ${agent.displayName}`}
+                        disabled={isBusy}
+                      ></MenuButton>
+                      {menuOpen && (
+                        <div className="ss-dropdown__menu agents-panel-menu" role="menu">
+                          {ready && !agent.isDefault && (
+                            <DropdownItem onSelect={() => void handleSetDefault(agent.id)}>
+                              Set as default
+                            </DropdownItem>
+                          )}
+                          {agent.installSupported && (
+                            <DropdownItem onSelect={() => openTerminal(agent, 'install')}>
+                              Update
+                            </DropdownItem>
+                          )}
+                          {agent.authed && (
+                            <DropdownItem onSelect={() => void handleSignOut(agent)}>
+                              Sign out
+                            </DropdownItem>
+                          )}
+                          {!agent.authed && (
+                            <DropdownItem onSelect={() => startAuth(agent, false)}>
+                              Sign in
+                            </DropdownItem>
+                          )}
+                          {agent.uninstallSupported && (
                             <DropdownItem
+                              variant="danger"
                               onSelect={() => {
                                 setOpenMenuId(null);
-                                connectService(svc.id);
+                                setConfirmUninstall({
+                                  agentId: agent.id,
+                                  displayName: agent.displayName,
+                                });
                               }}
                             >
-                              {activeAccount.isDefault ? 'Sign in again' : 'Switch account'}
+                              Uninstall
                             </DropdownItem>
-                            {canDisconnect && (
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {activeAccount && (
+          <>
+            <p className="agents-section-title text-style-label">SERVICES</p>
+            <div className="agents-panel-list">
+              {(
+                [
+                  {
+                    id: 'github' as const,
+                    name: 'GitHub',
+                    icon: <GitHubIcon size={18} />,
+                    identity: credStatus?.githubAuthEmail ?? null,
+                  },
+                  {
+                    id: 'vercel' as const,
+                    name: 'Vercel',
+                    icon: <VercelIcon size={16} />,
+                    identity: credStatus?.vercelUsername ?? null,
+                  },
+                ] as const
+              ).map((svc) => {
+                const connected = !!svc.identity;
+                const menuKey = `service:${svc.id}`;
+                const menuOpen = openMenuId === menuKey;
+                // Until the (slow) status fetch resolves, say "Checking…" rather
+                // than flashing a false "Not connected".
+                const statusText = connected
+                  ? svc.identity
+                  : credStatus
+                    ? 'Not connected'
+                    : 'Checking…';
+                // Services never show the red reconnect stroke — there's no expiry
+                // signal here, only connected vs. never-connected (neutral border).
+                const stateClass = connected ? 'is-connected' : '';
+                // Disconnect manages the workspace's own credential; the Default
+                // workspace's logins are the machine's native ones — leave untouched.
+                const canDisconnect = connected && !activeAccount.isDefault;
+
+                return (
+                  <div key={svc.id} className={`agents-panel-row ${stateClass}`}>
+                    <div className="agents-panel-row-icon">{svc.icon}</div>
+
+                    <div className="agents-panel-row-main">
+                      <div className="agents-panel-row-name text-style-body-medium">{svc.name}</div>
+                      <div className="agents-panel-row-status text-style-control">{statusText}</div>
+                    </div>
+
+                    <div className="agents-panel-row-actions">
+                      {!connected && (
+                        <Button
+                          variant="primary"
+                          size="default"
+                          width="hug"
+                          leftIcon={<PlugIcon size={14} />}
+                          onClick={() => connectService(svc.id)}
+                        >
+                          Connect
+                        </Button>
+                      )}
+
+                      {connected && (
+                        <Button
+                          variant="secondary"
+                          width="hug"
+                          className="agents-panel-status-button"
+                          disabled
+                        >
+                          Connected
+                        </Button>
+                      )}
+
+                      {connected && (
+                        <div className="agents-panel-menu-wrap">
+                          <MenuButton
+                            variant="ghost"
+                            size="default"
+                            width="hug"
+                            leftIcon={<MoreHorizontalIcon />}
+                            className="agents-panel-kebab"
+                            expanded={menuOpen}
+                            onClick={() => setOpenMenuId(menuOpen ? null : menuKey)}
+                            title={`More actions for ${svc.name}`}
+                            aria-label={`More actions for ${svc.name}`}
+                          ></MenuButton>
+                          {menuOpen && (
+                            <div className="ss-dropdown__menu agents-panel-menu" role="menu">
                               <DropdownItem
-                                variant="danger"
                                 onSelect={() => {
                                   setOpenMenuId(null);
-                                  void disconnectService(svc.id);
+                                  connectService(svc.id);
                                 }}
                               >
-                                Disconnect
+                                {activeAccount.isDefault ? 'Sign in again' : 'Switch account'}
                               </DropdownItem>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                              {canDisconnect && (
+                                <DropdownItem
+                                  variant="danger"
+                                  onSelect={() => {
+                                    setOpenMenuId(null);
+                                    void disconnectService(svc.id);
+                                  }}
+                                >
+                                  Disconnect
+                                </DropdownItem>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+                );
+              })}
+            </div>
+          </>
+        )}
+      </DashboardCardDisclosure>
 
       {connectModals}
 
@@ -826,6 +830,6 @@ export function AgentsPanel() {
           </div>
         </ModalFrame>
       )}
-    </section>
+    </div>
   );
 }

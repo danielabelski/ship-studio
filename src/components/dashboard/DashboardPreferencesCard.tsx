@@ -6,6 +6,7 @@
 
 import { HistoryIcon, SettingsIcon } from '@/components/icons';
 import { Button } from '../primitives/Button';
+import { DashboardCardDisclosure } from './DashboardCardDisclosure';
 
 interface DashboardPreferencesCardProps {
   onOpenSettings: () => void;
@@ -21,15 +22,16 @@ export function DashboardPreferencesCard({
   onOpenChangelog,
 }: DashboardPreferencesCardProps) {
   return (
-    <section className="dashboard-card">
-      <header className="dashboard-card-header">
-        <div>
-          <h3 className="dashboard-card-title text-style-h4">Preferences</h3>
-          <p className="dashboard-card-subtitle text-style-body-medium">
-            Adjust app settings or review recent updates.
-          </p>
-        </div>
-      </header>
+    <DashboardCardDisclosure
+      storageKey="shipstudio.dashboard.preferencesExpanded"
+      defaultExpanded
+      title="Preferences"
+      subtitle={
+        <p className="dashboard-card-subtitle text-style-body-medium">
+          Adjust app settings or review recent updates.
+        </p>
+      }
+    >
       <div className="dashboard-card-rows">
         <Button
           variant="default"
@@ -67,6 +69,6 @@ export function DashboardPreferencesCard({
           </div>
         </Button>
       </div>
-    </section>
+    </DashboardCardDisclosure>
   );
 }
