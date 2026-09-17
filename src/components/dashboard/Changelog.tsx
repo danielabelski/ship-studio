@@ -26,6 +26,16 @@ interface ChangelogEntry {
 // Keep ~15 most recent versions for the sidebar
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.3.1', // v1.3.1
+    items: [
+      'Fixed: the app could quit on its own, with no warning and no error — most often when you switched away from a project or closed the app. It was killing itself: the first dev server of each session was tracked under an id that meant "every process in this app" to the operating system, so cleaning it up took the whole app down. Nothing was lost when it happened, but nothing explained it either',
+      'Dev servers left running after that are cleaned up properly now — previously they survived every one of those exits and kept holding their ports, which is why a project could come back on a different port than the one you set',
+      'A crash now leaves a record behind in ~/Library/Logs/ShipStudio/ship-studio-crash.log instead of the log simply stopping mid-sentence',
+      'Fixed: a missing Claude transcript could spin the terminal forever instead of starting a session',
+      'The Team tab strip matches the height of the toolbar beside it, and a Spotify poll that times out no longer raises a toast',
+    ],
+  },
+  {
     version: '1.3.0', // v1.3.0
     items: [
       'New: Team — see what your teammates actually did and why, who is on which branch, and the comments left on the project, without leaving the workspace. It reads your own repository rather than a server: no account, no sign-up, and it works on first launch even if nobody else on the team uses Ship Studio',
