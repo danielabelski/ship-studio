@@ -10,10 +10,16 @@ use crate::utils::{create_command, get_extended_path};
 
 /// Check whether a Claude CLI session exists on disk for the given project.
 ///
-/// Claude CLI stores conversations under `~/.claude/projects/<sanitized-path>/`,
-/// where each session is either `<session-id>.jsonl` or a directory named
-/// `<session-id>`. Sanitization replaces `/` with `-` (so `/Users/foo/bar`
-/// becomes `-Users-foo-bar`).
+/// Claude CLI stores conversations under `~/.claude/projects/<sanitized-path>/`
+/// as `<session-id>.jsonl`. Sanitization replaces `/` with `-` (so
+/// `/Users/foo/bar` becomes `-Users-foo-bar`).
+///
+/// Only that transcript counts. Claude also keeps a sidecar directory named
+/// `<session-id>/` (holding `subagents/`, `tool-results/`) alongside it, and
+/// that directory outlives the transcript when Claude prunes it. Treating the
+/// directory as proof of a session made this return `true` for a conversation
+/// the CLI would reject with "No conversation found", so every resume failed
+/// and retried forever.
 ///
 /// Used by the frontend before passing `--resume <session-id>` to the Claude
 /// CLI. Without this check, we optimistically try resume on every project
@@ -40,12 +46,16 @@ pub fn claude_session_exists(project_path: String, session_id: String) -> bool {
     if !project_dir.is_dir() {
         return false;
     }
-    let jsonl = project_dir.join(format!("{session_id}.jsonl"));
-    if jsonl.is_file() {
-        return true;
-    }
-    let dir = project_dir.join(&session_id);
-    dir.is_dir()
+    session_transcript_exists(&project_dir, &session_id)
+}
+
+/// Whether Claude has a resumable transcript for `session_id` in `project_dir`.
+///
+/// Split out from [`claude_session_exists`] so the rule can be tested without
+/// a real home directory: the transcript file is the only evidence that counts,
+/// never the same-named sidecar directory.
+fn session_transcript_exists(project_dir: &std::path::Path, session_id: &str) -> bool {
+    project_dir.join(format!("{session_id}.jsonl")).is_file()
 }
 
 /// Lightweight detection timeout — version checks should be near-instant.
@@ -430,6 +440,28 @@ pub async fn check_claude_cli_status() -> AgentCliStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_transcript_exists_requires_the_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "5c920cd0-7d84-4d03-9973-1c9c24a0d531";
+        assert!(!session_transcript_exists(dir.path(), id));
+        std::fs::write(dir.path().join(format!("{id}.jsonl")), b"{}").unwrap();
+        assert!(session_transcript_exists(dir.path(), id));
+    }
+
+    #[test]
+    fn session_sidecar_directory_alone_is_not_a_session() {
+        // Regression: Claude leaves `<session-id>/` (subagents/, tool-results/)
+        // behind after pruning the transcript. Counting that directory made
+        // resume claim a session the CLI rejects, and the terminal retried the
+        // doomed resume in a tight loop until the webview locked up.
+        let dir = tempfile::tempdir().unwrap();
+        let id = "5c920cd0-7d84-4d03-9973-1c9c24a0d531";
+        std::fs::create_dir(dir.path().join(id)).unwrap();
+        std::fs::create_dir(dir.path().join(id).join("tool-results")).unwrap();
+        assert!(!session_transcript_exists(dir.path(), id));
+    }
 
     #[test]
     fn binary_runs_returns_false_for_nonexistent_path() {

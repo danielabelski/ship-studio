@@ -6,6 +6,14 @@ The latest entry is rendered inside the in-app update dialog, so write user-
 facing language — what changed, in plain English — not commit subjects.
 -->
 
+## What's New in v1.3.1
+
+- **Fixed: the app quitting on its own** - Most often when switching away from a project or closing the app. The first dev server of each session was tracked under an id that meant "every process in this app" to the OS, so cleaning it up took the whole app down with it
+- **Dev servers no longer survive that exit** - They kept holding their ports, which is why a project could come back on a different port than the one you set
+- **A crash now leaves a record** - ~/Library/Logs/ShipStudio/ship-studio-crash.log, instead of the log stopping mid-sentence
+- **Fixed a missing Claude transcript spinning the terminal forever**
+
+
 ## What's New in v1.3.0
 
 - **Team** - See what your teammates actually did and why, who is on which branch, and the comments left on the project, without leaving the workspace. It reads your own repository rather than a server: no account, no sign-up, and it works on first launch even if nobody else on the team uses Ship Studio
