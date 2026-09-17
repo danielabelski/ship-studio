@@ -459,10 +459,7 @@ export function DockablePanel({
   const handlePointerCancel = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       pressRef.current = null;
-      if (
-        layoutDragRef.current !== null &&
-        layoutDragRef.current.pointerId === event.pointerId
-      ) {
+      if (layoutDragRef.current !== null && layoutDragRef.current.pointerId === event.pointerId) {
         layoutDragRef.current = null;
         setDraggingFromDock(false);
         surfaceRef.current?.releasePointerCapture?.(event.pointerId);
