@@ -26,6 +26,16 @@ interface ChangelogEntry {
 // Keep ~15 most recent versions for the sidebar
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.4.0', // v1.4.0
+    items: [
+      'New: flexible panels — Agent, Team, Variables, Edit and Elements go anywhere in the workspace. Either side of the preview, stacked above or below another panel in the same column, or floated as a window. Drag a panel by its header and drop it at the seam you want; drop it away from the rail and it floats. Nothing reloads when it moves, so the preview keeps its page and the terminal keeps its scrollback',
+      'Your arrangement is remembered per project, so each one opens the way you left it. Save any arrangement as the default new projects start from, or reset a project back to following it. Four starting points — Default, Focus, Design and Review — and everything the drag can do is also a named control in the Layout menu, so nothing is reachable only by pointer',
+      'Reorder by dragging: elements in the navigator, CSS variables, and your pinned projects in the sidebar. Moving an element in the navigator moves it in your source, not just in the view',
+      "Fixed: closing a project took more than one click. The X on a pinned project was two buttons wearing the same glyph in the same place — it closed the session, then silently became Unpin, so the close looked like nothing had happened and the obvious second click did something you didn't ask for. The X means one thing now, a closed pin reads as closed, and unpinning lives in the row's right-click menu",
+      'The dashboard cards fold away: Workspace accounts and Preferences collapse and expand like Tools on this Mac already did, and each remembers whether you left it open',
+    ],
+  },
+  {
     version: '1.3.1', // v1.3.1
     items: [
       'Fixed: the app could quit on its own, with no warning and no error — most often when you switched away from a project or closed the app. It was killing itself: the first dev server of each session was tracked under an id that meant "every process in this app" to the operating system, so cleaning it up took the whole app down. Nothing was lost when it happened, but nothing explained it either',
