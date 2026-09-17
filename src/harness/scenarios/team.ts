@@ -92,7 +92,8 @@ export const teamScenarios: Scenario[] = [
     // The rail slot is the column the panel takes, and its resize handle is the
     // thing you drag to size it. Its absence is the bug: a docked column that is
     // either not there or cannot be sized.
-    requires: '.workspace-dock__slot[data-panel="team"] .workspace-dock__resize',
+    requires:
+      '.workspace-dock__column:has(.workspace-dock__slot[data-panel="team"]) .workspace-dock__resize',
     commands: { ...workspaceCommands, ...teamCommands },
   },
   {

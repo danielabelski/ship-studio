@@ -86,7 +86,8 @@ export const layoutScenarios: Scenario[] = [
       [LAYOUT_KEY]: layout(['team', 'agent', 'preview'], [], { team: 340, agent: 320 }),
       ...teamOpen,
     },
-    requires: '.workspace-dock__slot[data-panel="team"] .workspace-dock__resize',
+    requires:
+      '.workspace-dock__column:has(.workspace-dock__slot[data-panel="team"]) .workspace-dock__resize',
     commands: { ...workspaceCommands, ...teamCommands },
   },
 
