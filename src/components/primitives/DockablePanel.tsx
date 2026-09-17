@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { PanelResizeHandle } from './PanelResizeHandle';
+import type { PanelDockBinding } from '../../contexts/PanelDockContext';
 
 interface Point {
   left: number;
@@ -43,6 +44,47 @@ interface DockablePanelProps {
   keepWithinViewport?: boolean;
   /** Optional layer override for a docked, body-portaled surface. */
   dockedZIndex?: CSSProperties['zIndex'];
+  /**
+   * Ties this panel to the workspace rail: where its placeholder belongs, and
+   * where to report a drag of its header.
+   *
+   * Optional, because this primitive is also used by floating tools that have
+   * no place in the rail (the colour picker). Without it the panel behaves
+   * exactly as it always did — an inline placeholder, and a header drag that
+   * moves the window and nothing else.
+   */
+  dock?: PanelDockBinding;
+}
+
+/**
+ * How far the pointer must travel before a press on a header counts as a drag.
+ *
+ * Below this it is a click — and a click must not move anything, which it did:
+ * releasing resolves a drop at the pointer, and the middle of a wide panel's
+ * header is further from any seam than the snap distance, so clicking a docked
+ * panel's title floated it.
+ */
+const DRAG_THRESHOLD_PX = 4;
+
+/**
+ * Promote a press to a drag the first time the pointer travels far enough, and
+ * report that to the rail exactly once.
+ *
+ * @returns whether a drag is now in progress
+ */
+function beginDragOnce(
+  pressRef: { current: { pointerId: number; x: number; y: number; moved: boolean } | null },
+  pointerId: number,
+  point: { x: number; y: number },
+  dock: PanelDockBinding | undefined
+): boolean {
+  const press = pressRef.current;
+  if (!press || press.pointerId !== pointerId) return false;
+  if (press.moved) return true;
+  if (Math.hypot(point.x - press.x, point.y - press.y) < DRAG_THRESHOLD_PX) return false;
+  press.moved = true;
+  dock?.onDragStart(point);
+  return true;
 }
 
 const VIEWPORT_GUTTER = 8;
@@ -130,6 +172,7 @@ export function DockablePanel({
   resizable = true,
   keepWithinViewport = false,
   dockedZIndex,
+  dock,
 }: DockablePanelProps) {
   const internalPlaceholderRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -145,6 +188,20 @@ export function DockablePanel({
   );
   const floatingPanelSizeRef = useRef(floatingPanelSize);
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
+  /**
+   * A press on the header that has not yet become a drag.
+   *
+   * A press is not a gesture until the pointer moves. Without this, clicking a
+   * docked panel's title *resolves as a drop* at wherever the title happens to
+   * be — and the middle of a wide panel is further than the snap distance from
+   * any seam, so a click on the agent panel's header floated it. The rail is
+   * only told a drag has begun once the pointer has actually travelled.
+   */
+  const pressRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  // A drag of a *docked* panel's header. It moves the panel in the layout
+  // rather than on screen, so it carries no offset — only the pointer id, to
+  // tell its moves apart from a floating drag's.
+  const layoutDragRef = useRef<number | null>(null);
   const cornerResizePointerRef = useRef<number | null>(null);
 
   const updateFloatingSize = useCallback((next: Size) => {
@@ -207,13 +264,29 @@ export function DockablePanel({
       observer.disconnect();
       window.removeEventListener('resize', measureDock);
     };
-  }, [measureDock, placeholderClassName, dockLayoutKey]);
+  }, [measureDock, placeholderClassName, dockLayoutKey, dock?.layoutKey, dock?.slotElement]);
+
+  // A neighbour being resized, or the rail being reordered, moves this panel
+  // without changing its size — so nothing it observes would fire. The rail
+  // says when it happens instead.
+  const subscribeGeometry = dock?.subscribeGeometry;
+  useEffect(() => subscribeGeometry?.(measureDock), [subscribeGeometry, measureDock]);
 
   useEffect(() => {
     if (!docked) return;
     const animationFrame = requestAnimationFrame(measureDock);
     return () => cancelAnimationFrame(animationFrame);
   }, [docked, measureDock]);
+
+  // Claim a column while this panel exists and is showing, and give it back the
+  // moment it closes — a docked panel that is closed must not leave an empty
+  // band of workspace behind it.
+  const setPresent = dock?.setPresent;
+  useEffect(() => {
+    if (!setPresent) return;
+    setPresent(visible);
+    return () => setPresent(false);
+  }, [setPresent, visible]);
 
   useEffect(() => {
     if (docked || savedSizeRef.current) return;
@@ -243,16 +316,35 @@ export function DockablePanel({
 
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (docked) return;
       const target = event.target as HTMLElement;
       // Portaled panels can still be React descendants of another panel (the
       // Variables colour picker is one example). React bubbles those pointer
       // events through the component tree even though the surfaces are DOM
       // siblings, so only the closest surface may claim this gesture.
       if (target.closest('.dockable-panel__surface') !== event.currentTarget) return;
-      bringToFront();
+      if (!docked) bringToFront();
       if (!target.closest('[data-dockable-drag-handle]')) return;
       if (target.closest('button, a, input, select, [role="button"], [role="tablist"]')) return;
+
+      // One gesture, two meanings, decided by what the panel currently is.
+      // Docked, dragging the header is how you move the panel in the layout;
+      // floating, it is how you move the window. Both report to the rail, so a
+      // floating panel dragged over it can be dropped back in.
+      pressRef.current = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        moved: false,
+      };
+
+      if (docked) {
+        if (!dock) return;
+        layoutDragRef.current = event.pointerId;
+        surfaceRef.current?.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+        return;
+      }
+
       const rect = surfaceRef.current?.getBoundingClientRect();
       if (!rect) return;
       dragRef.current = {
@@ -263,13 +355,22 @@ export function DockablePanel({
       surfaceRef.current?.setPointerCapture?.(event.pointerId);
       event.preventDefault();
     },
-    [bringToFront, docked]
+    [bringToFront, dock, docked]
   );
 
   const handlePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const target = event.target as HTMLElement;
       if (target.closest('.dockable-panel__surface') !== event.currentTarget) return;
+
+      const point = { x: event.clientX, y: event.clientY };
+      const started = beginDragOnce(pressRef, event.pointerId, point, dock);
+
+      if (layoutDragRef.current === event.pointerId) {
+        if (started) dock?.onDragMove(point);
+        return;
+      }
+
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
       setPosition(
@@ -279,24 +380,63 @@ export function DockablePanel({
           keepWithinViewport
         )
       );
+      if (started) dock?.onDragMove(point);
     },
-    [floatingSize, keepWithinViewport]
+    [dock, floatingSize, keepWithinViewport]
   );
 
   const handlePointerUp = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const target = event.target as HTMLElement;
       if (target.closest('.dockable-panel__surface') !== event.currentTarget) return;
+
+      // A press that never moved is a click, not a drop: the rail was never
+      // told a drag started, so there is nothing for it to resolve.
+      //
+      // The null check is explicit rather than an optional chain. A synthetic
+      // event may carry no `pointerId` at all, and `undefined === undefined`
+      // is true — which let a released press match a press that never happened.
+      const press = pressRef.current;
+      const moved = press !== null && press.pointerId === event.pointerId && press.moved;
+      pressRef.current = null;
+
+      if (layoutDragRef.current === event.pointerId) {
+        layoutDragRef.current = null;
+        surfaceRef.current?.releasePointerCapture?.(event.pointerId);
+        if (moved) dock?.onDragEnd({ x: event.clientX, y: event.clientY });
+        return;
+      }
+
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
       dragRef.current = null;
       surfaceRef.current?.releasePointerCapture?.(event.pointerId);
+      // Where it was left is remembered whatever the rail decides: a panel
+      // dropped into a slot still has a floating position to return to.
       setPosition((current) => {
         localStorage.setItem(positionKey, JSON.stringify(current));
         return current;
       });
+      if (moved) dock?.onDragEnd({ x: event.clientX, y: event.clientY });
     },
-    [positionKey]
+    [dock, positionKey]
+  );
+
+  const handlePointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      pressRef.current = null;
+      if (layoutDragRef.current === event.pointerId) {
+        layoutDragRef.current = null;
+        surfaceRef.current?.releasePointerCapture?.(event.pointerId);
+      } else if (dragRef.current?.pointerId === event.pointerId) {
+        dragRef.current = null;
+        surfaceRef.current?.releasePointerCapture?.(event.pointerId);
+      }
+      // A cancelled gesture is not a drop. Put the drag away without moving
+      // anything — the panel stays where it was when the pointer was lost.
+      dock?.onDragCancel();
+    },
+    [dock]
   );
 
   const maxFloatingWidth = Math.max(
@@ -445,31 +585,48 @@ export function DockablePanel({
   // Feature classes such as `--preview` must never promote a docked panel
   // above a floating one merely because both surfaces share that feature.
   const surfaceStyle: CSSProperties = docked
-    ? { ...dockStyle, zIndex: dockedZIndex ?? 'var(--z-dropdown)' }
+    ? { ...dockStyle, zIndex: dock?.dockedZIndex ?? dockedZIndex ?? 'var(--z-dropdown)' }
     : floatingStyle;
+  // A docked surface with no measured slot has no geometry, so it would paint
+  // at its natural size in the corner. That never happened while placeholders
+  // were inline (the ref callback measures in the same commit); it can happen
+  // for a rail slot, which is only created once this panel says it wants one.
+  const awaitingDock = docked && dockStyle === undefined;
+
+  const placeholder = (
+    <div
+      ref={assignPlaceholderRef}
+      className={`dockable-panel__placeholder dockable-panel__placeholder--${
+        docked ? 'docked' : 'floating'
+      }${placeholderClassName ? ` ${placeholderClassName}` : ''}`}
+      aria-hidden
+    />
+  );
 
   return (
     <>
-      <div
-        ref={assignPlaceholderRef}
-        className={`dockable-panel__placeholder dockable-panel__placeholder--${
-          docked ? 'docked' : 'floating'
-        }${placeholderClassName ? ` ${placeholderClassName}` : ''}`}
-        aria-hidden
-      />
+      {/* The placeholder is the panel's *position*, and it is the only thing
+          that moves when a layout changes. Portaling it into a rail slot is
+          what lets a panel be reordered without its contents — a live terminal,
+          a preview iframe — being touched at all. Without a slot (no rail, or
+          this panel is floating) it stays where it is written, which is how
+          every non-workspace user of this primitive behaves. */}
+      {dock?.slotElement ? createPortal(placeholder, dock.slotElement) : placeholder}
       {createPortal(
         <div
           ref={surfaceRef}
           className={`dockable-panel__surface ${
             docked ? 'dockable-panel__surface--docked' : 'dockable-panel__surface--floating'
-          }${!visible ? ' is-hidden' : ''}${surfaceClassName ? ` ${surfaceClassName}` : ''}`}
+          }${!visible || awaitingDock ? ' is-hidden' : ''}${
+            surfaceClassName ? ` ${surfaceClassName}` : ''
+          }`}
           style={surfaceStyle}
           aria-label={ariaLabel}
           aria-hidden={!visible}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
         >
           {children}
           {!docked && resizable && (
