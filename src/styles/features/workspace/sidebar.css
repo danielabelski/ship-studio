@@ -479,6 +479,16 @@
   background: var(--surface-control);
 }
 
+/* A pin whose session has been closed. The row stays — that is the point of a
+ * pin — but closing it has to be visible, or the click reads as a no-op and
+ * the user goes hunting for another button to press. Muting the name is the
+ * whole signal; the row is still a one-click launcher. */
+.sidebar-project-row[data-parked='true'] .sidebar-project-name,
+.sidebar-project-row[data-parked='true'] .sidebar-project-initials,
+.sidebar-project-row[data-parked='true'] .sidebar-project-meta {
+  color: var(--text-muted);
+}
+
 /* Pinned project sorting follows the same leading-handle convention as the
  * panel layout menu. The row owns hover/focus feedback; the handle is only a
  * hit target and never paints a separate control surface. */

@@ -148,9 +148,10 @@ interface Props {
    *  entry, and (if it was the current project) route back to home. Called
    *  by the per-row close button. */
   onCloseProject?: (projectPath: string) => void;
-  /** Unpin a pinned row. Rendered as the row's hover action when there's no
-   *  live session to close — without it, a pin whose folder was moved or
-   *  deleted outside the app could never be removed (issue #366). */
+  /** Unpin a pinned row. Reached from the row's context menu — never from
+   *  the X, which always means "close this session" and nothing else. A pin
+   *  whose folder was moved or deleted outside the app is still removable
+   *  there (issue #366), since the menu doesn't need a live session. */
   onUnpinProject?: (projectPath: string) => void;
   /** Persist a reordered pinned-project list through the feature adapter. */
   onReorderProjects?: (orderedPaths: string[]) => Promise<void> | void;
@@ -1053,7 +1054,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
       : unpinProject
         ? (_shouldPin: boolean) => unpinProject()
         : undefined;
-    const canUnpin = !canClose && unpinProject !== undefined;
     const hasRunningDevServer = isProjectDevServerRunning
       ? isProjectDevServerRunning(row.projectPath)
       : isCurrent && devServerRunning;
@@ -1107,7 +1107,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         isPinned={isPinned}
         onOpenRenameProject={onRenameProject ? () => handleOpenRenameProject(row) : undefined}
         onOpenProjectSettings={() => void handleOpenProjectSettings(row)}
-        onUnpin={canUnpin ? unpinProject : undefined}
         onTogglePin={togglePin}
         onStopDevServer={stopDevServer}
         sortable={sortable}
@@ -1812,7 +1811,6 @@ function ProjectGroup({
   isPinned,
   onOpenRenameProject,
   onOpenProjectSettings,
-  onUnpin,
   onTogglePin,
   onStopDevServer,
   sortable,
@@ -1837,9 +1835,6 @@ function ProjectGroup({
   onOpenProjectSettings: () => void;
   /** Shown as a hover-only X when defined. */
   onClose?: () => void;
-  /** Hover-only unpin action for rows with no live session (issue #366).
-   *  Ignored when `onClose` is present — one hover action per row. */
-  onUnpin?: () => void;
   /** Toggle the pin state shown in the context menu. */
   onTogglePin?: (shouldPin: boolean) => void;
   /** Stop this row's dev server when one is explicitly tracked. */
@@ -1863,6 +1858,11 @@ function ProjectGroup({
   const memoryLabel =
     row.memoryBytes > 0 ? `${Math.round(row.memoryBytes / (1024 * 1024))}MB` : null;
   const showWorkingIndicator = !isExpanded && isWorking;
+  // A pin whose session has been closed. The row deliberately survives — the
+  // pin is the user's standing choice — but it must not keep looking like a
+  // live one, or closing it reads as "nothing happened" and the next click
+  // goes looking for something else to press.
+  const isParked = isPinned && row.status === 'inactive';
 
   const projectContent = (
     <>
@@ -1870,6 +1870,7 @@ function ProjectGroup({
         <ContextMenuTrigger asChild>
           <div
             className="sidebar-project-row"
+            data-parked={isParked || undefined}
             role="button"
             tabIndex={0}
             aria-current={isCurrent ? 'true' : undefined}
@@ -1931,19 +1932,6 @@ function ProjectGroup({
                   onClose();
                 }}
                 aria-label={`Close ${row.fallbackName}`}
-              />
-            )}
-            {!compact && !onClose && onUnpin && (
-              <IconButton
-                className="sidebar-project-control sidebar-project-close"
-                variant="ghost"
-                size="compact"
-                icon={<CloseIcon size={10} />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onUnpin();
-                }}
-                aria-label={`Unpin ${row.fallbackName}`}
               />
             )}
             {!compact && (

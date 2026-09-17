@@ -819,6 +819,87 @@ describe('WorkspaceSidebar project close button', () => {
     });
   });
 
+  it('never lets the X change meaning under the cursor on a pinned row', async () => {
+    // The bug: closing a pinned project left the row exactly where it was,
+    // and the X — same glyph, same pixel — silently became Unpin. The close
+    // looked like a no-op, so the next click landed on a destructive action
+    // nobody asked for.
+    const user = userEvent.setup();
+    const onCloseProject = vi.fn((path: string) => sessionRegistry.destroy(path));
+    const onUnpinProject = vi.fn();
+
+    const pinned: PinnedProjectRow = {
+      projectPath: ACTIVE_PATH,
+      fallbackName: 'active-project',
+      status: 'active',
+      agentStatus: 'idle',
+      unreadCount: 0,
+      memoryBytes: 0,
+      isCurrent: false,
+    };
+
+    const { container, rerender } = render(
+      <WorkspaceSidebar
+        {...activeSidebarProps()}
+        projects={[pinned]}
+        onCloseProject={onCloseProject}
+        onUnpinProject={onUnpinProject}
+      />,
+      { wrapper: Providers }
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Close active-project' }));
+    expect(onCloseProject).toHaveBeenCalledWith(ACTIVE_PATH);
+
+    // What `usePinnedProjects` hands back once the session is gone.
+    rerender(
+      <WorkspaceSidebar
+        {...activeSidebarProps()}
+        projects={[{ ...pinned, status: 'inactive' }]}
+        onCloseProject={onCloseProject}
+        onUnpinProject={onUnpinProject}
+      />
+    );
+
+    // The pin survives, but nothing clickable is left in the X's place.
+    expect(screen.queryByRole('button', { name: 'Close active-project' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Unpin active-project' })).toBeNull();
+    expect(onUnpinProject).not.toHaveBeenCalled();
+
+    // And the row says so, so the close doesn't read as nothing happening.
+    expect(container.querySelector('.sidebar-project-row[data-parked="true"]')).toBeInTheDocument();
+  });
+
+  it('still unpins a closed pin from the context menu (issue #366)', async () => {
+    // Removing the hover X must not strand a pin whose folder was moved or
+    // deleted outside the app — that is the case the X was added for.
+    const user = userEvent.setup();
+    const onUnpinProject = vi.fn();
+    const { container } = render(
+      <WorkspaceSidebar
+        {...activeSidebarProps()}
+        projects={[
+          {
+            projectPath: ACTIVE_PATH,
+            fallbackName: 'active-project',
+            status: 'inactive',
+            agentStatus: 'idle',
+            unreadCount: 0,
+            memoryBytes: 0,
+            isCurrent: false,
+          },
+        ]}
+        onUnpinProject={onUnpinProject}
+      />,
+      { wrapper: Providers }
+    );
+
+    fireEvent.contextMenu(container.querySelector<HTMLElement>('.sidebar-project-row')!);
+    await user.click(screen.getByRole('menuitem', { name: 'Unpin from sidebar' }));
+
+    expect(onUnpinProject).toHaveBeenCalledWith(ACTIVE_PATH);
+  });
+
   it('offers Pin to sidebar for an unpinned active project', async () => {
     const user = userEvent.setup();
     const onTogglePinProject = vi.fn().mockResolvedValue(undefined);
