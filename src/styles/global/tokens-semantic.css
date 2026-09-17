@@ -29,6 +29,7 @@
   --border-accent: var(--color-gray-200);
 
   --border-width-default: var(--stroke-1);
+  --border-width-emphasis: var(--stroke-2);
 
   --accent-active: var(--color-green-500);
   --accent-active-hover: var(--color-green-600);
@@ -131,6 +132,8 @@
   --radius-sm: var(--radius-4);
   --radius-lg: var(--radius-12);
   --radius-pill: var(--radius-999);
+
+  --mask-opaque: var(--color-black);
 
   --tint-subtle: rgba(255, 255, 255, 0.05);
   --tint-strong: rgba(255, 255, 255, 0.1);

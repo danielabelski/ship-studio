@@ -95,9 +95,7 @@
 .ss-var-sort-item > .ss-var-row > .ss-var-row__name > .ss-var-row__type-icon,
 .ss-var-sort-item > .ss-var-row > .ss-var-row__name > code {
   transform: translateX(0);
-  transition-property: transform;
-  transition-duration: var(--duration-slow);
-  transition-timing-function: var(--ease-icon-swap);
+  transition: transform var(--transition-icon-swap);
 }
 
 .ss-var-sort-item > .ss-var-row > .ss-var-row__colon {
@@ -161,7 +159,7 @@
   > code {
   -webkit-mask-image: linear-gradient(
     to right,
-    var(--color-black)
+    var(--mask-opaque)
       calc(
         100% - var(--button-height-compact) - var(--size-icon-button) - var(--spacing-xs) -
           var(--spacing-md)
@@ -171,7 +169,7 @@
   );
   mask-image: linear-gradient(
     to right,
-    var(--color-black)
+    var(--mask-opaque)
       calc(
         100% - var(--button-height-compact) - var(--size-icon-button) - var(--spacing-xs) -
           var(--spacing-md)
@@ -191,7 +189,7 @@
 /* The six-dot glyph is visually top-heavy inside its square viewBox. Keep the
    button box aligned with the row, then optically center only the artwork. */
 .ss-var-row__drag-handle svg {
-  transform: translateY(var(--space-02));
+  transform: translateY(var(--spacing-2xs));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -261,7 +259,7 @@
   flex: 0 0 auto;
   align-self: flex-start;
   /* Keep the chip centered on the first text line, not the whole wrapped value. */
-  margin-block-start: var(--space-02);
+  margin-block-start: var(--spacing-2xs);
   width: var(--size-icon-button);
   height: var(--size-icon-button);
   border: var(--stroke-1) solid var(--border-default);
@@ -279,7 +277,7 @@
 }
 .ss-var-row__swatch--button:focus-visible {
   outline: var(--stroke-1) solid var(--accent-active);
-  outline-offset: var(--space-02);
+  outline-offset: var(--spacing-2xs);
 }
 
 .ss-var-row__type-icon {

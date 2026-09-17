@@ -46,7 +46,7 @@
 }
 
 .dockable-panel__surface--floating {
-  border: var(--stroke-1) solid var(--border-subtle);
+  border: var(--border-width-default) solid var(--border-subtle);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-window);
 }
@@ -55,7 +55,7 @@
    real surface out of the rail. Give that transient surface the same depth as
    a floating window without changing its docked feature styles. */
 .dockable-panel__surface--dragging {
-  border: var(--stroke-1) solid var(--border-subtle);
+  border: var(--border-width-default) solid var(--border-subtle);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-window);
 }
@@ -84,13 +84,13 @@
 }
 
 .dockable-panel__surface > .dockable-panel__resize-handle--width {
-  width: var(--stroke-1);
+  width: var(--border-width-default);
   height: auto;
 }
 
 .dockable-panel__surface > .dockable-panel__resize-handle--height {
   width: auto;
-  height: var(--stroke-1);
+  height: var(--border-width-default);
 }
 
 .dockable-panel__surface > .dockable-panel__resize-corner {

@@ -218,8 +218,8 @@
   color: var(--text-secondary);
   transition:
     padding-inline-start var(--drag-sort-reorder-transition),
-    background-color var(--duration-fast) var(--ease-standard),
-    box-shadow var(--duration-fast) var(--ease-standard);
+    background-color var(--transition-interaction-fast),
+    box-shadow var(--transition-interaction-fast);
 }
 
 /* Keep the row neutral until the drag manager has crossed the activation
