@@ -15,15 +15,15 @@
  * @module components/dashboard/MachineToolsPanel
  */
 
-import { useState, useEffect, type KeyboardEvent } from 'react';
-import { CheckIcon, WarningIcon, ChevronIcon, ClaudeIcon, GitHubIcon } from '@/components/icons';
+import { useState, useEffect } from 'react';
+import { CheckIcon, WarningIcon, ClaudeIcon, GitHubIcon } from '@/components/icons';
 import { Spinner } from '../primitives/Spinner';
+import { DashboardCardDisclosure } from './DashboardCardDisclosure';
 import { getFullSetupStatus, SetupItem, SETUP_ITEM_ORDER, MACHINE_ITEM_IDS } from '../../lib/setup';
 import { logger } from '../../lib/logger';
 import { asCommandError, formatCommandError } from '../../lib/errors';
 
 export function MachineToolsPanel() {
-  const [isExpanded, setIsExpanded] = useState(false);
   const [setupItems, setSetupItems] = useState<SetupItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -85,67 +85,44 @@ export function MachineToolsPanel() {
     <WarningIcon size={14} className="integration-bar-status-icon warning" />
   );
 
-  const toggleExpanded = () => setIsExpanded((value) => !value);
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      toggleExpanded();
-    }
-  };
-
   return (
-    <section
-      className={`dashboard-card integration-bar ${isExpanded ? 'is-expanded' : ''}`}
-      data-education-id="machine-tools"
-      role="button"
-      tabIndex={0}
-      aria-label="Tools on this Mac"
-      aria-expanded={isExpanded}
-      onClick={toggleExpanded}
-      onKeyDown={handleKeyDown}
+    <DashboardCardDisclosure
+      storageKey="shipstudio.dashboard.machineToolsExpanded"
+      title="Tools on this Mac"
+      className="integration-bar"
+      educationId="machine-tools"
+      subtitle={
+        <div className="dashboard-card-subtitle integration-bar-subtitle text-style-control">
+          {statusIcon}
+          <span>{subtitle}</span>
+          <span className="machine-tools-shared-hint">
+            · installed once, shared by every workspace
+          </span>
+        </div>
+      }
     >
-      <div className="dashboard-card-header integration-bar-header">
-        <div>
-          <h3 className="dashboard-card-title text-style-h4">Tools on this Mac</h3>
-          <div className="dashboard-card-subtitle integration-bar-subtitle text-style-control">
-            {statusIcon}
-            <span>{subtitle}</span>
-            <span className="machine-tools-shared-hint">
-              · installed once, shared by every workspace
-            </span>
-          </div>
-        </div>
-        <ChevronIcon
-          size={14}
-          className={`integration-bar-chevron ${isExpanded ? 'up' : 'down'}`}
-        />
-      </div>
-
-      {isExpanded && (
-        <div className="dashboard-card-rows">
-          {setupItems.map((item) => {
-            const isReady = item.status === 'ready';
-            return (
-              <div key={item.id} className="dashboard-card-row is-static">
-                <div className={`dashboard-card-row-icon ${isReady ? 'success' : ''}`}>
-                  {getItemIcon(item.id)}
-                </div>
-                <div className="dashboard-card-row-main">
-                  <span className="dashboard-card-row-name text-style-body-medium">
-                    {item.friendlyName}
-                  </span>
-                  <span
-                    className={`dashboard-card-row-status text-style-control ${isReady ? 'success' : ''}`}
-                  >
-                    {getStatusText(item)}
-                  </span>
-                </div>
+      <div className="dashboard-card-rows">
+        {setupItems.map((item) => {
+          const isReady = item.status === 'ready';
+          return (
+            <div key={item.id} className="dashboard-card-row is-static">
+              <div className={`dashboard-card-row-icon ${isReady ? 'success' : ''}`}>
+                {getItemIcon(item.id)}
               </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
+              <div className="dashboard-card-row-main">
+                <span className="dashboard-card-row-name text-style-body-medium">
+                  {item.friendlyName}
+                </span>
+                <span
+                  className={`dashboard-card-row-status text-style-control ${isReady ? 'success' : ''}`}
+                >
+                  {getStatusText(item)}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </DashboardCardDisclosure>
   );
 }

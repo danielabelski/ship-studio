@@ -23,6 +23,24 @@ export const appScenarios: Scenario[] = [
     commands: {},
   },
   {
+    id: 'dashboard-cards-collapsed',
+    requires: '.dashboard-disclosure',
+    title: 'Dashboard — the card stack folded away',
+    looksRightWhen:
+      'Workspace accounts, Preferences and Tools on this Mac read as three identical summary ' +
+      'rows: same height, same padding, each with its chevron pointing down at the same x. ' +
+      'No card has a gap below its heading where a body used to be, and the headings are as ' +
+      'bright as every other heading on the page.',
+    // All three shut, which is the state that shows whether they actually
+    // match. Nobody has to scroll to compare them.
+    storage: {
+      'shipstudio.dashboard.workspaceAccountsExpanded': '0',
+      'shipstudio.dashboard.preferencesExpanded': '0',
+      'shipstudio.dashboard.machineToolsExpanded': '0',
+    },
+    commands: {},
+  },
+  {
     id: 'dashboard-empty',
     // Without this the scenario photographed the three projects from the base
     // fixture: the dashboard reads `get_dashboard_projects`, and only the two

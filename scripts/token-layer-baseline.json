@@ -875,19 +875,13 @@
     {
       "path": "src/styles/features/dashboard/projects.css",
       "token": "--space-04",
-      "count": 2,
-      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
-    },
-    {
-      "path": "src/styles/features/dashboard/projects.css",
-      "token": "--stroke-2",
       "count": 1,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
       "path": "src/styles/features/dashboard/projects.css",
       "token": "--transition",
-      "count": 11,
+      "count": 8,
       "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
     },
     {

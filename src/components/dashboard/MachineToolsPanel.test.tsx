@@ -51,6 +51,7 @@ function mockSetupStatus(items: SetupItem[]) {
 describe('MachineToolsPanel', () => {
   beforeEach(() => {
     invokeResults.clear();
+    localStorage.clear();
   });
 
   it('renders the machine-tools card title', async () => {
@@ -59,17 +60,29 @@ describe('MachineToolsPanel', () => {
     await waitFor(() => expect(screen.getByText('Tools on this Mac')).toBeInTheDocument());
   });
 
-  it('uses the whole card as the expand/collapse surface', async () => {
+  it('expands and collapses from its header, and remembers which', async () => {
     mockSetupStatus([item({ id: 'homebrew', friendlyName: 'Homebrew' })]);
+    const view = render(<MachineToolsPanel />);
+
+    // The header is a real button, not a clickable section: the other cards in
+    // this stack have buttons in their bodies, and nesting them inside one
+    // would give the card a single enormous hit target.
+    const header = await screen.findByRole('button', { name: 'Tools on this Mac' });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(header);
+
+    await waitFor(() => expect(header).toHaveAttribute('aria-expanded', 'true'));
+    expect(header.closest('.dashboard-disclosure')).toHaveClass('is-expanded');
+
+    // Open stays open across a remount — otherwise every visit to the
+    // dashboard folds the card back up on you.
+    view.unmount();
     render(<MachineToolsPanel />);
-
-    const card = await screen.findByRole('button', { name: 'Tools on this Mac' });
-    expect(card).toHaveAttribute('aria-expanded', 'false');
-
-    fireEvent.click(card);
-
-    await waitFor(() => expect(card).toHaveAttribute('aria-expanded', 'true'));
-    expect(card).toHaveClass('is-expanded');
+    expect(await screen.findByRole('button', { name: 'Tools on this Mac' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
   });
 
   it('lists only machine-tier tools and never the per-workspace logins', async () => {
