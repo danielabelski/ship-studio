@@ -6,6 +6,15 @@ The latest entry is rendered inside the in-app update dialog, so write user-
 facing language — what changed, in plain English — not commit subjects.
 -->
 
+## What's New in v1.4.0
+
+- **Put every panel where you want it** - Agent, Team, Variables, Edit and Elements can be dragged anywhere in the workspace: either side of the preview, stacked above or below another panel in the same column, or floated as a window. Drop a panel away from the rail and it floats. Nothing reloads when it moves — the preview keeps its page and the terminal keeps its scrollback
+- **The arrangement is remembered per project** - Each project opens the way you left it. Save any arrangement as the default new projects start from, or reset a project back to following it. Four starting points to work from — Default, Focus, Design and Review — and everything the drag can do is also in the Layout menu as a named control, so nothing is reachable only by pointer
+- **Reorder things by dragging them** - Elements in the navigator, CSS variables, and your pinned projects in the sidebar. Moving an element in the navigator moves it in your source, not just in the view
+- **Fixed: closing a project took more than one click** - The X on a pinned project was two different buttons wearing the same glyph in the same place: it closed the session, then silently became Unpin. Closing a pin looked like nothing had happened, so the obvious second click did something you didn't ask for. The X now means one thing — close this session — a closed pin reads as closed, and unpinning lives in the row's right-click menu
+- **The dashboard cards fold away** - Workspace accounts and Preferences collapse and expand like Tools on this Mac already did, and each remembers whether you left it open
+
+
 ## What's New in v1.3.1
 
 - **Fixed: the app quitting on its own** - Most often when switching away from a project or closing the app. The first dev server of each session was tracked under an id that meant "every process in this app" to the OS, so cleaning it up took the whole app down with it
