@@ -37,6 +37,8 @@ export interface UseProjectRailReturn {
   handleRailClick: (projectPath: string) => void;
   /** Unpin a project from the rail's context menu. */
   handleRailUnpin: (projectPath: string) => void;
+  /** Persist a new pinned-project order, surfacing failures via toast. */
+  handleReorderProjects: (orderedPaths: string[]) => Promise<void>;
   /** Pin a project from the picker and open it. */
   handleAddProject: (projectPath: string) => void;
 }
@@ -88,6 +90,24 @@ export function useProjectRail({
     [handleTogglePin]
   );
 
+  const reorderPinnedProjects = pinnedProjects.reorder;
+  const handleReorderProjects = useCallback(
+    async (orderedPaths: string[]) => {
+      try {
+        await reorderPinnedProjects(orderedPaths);
+      } catch (e) {
+        const detail = formatCommandError(asCommandError(e));
+        showToast(`Couldn't reorder pinned projects: ${detail}`, 'error');
+        logger.error('[useProjectRail] Pin reorder failed', {
+          error: detail,
+          orderedPaths,
+        });
+        throw e;
+      }
+    },
+    [reorderPinnedProjects, showToast]
+  );
+
   const handleAddProject = useCallback(
     (projectPath: string) => {
       void (async () => {
@@ -99,5 +119,12 @@ export function useProjectRail({
     [handleTogglePin, handleSelectProject]
   );
 
-  return { pinnedProjects, handleTogglePin, handleRailClick, handleRailUnpin, handleAddProject };
+  return {
+    pinnedProjects,
+    handleTogglePin,
+    handleRailClick,
+    handleRailUnpin,
+    handleReorderProjects,
+    handleAddProject,
+  };
 }

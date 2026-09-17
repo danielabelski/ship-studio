@@ -11,6 +11,7 @@ function variablesState(): ReturnType<typeof useCssVariables> {
     addVariable: vi.fn(),
     analyzeDeletion: vi.fn(),
     deleteVariable: vi.fn(),
+    reorderVariables: vi.fn(),
     reload: vi.fn(),
   };
 }

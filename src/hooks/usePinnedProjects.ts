@@ -19,7 +19,7 @@
  * @module hooks/usePinnedProjects
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   listPinnedProjects,
   pinProject as pinProjectApi,
@@ -62,6 +62,12 @@ export interface PinnedProjectRow {
 export interface UsePinnedProjectsReturn {
   /** Ordered rows for the rail. */
   rows: PinnedProjectRow[];
+  /**
+   * Last canonical order returned by the persistence API. This deliberately
+   * stays unchanged while a reorder is optimistic so global shortcuts and
+   * commands never point at an order the backend has not confirmed yet.
+   */
+  confirmedPaths: readonly string[];
   /** Set of pinned project paths (for O(1) "is this pinned?" checks). */
   pinnedSet: ReadonlySet<string>;
   /** True while the initial fetch is in flight. */
@@ -115,22 +121,53 @@ function buildRows(
  */
 export function usePinnedProjects(currentProjectPath: string | null): UsePinnedProjectsReturn {
   const [pinnedPaths, setPinnedPaths] = useState<string[]>([]);
+  const confirmedPathsRef = useRef<string[]>([]);
+  const [confirmedPaths, setConfirmedPaths] = useState<string[]>([]);
+  const latestReorderRef = useRef(0);
+  const reorderQueueRef = useRef(Promise.resolve());
+  const activeReordersRef = useRef(0);
+  const refreshDeferredRef = useRef(false);
   const [snapshots, setSnapshots] = useState<SessionSnapshot[]>(() =>
     sessionRegistry.snapshotAll()
   );
   const [isLoading, setIsLoading] = useState(true);
 
+  const confirmPinnedPaths = useCallback((paths: readonly string[]) => {
+    const next = [...paths];
+    confirmedPathsRef.current = next;
+    setConfirmedPaths(next);
+  }, []);
+
+  const applyPinnedPaths = useCallback(
+    (paths: readonly string[], confirmed: boolean) => {
+      const next = [...paths];
+      if (confirmed) confirmPinnedPaths(next);
+      setPinnedPaths(next);
+    },
+    [confirmPinnedPaths]
+  );
+
   // Initial fetch + subscribe to backend pin changes. There's no event from
   // the backend today (pins.json mutations come only from this app), so we
   // just refetch on demand via `refresh()`.
   const refresh = useCallback(async () => {
+    if (activeReordersRef.current > 0) {
+      refreshDeferredRef.current = true;
+      return;
+    }
     try {
       const list = await listPinnedProjects();
-      setPinnedPaths(list);
+      // A reorder may have started while the backend read was in flight. Do
+      // not let that stale response overwrite the optimistic/confirmed order.
+      if (activeReordersRef.current > 0) {
+        refreshDeferredRef.current = true;
+        return;
+      }
+      applyPinnedPaths(list, true);
     } catch (err) {
       logger.warn('[usePinnedProjects] Failed to list pinned projects', { error: String(err) });
     }
-  }, []);
+  }, [applyPinnedPaths]);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,51 +189,101 @@ export function usePinnedProjects(currentProjectPath: string | null): UsePinnedP
     return unsubscribe;
   }, []);
 
-  const pin = useCallback(async (projectPath: string) => {
-    try {
-      const updated = await pinProjectApi(projectPath);
-      setPinnedPaths(updated);
-      void trackEvent('project_pinned', {
-        project_id: getProjectId(projectPath),
-        project_name: basename(projectPath),
-        pin_count: updated.length,
-      });
-    } catch (err) {
-      logger.error('[usePinnedProjects] Failed to pin project', {
-        projectPath,
-        error: String(err),
-      });
-      throw err;
-    }
-  }, []);
+  const pin = useCallback(
+    async (projectPath: string) => {
+      if (activeReordersRef.current > 0) await reorderQueueRef.current;
+      try {
+        const updated = await pinProjectApi(projectPath);
+        applyPinnedPaths(updated, true);
+        void trackEvent('project_pinned', {
+          project_id: getProjectId(projectPath),
+          project_name: basename(projectPath),
+          pin_count: updated.length,
+        });
+      } catch (err) {
+        logger.error('[usePinnedProjects] Failed to pin project', {
+          projectPath,
+          error: String(err),
+        });
+        throw err;
+      }
+    },
+    [applyPinnedPaths]
+  );
 
-  const unpin = useCallback(async (projectPath: string) => {
-    try {
-      const updated = await unpinProjectApi(projectPath);
-      setPinnedPaths(updated);
-      void trackEvent('project_unpinned', {
-        project_id: getProjectId(projectPath),
-        project_name: basename(projectPath),
-        pin_count: updated.length,
-      });
-    } catch (err) {
-      logger.error('[usePinnedProjects] Failed to unpin project', {
-        projectPath,
-        error: String(err),
-      });
-      throw err;
-    }
-  }, []);
+  const unpin = useCallback(
+    async (projectPath: string) => {
+      if (activeReordersRef.current > 0) await reorderQueueRef.current;
+      try {
+        const updated = await unpinProjectApi(projectPath);
+        applyPinnedPaths(updated, true);
+        void trackEvent('project_unpinned', {
+          project_id: getProjectId(projectPath),
+          project_name: basename(projectPath),
+          pin_count: updated.length,
+        });
+      } catch (err) {
+        logger.error('[usePinnedProjects] Failed to unpin project', {
+          projectPath,
+          error: String(err),
+        });
+        throw err;
+      }
+    },
+    [applyPinnedPaths]
+  );
 
-  const reorder = useCallback(async (orderedPaths: string[]) => {
-    try {
-      const updated = await reorderPinsApi(orderedPaths);
-      setPinnedPaths(updated);
-    } catch (err) {
-      logger.error('[usePinnedProjects] Failed to reorder pins', { error: String(err) });
-      throw err;
-    }
-  }, []);
+  const reorder = useCallback(
+    (orderedPaths: string[]) => {
+      const nextOrder = [...orderedPaths];
+      const requestId = latestReorderRef.current + 1;
+      latestReorderRef.current = requestId;
+      // Apply the visible order immediately. Each queued commit captures its
+      // confirmed predecessor when it begins, so a later request never rolls
+      // back a successful earlier request.
+      applyPinnedPaths(nextOrder, false);
+      activeReordersRef.current += 1;
+
+      const commit = async () => {
+        const confirmedBeforeCommit = [...confirmedPathsRef.current];
+        // A preceding queued commit may have changed the canonical order.
+        // Re-apply this request's optimistic order immediately before its own
+        // backend write unless a newer request already owns the visible order.
+        if (requestId === latestReorderRef.current) applyPinnedPaths(nextOrder, false);
+        try {
+          const updated = await reorderPinsApi(nextOrder);
+          // Every successful write advances the confirmed snapshot, but an
+          // older queued request must not overwrite the newer optimistic view.
+          if (requestId === latestReorderRef.current) applyPinnedPaths(updated, true);
+          else confirmPinnedPaths(updated);
+        } catch (err) {
+          if (requestId === latestReorderRef.current) {
+            applyPinnedPaths(confirmedBeforeCommit, true);
+          } else {
+            confirmPinnedPaths(confirmedBeforeCommit);
+          }
+          logger.error('[usePinnedProjects] Failed to reorder pins', { error: String(err) });
+          throw err;
+        } finally {
+          activeReordersRef.current -= 1;
+          if (activeReordersRef.current === 0 && refreshDeferredRef.current) {
+            refreshDeferredRef.current = false;
+            void refresh();
+          }
+        }
+      };
+
+      const queued = reorderQueueRef.current.then(commit, commit);
+      // Keep the queue alive after a failed commit; the caller still receives
+      // the rejection, while a later command can serialize behind it.
+      reorderQueueRef.current = queued.then(
+        () => undefined,
+        () => undefined
+      );
+      return queued;
+    },
+    [applyPinnedPaths, confirmPinnedPaths, refresh]
+  );
 
   const rows = useMemo(
     () => buildRows(pinnedPaths, snapshots, currentProjectPath),
@@ -207,6 +294,7 @@ export function usePinnedProjects(currentProjectPath: string | null): UsePinnedP
 
   return {
     rows,
+    confirmedPaths,
     pinnedSet,
     isLoading,
     hasPins: pinnedPaths.length > 0,

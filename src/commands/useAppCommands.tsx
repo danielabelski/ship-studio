@@ -37,7 +37,7 @@ import {
 export interface UseAppCommandsParams {
   currentProject: Project | null;
   /** Pinned project paths in sidebar order (for the "Projects" tab). */
-  pinnedPaths: string[];
+  pinnedPaths: readonly string[];
   /** Opens a project (wired to the same handler the sidebar uses). */
   handleSelectProject: (project: Project) => void | Promise<void>;
   handleBackToProjects: () => void;

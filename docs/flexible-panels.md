@@ -9,12 +9,23 @@ this, five of them had a *fixed* place — an order somebody chose once, written
 into a CSS grid — and the only thing you could change was whether a panel was
 docked or floating. Two people who work differently could not both be right.
 
-Now the workspace is one **rail**: an ordered row of docked panels with the
-preview somewhere in it. You drag a panel's header to move it — before or after
-the preview, to either end, or out of the rail entirely to float it over the
-work. Drag a floating panel back onto the rail and it docks where the indicator
-says. The arrangement is saved for the project you did it in, and you can save
-any arrangement as the default every *other* project starts from.
+Now the workspace is one **rail** made of columns: an ordered row of docked
+columns with the preview somewhere in it. Each non-preview column can contain
+one or more panels stacked vertically. You drag a panel's header to move it —
+before or after another panel to stack it, onto a column gap to create a new
+column, or out of the rail entirely to float it over the work. Drag a floating
+panel back onto the rail and it docks where the indicator says. The arrangement
+is saved for the project you did it in, and you can save any arrangement as the
+default every *other* project starts from.
+
+The Panel Layout menu is a small spatial editor for the same arrangement. It
+shows columns on either side of a locked Preview column, the panels stacked in
+each column, and a Floating tray. Every drag action has a named control too:
+move up/down in a stack, stack with the column to the left/right, move to a new
+column on either side, and float or dock. The previous flat menu is retained as
+`WorkspaceLayoutMenuLegacy` and can be selected by setting
+`shipstudio.layoutMenuImplementation` to `legacy` in localStorage while testing
+the new editor.
 
 ## Why it wasn't just a reorder
 
@@ -29,27 +40,43 @@ The six panels lived at two nesting levels with two different layout mechanisms:
   the panels in a fixed sequence. There was no representation of "order" to
   change; the order *was* the stylesheet.
 
-So the work was not to add dragging. It was to give the workspace a layout
-model it did not have, and then let a drag write to it.
+So the work was not to add dragging. It was to give the workspace a nested
+layout model it did not have, and then let a drag write to it.
 
 ## The model
 
 ```ts
+interface PanelPlacement {
+  panel: PanelId;
+  /** Relative vertical share of this panel inside its column. */
+  weight: number;
+}
+
+type WorkspaceColumn =
+  | { kind: 'preview' }
+  | { kind: 'panels'; width?: number; panels: PanelPlacement[] };
+
 interface WorkspaceLayout {
-  /** The rail, left to right. Contains 'preview' exactly once. */
-  order: RailItem[];        // ('agent'|'navigator'|'variables'|'editor'|'team'|'preview')[]
-  /** Panels shown as a movable window instead of in the rail. */
+  /** Columns from left to right. Preview appears exactly once. */
+  columns: WorkspaceColumn[];
+  /** Panels shown as movable windows instead of in the rail. */
   floating: PanelId[];
-  /** Docked width in px, per panel. */
-  widths: Partial<Record<PanelId, number>>;
 }
 ```
 
-One ordered array, not a left list and a right list. `preview` is a member of
-it, so "which side is this panel on" is a comparison of two indices rather than
-a second piece of state that can disagree with the first. A drag is a splice.
+The model is an ordered list of columns, not a left list and a right list.
+Preview is a locked member of that list, so “which side is this panel on” is a
+comparison with one structural boundary. A non-preview column owns its width;
+its panel placements own relative vertical weights. A 30/70 stack therefore
+survives window resizing without storing fragile pixel heights. A drag is a
+splice within a column or between columns.
 
-A floating panel **keeps its place in `order`**. That is what makes floating
+When a v1 preference is read, each visible panel becomes a singleton column,
+preserving its old order, floating state and saved width. Existing localStorage
+keys stay unchanged; `normalizeLayout` accepts both shapes and writes the new
+shape after the first change.
+
+A floating panel **keeps its placement**. That is what makes floating
 reversible: re-dock it and it returns to the slot it left, instead of landing
 at an end and making you drag it back.
 
@@ -73,7 +100,8 @@ the real **surface** to `<body>`, positioned over the placeholder's measured
 rect. That is what let a panel switch between docked and floating without
 remounting an xterm terminal.
 
-Flexible panels use the same seam. `WorkspaceDock` renders one slot per panel;
+Flexible panels use the same seam. `WorkspaceDock` renders one slot per visible
+panel inside each column;
 `DockablePanel` takes a `dockSlotId` and portals its *placeholder* into the
 matching slot. So moving a panel moves an empty measured div, and:
 
@@ -81,7 +109,8 @@ matching slot. So moving a panel moves an empty measured div, and:
   the editor keep their position in the DOM for the life of the workspace. An
   iframe reloads when it is moved in the DOM; this never moves one.
 - The rail's children are rendered in a **fixed** DOM order and positioned with
-  the flex `order` property. Reordering is a style change, not a tree change.
+  the flex `order` property. Reordering is a style change, not a tree change. A
+  stack changes slot weights, not the panel surface's DOM position.
 
 `WorkspaceDock` therefore has no knowledge of what any panel contains, and a
 panel has no knowledge of where it is.
@@ -90,15 +119,19 @@ panel has no knowledge of where it is.
 
 One rule: **dragging a header does what the panel's current state implies.**
 
-- Docked → a *layout* drag. Drop indicators appear between rail slots; release
-  splices the panel there. Drag away from the rail and release to float it.
+- Docked → a *layout* drag. The live panel surface lifts and follows the cursor
+  while a full-height vertical indicator means “new column” and a horizontal
+  indicator inside a column means “stack above/below”. Release splices the
+  panel there. Drag away from the rail and release to float it exactly where it
+  was released.
 - Floating → the window moves (`DockablePanel`'s existing behaviour). Drag it
   over the rail and the indicator appears; release docks it there.
 
-The drop index is computed by `dropIndexAt` from the slot rects and the pointer
-— a pure function, unit-tested, so the interaction can be reasoned about
-without a browser. Keyboard equivalents (`Move panel left` / `right` / `Float` /
-`Dock`) exist for everything the pointer can do; a drag is never the only way.
+The drop target is computed from the slot and column rects and the pointer — a
+pure function, unit-tested, so the interaction can be reasoned about without a
+browser. Keyboard equivalents (`Move panel up` / `down`, `Move to new column`,
+`Stack with`, `Float` / `Dock`) exist for everything the pointer can do; a drag
+is never the only way.
 
 ## Persistence
 
@@ -110,6 +143,7 @@ ratios, per-project Team open state):
 | --- | --- |
 | `shipstudio.layout.default` | The layout new projects start from |
 | `shipstudio.layout.project:<path>` | This project's arrangement, written only once you change something here |
+| `shipstudio.layout.scope` | `project` (default) or `global`, selected in the Panel Layout menu |
 
 Not `.shipstudio/project.json`. That file is inside the repository and is meant
 for things the *project* has — its hosting link. A pane width is something a
@@ -120,6 +154,17 @@ A project with no entry uses the default, live: change your default and every
 project you have not personally arranged follows it. **Reset layout** deletes
 the project's entry rather than writing the default into it, so it goes back to
 following.
+
+The Panel Layout menu's **Layout applies to** selector chooses how edits are
+persisted. **This project** keeps the behaviour above: a project override is
+created on the first edit and projects without one follow the shared default.
+**All projects** makes every project read and write `shipstudio.layout.default`,
+so switching projects keeps the same visible arrangement. Switching to All
+projects first promotes the currently visible arrangement to the shared default;
+switching back to This project copies that arrangement into the current
+project's override. Existing overrides remain stored while global scope is
+active, but are ignored until project scope is selected again. Save as default
+and Reset this project are only shown in project scope.
 
 Legacy preferences (`agentPanelPinned`, `elementTreePinned`,
 `variablesPanelPinned`, `visualEditorPinned`, `teamPanelPinned`, and the four

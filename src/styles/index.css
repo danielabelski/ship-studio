@@ -39,6 +39,7 @@
 @import './components/value-field.css';
 @import './components/error-boundary.css';
 @import './components/breadcrumb.css';
+@import './components/drag-sort.css';
 
 /* Features */
 @import './features/setup.css';

@@ -67,6 +67,8 @@
 
 .terminal-content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   position: relative;
   /* Keep the content gutter on the same surface as the agent terminal. This

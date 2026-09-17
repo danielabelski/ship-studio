@@ -2,10 +2,7 @@
    See docs/flexible-panels.md and components/workspace/WorkspaceDock.tsx. */
 
 :root {
-  /* The grab strip on a slot's inner edge. Matches the two-pane split handle
-     it replaces, so the workspace has one resize target width. */
-  --dock-handle-w: var(--space-08);
-  --dock-drop-line-w: var(--stroke-2);
+  --dock-drop-line-w: var(--border-width-emphasis);
   /* Each row is a panel, where it is, and three controls to move it. */
   --dock-layout-menu-w: 280px;
 }
@@ -16,6 +13,47 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* ===== Stacked panel columns ===== */
+
+/* A column owns one width handle and lays its panel placeholders vertically.
+   The panel surfaces remain body-portaled; only their empty placeholders live
+   in these boxes, so changing a stack never remounts a terminal or iframe. */
+.workspace-dock__column {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: none;
+  flex-direction: column;
+}
+
+.workspace-dock__column > .workspace-dock__slot {
+  flex-basis: 0;
+  flex-shrink: 1;
+}
+
+.workspace-dock__column > .workspace-dock__resize {
+  top: 0;
+  bottom: 0;
+}
+
+.workspace-dock__slot > .workspace-dock__stack-resize {
+  position: absolute;
+  right: 0;
+  bottom: calc(var(--border-width-default) / -2);
+  left: 0;
+  z-index: var(--z-pane-separator);
+  width: auto;
+  height: var(--border-width-default);
+}
+
+.workspace-dock__drop-line--stack {
+  width: auto;
+  height: var(--dock-drop-line-w);
+  margin-top: calc(var(--dock-drop-line-w) / -2);
+  margin-left: 0;
 }
 
 /* An empty, measured box. Its panel's real surface is body-portaled over it by
@@ -58,21 +96,21 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: var(--dock-handle-w);
-  /* Above the docked surface (which sits at --z-dropdown) so the target stays
-     grabbable, and below chrome — a separator that outranks a toolbar's menus
-     draws its line through them. Same reasoning as --z-pane-separator's own. */
+  /* Match the shared sidebar handle: one visible stroke with its wider hit
+     target supplied by `.panel-resize-handle::before`. Keep it above the
+     docked surface so the edge remains grabbable. */
+  width: var(--border-width-default);
   z-index: var(--z-pane-separator);
 }
 
 /* The handle goes on the edge facing the preview, so dragging always means
    "make this panel wider or narrower" in the direction you'd expect. */
 .workspace-dock__resize--left {
-  right: calc(var(--dock-handle-w) / -2);
+  right: calc(var(--border-width-default) / -2);
 }
 
 .workspace-dock__resize--right {
-  left: calc(var(--dock-handle-w) / -2);
+  left: calc(var(--border-width-default) / -2);
 }
 
 /* Fullscreen preview.
@@ -104,11 +142,13 @@
   width: var(--dock-drop-line-w);
   margin-left: calc(var(--dock-drop-line-w) / -2);
   background: var(--accent-active);
+  border-radius: var(--radius-pill);
   box-shadow: 0 0 0 var(--space-04) rgba(var(--accent-active-rgb), 0.2);
   pointer-events: none;
-  /* Above the fullscreen rail and its floating panels: the indicator has to be
-     visible over whatever it is being dropped between. */
-  z-index: var(--z-tooltip);
+  /* Keep the target line above every pinned/fixed workspace surface, but below
+     floating panels. Floating panels are body-portaled windows and must remain
+     the topmost workspace content while a drag passes beneath them. */
+  z-index: var(--z-dock-drop-indicator);
 }
 
 /* What releasing now would do, in words, next to the cursor. An insertion line
@@ -165,6 +205,16 @@
    the three controls that move it — a menu of state rather than of commands. */
 .workspace-layout-menu {
   min-width: var(--dock-layout-menu-w);
+  /* This menu is portaled to body. It must clear both the workspace header
+     stacking context and panels opened after the menu. */
+  z-index: var(--z-tooltip);
+}
+
+.workspace-layout-menu__title {
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-xs);
+  color: var(--text-primary);
+  font-size: var(--font-size-body-lg);
+  font-weight: var(--font-weight-heading);
 }
 
 .workspace-layout-menu__section {
@@ -178,13 +228,91 @@
 
 .workspace-layout-menu__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: var(--spacing-sm);
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: var(--spacing-xs);
   align-items: center;
-  padding: var(--spacing-xs) var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-interaction-fast);
+}
+
+/* This selector is deliberately composed on the same element as the shared
+   primitive. A later transition shorthand would replace the primitive's
+   transform transition and make rows snap instead of sliding. Keep the
+   overlay's presentational row out of this rule: it never moves in flow. */
+.drag-sort__item.workspace-layout-menu__row {
+  transition:
+    background-color var(--transition-interaction-fast),
+    transform var(--drag-sort-reorder-transition);
+}
+
+.workspace-layout-menu__row:not(.workspace-layout-menu__row--preview):hover {
+  background: var(--surface-control-hover);
+}
+
+.workspace-layout-menu__row:not(.workspace-layout-menu__row--preview):active {
+  background: var(--surface-selected);
+}
+
+.workspace-layout-menu__row--preview {
+  height: var(--border-width-default);
+  min-height: var(--border-width-default);
+  margin: var(--spacing-xs) 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.workspace-layout-menu__row--preview.is-boundary {
+  background: var(--border-default);
+}
+
+.workspace-layout-menu__preview-label {
+  position: absolute;
+  width: var(--border-width-default);
+  height: var(--border-width-default);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.workspace-layout-menu__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.workspace-layout-menu__drag-handle-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-icon-button);
+  height: var(--size-icon-button);
+  color: var(--text-muted);
+}
+
+.drag-sort__overlay > .workspace-layout-menu__row--overlay {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--spacing-xs) var(--spacing-xs);
+  pointer-events: none;
+}
+
+.drag-sort__overlay:has(> .workspace-layout-menu__column--overlay),
+.drag-sort__overlay:has(> .workspace-layout-menu__tile--overlay) {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.workspace-layout-menu__row--overlay .workspace-layout-menu__move {
+  cursor: default;
 }
 
 .workspace-layout-menu__name {
+  min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--font-size-menu-item);
@@ -246,9 +374,445 @@
   transform: rotate(-90deg);
 }
 
+.workspace-layout-menu__move--up svg {
+  transform: rotate(180deg);
+}
+
+.workspace-layout-menu__context-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workspace-layout-menu__context-icon--up svg {
+  transform: rotate(180deg);
+}
+
+.workspace-layout-menu__context-icon--left svg {
+  transform: rotate(90deg);
+}
+
+.workspace-layout-menu__context-icon--right svg {
+  transform: rotate(-90deg);
+}
+
 .workspace-layout-menu__presets {
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-md) var(--spacing-sm);
+}
+
+.workspace-layout-menu__scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-md) var(--spacing-sm);
+}
+
+.workspace-layout-menu__scope-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-label);
+}
+
+.workspace-layout-menu__scope-tabs {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: calc(
+    var(--control-height-standard) + var(--spacing-xs) + 2 * var(--border-width-default)
+  );
+  box-sizing: border-box;
+  padding: var(--spacing-2xs);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-panel);
+}
+
+.workspace-layout-menu__scope-tabs .tabs__list {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--spacing-3xs);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspace-layout-menu__scope-tabs .tabs__tab.button {
+  flex: 1 1 0;
+  height: var(--control-height-standard);
+  min-height: var(--control-height-standard);
+  padding: 0 var(--spacing-sm);
+  border-radius: var(--radius-control);
+}
+
+.workspace-layout-menu__scope-tabs .tabs__indicator {
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  box-shadow: var(--shadow-button);
+}
+
+/* ===== Spatial layout editor ===== */
+
+.workspace-layout-menu--spatial {
+  --workspace-layout-menu-hit-area: var(--workspace-layout-menu-row-height);
+  box-sizing: border-box;
+  width: min(var(--workspace-layout-menu-width), calc(100vw - var(--spacing-lg) * 2));
+  min-width: min(var(--workspace-layout-menu-width), calc(100vw - var(--spacing-lg) * 2));
+  max-width: calc(100vw - var(--spacing-lg) * 2);
+  max-height: min(80vh, calc(100vh - var(--spacing-lg) * 2));
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: hidden;
+}
+
+.workspace-layout-menu__scroll-body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.workspace-layout-menu__footer {
+  min-width: 0;
+  flex: 0 0 auto;
+  background: var(--surface-panel);
+}
+
+.workspace-layout-menu__canvas {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  align-items: stretch;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: visible;
+  padding: var(--spacing-xs) var(--spacing-md) var(--spacing-sm);
+}
+
+.workspace-layout-menu__side {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--spacing-2xs);
+}
+
+.workspace-layout-menu__side > .workspace-layout-menu__section {
+  padding-inline-start: 0;
+}
+
+.workspace-layout-menu__side-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.workspace-layout-menu__column {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--spacing-2xs);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-card);
+  background: var(--surface-control);
+  box-shadow: var(--shadow-sm);
+}
+
+.workspace-layout-menu__column-sort-item {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.drag-sort__item.workspace-layout-menu__column-sort-item {
+  transition: transform var(--drag-sort-reorder-transition);
+}
+
+.workspace-layout-menu__column-label-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-height: var(--size-control-compact);
+  padding-inline-start: var(--spacing-xs);
+  padding-inline-end: var(--spacing-sm);
+}
+
+.workspace-layout-menu__column-label-row .drag-sort__handle {
+  width: var(--size-control-compact);
+  min-width: var(--size-control-compact);
+  height: var(--size-control-compact);
+  min-height: var(--size-control-compact);
+}
+
+.workspace-layout-menu__column-label-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+  margin-inline-end: calc(-1 * var(--spacing-xs));
+  width: 0;
+  min-width: 0;
+  inline-size: 0;
+  min-inline-size: 0;
+  flex-basis: 0;
+}
+
+.workspace-layout-menu__panel-row .drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+  margin-inline-end: calc(-1 * var(--spacing-2xs));
+  width: 0;
+  min-width: 0;
+  inline-size: 0;
+  min-inline-size: 0;
+  flex-basis: 0;
+}
+
+.workspace-layout-menu__column-sort-item:not([data-drag-sort-hover-reveal-blocked='true']):hover
+  .workspace-layout-menu__column-label-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'],
+.workspace-layout-menu__column-sort-item:not(
+    [data-drag-sort-hover-reveal-blocked='true']
+  ):focus-within
+  .workspace-layout-menu__column-label-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'],
+.workspace-layout-menu__column-sort-item:not([data-drag-sort-hover-reveal-blocked='true']):hover
+  .workspace-layout-menu__panel-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'],
+.workspace-layout-menu__column-sort-item:not(
+    [data-drag-sort-hover-reveal-blocked='true']
+  ):focus-within
+  .workspace-layout-menu__panel-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'],
+.workspace-layout-menu__column-sort-item:has(
+    .workspace-layout-menu__column-label-row .drag-sort__handle:focus-visible
+  )
+  .workspace-layout-menu__column-label-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+  margin-inline-end: 0;
+}
+
+.workspace-layout-menu__column-sort-item:has(
+    .workspace-layout-menu__panel-row .drag-sort__handle:focus-visible
+  )
+  .workspace-layout-menu__panel-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+  margin-inline-end: 0;
+}
+
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true']):hover
+  .workspace-layout-menu__panel-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'],
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true']):focus-within
+  .workspace-layout-menu__panel-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'],
+.drag-sort__item:has(.workspace-layout-menu__panel-row .drag-sort__handle:focus-visible)
+  .workspace-layout-menu__panel-row
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+  margin-inline-end: 0;
+}
+
+.workspace-layout-menu__column--preview {
+  min-height: var(--size-control-standard);
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-2xs) var(--spacing-xs);
+  background: var(--surface-recessed);
+  border: var(--border-width-default) solid var(--border-default);
+  color: var(--text-muted);
+}
+
+.workspace-layout-menu__column--overlay {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.workspace-layout-menu--spatial .workspace-layout-menu__preview-label {
+  position: static;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  overflow: hidden;
+  clip-path: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-badge);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-layout-menu__column-label {
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-badge);
+  font-weight: var(--font-weight-label);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.workspace-layout-menu__new-column {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: var(--workspace-layout-menu-hit-area);
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2xs);
+  border: 0;
+  border-radius: var(--radius-card);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-badge);
+  text-align: center;
+  transition:
+    background-color var(--transition-interaction-fast),
+    color var(--transition-interaction-fast),
+    transform var(--drag-sort-reorder-transition);
+}
+
+.workspace-layout-menu__new-column-target {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--workspace-layout-menu-hit-area);
+}
+
+.workspace-layout-menu__new-column:hover,
+.workspace-layout-menu__new-column[data-drag-sort-target='true'],
+.workspace-layout-menu__new-column-target[data-drag-sort-target='true']
+  .workspace-layout-menu__new-column {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+}
+
+.workspace-layout-menu__tile {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  transition:
+    background-color var(--transition-interaction-fast),
+    transform var(--drag-sort-reorder-transition);
+}
+
+.workspace-layout-menu__panel-drop-placeholder {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-height: var(--size-control-compact);
+  border: var(--border-width-default) dashed var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-selected);
+  opacity: var(--drag-sort-placeholder-opacity);
+  pointer-events: none;
+}
+
+.workspace-layout-menu__panel-row {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  min-height: var(--size-control-compact);
+  padding-block: var(--spacing-sm);
+  padding-inline-start: var(--spacing-xs);
+  padding-inline-end: var(--spacing-sm);
+  white-space: nowrap;
+}
+
+.workspace-layout-menu__tile:hover {
+  background: var(--surface-control-hover);
+}
+
+.workspace-layout-menu__move--pin[aria-pressed='true'] {
+  background: transparent;
+  border-color: transparent;
+}
+
+.workspace-layout-menu__move--pin:hover:not(:disabled),
+.workspace-layout-menu__move--pin:focus-visible {
+  background: var(--surface-control-hover);
+}
+
+.workspace-layout-menu__tile-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-menu-item);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-layout-menu__overlay-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: var(--size-control-compact);
+  min-width: var(--size-control-compact);
+  height: var(--size-control-compact);
+  min-height: var(--size-control-compact);
+  align-items: center;
+  justify-content: center;
+  color: var(--button-text-default);
+}
+
+.workspace-layout-menu__icon-action,
+.workspace-layout-menu__more,
+.workspace-layout-menu__panel-row .drag-sort__handle {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: var(--size-control-compact);
+  min-height: var(--size-control-compact);
+}
+
+.workspace-layout-menu__tile--overlay {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.workspace-layout-menu__tile--overlay > .workspace-layout-menu__panel-row {
+  height: 100%;
+}
+
+.workspace-layout-menu__floating {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-md) var(--spacing-sm);
+}
+
+.workspace-layout-menu__floating .workspace-layout-menu__tile,
+.workspace-layout-menu__tile--floating {
+  background: var(--surface-control);
+}
+
+.workspace-layout-menu__empty {
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: var(--text-muted);
+  font-size: var(--font-size-label);
 }

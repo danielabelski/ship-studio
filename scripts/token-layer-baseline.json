@@ -45,9 +45,21 @@
       "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
     },
     {
-      "path": "src/styles/components/dockable-panel.css",
-      "token": "--stroke-1",
-      "count": 3,
+      "path": "src/styles/components/drag-sort.css",
+      "token": "--duration-slow",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/components/drag-sort.css",
+      "token": "--ease-icon-swap",
+      "count": 1,
+      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
+    },
+    {
+      "path": "src/styles/components/drag-sort.css",
+      "token": "--space-04",
+      "count": 1,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
@@ -745,12 +757,6 @@
       "token": "--transition-fast",
       "count": 2,
       "reason": "Transitional migration-alias consumer; replace with the canonical semantic role."
-    },
-    {
-      "path": "src/styles/features/css-globals.css",
-      "token": "--space-02",
-      "count": 2,
-      "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
       "path": "src/styles/features/css-globals.css",
@@ -1835,13 +1841,13 @@
     {
       "path": "src/styles/features/workspace/sidebar.css",
       "token": "--space-04",
-      "count": 1,
+      "count": 2,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {
       "path": "src/styles/features/workspace/sidebar.css",
       "token": "--space-06",
-      "count": 9,
+      "count": 10,
       "reason": "Transitional primitive consumer; replace with an owner-appropriate semantic or component role."
     },
     {

@@ -1,0 +1,273 @@
+/* Shared DragSort interaction surfaces. Geometry is supplied by the manager. */
+.drag-sort__item {
+  position: relative;
+  transform: var(--drag-sort-transform, none);
+  transition: transform var(--drag-sort-reorder-transition);
+}
+
+/* The committed DOM order replaces the optimistic transform at the same
+   visual position. Do not transition that bookkeeping reset: doing so would
+   make the row appear to drop into an already occupied destination twice. */
+.drag-sort__item[data-drag-sort-transition-suppressed='true'] {
+  transition: none;
+}
+
+/* Item activation makes the whole sortable surface the drag affordance. Keep
+   the cursor on the registered row so nested controls can retain their own
+   pointer affordances. The explicit dragging state also survives pointer
+   capture, when :active is no longer reliable. */
+.drag-sort__item[data-drag-sort-activation='item'] {
+  cursor: grab;
+}
+
+.drag-sort__item[data-drag-sort-activation='item']:active,
+.drag-sort__item[data-drag-sort-activation='item'][data-drag-sort-dragging='true'] {
+  cursor: grabbing;
+}
+
+/* Pointer dragging leaves the handle focused after release so keyboard users
+   can continue from the same item. Only expose the ring for keyboard-visible
+   focus; pointer focus should not make the dropped row look selected. */
+.drag-sort__item:has(:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--accent-focus);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.drag-sort__item[data-drag-sort-placeholder='true'] {
+  /* Keep the source in the hit-test tree so WebKit pointer capture survives
+     activation and target crossings. Its measured box is the moving
+     placeholder; the body portal supplies the visible row. */
+  opacity: var(--drag-sort-source-opacity);
+}
+
+/* Nested sortables can expose a row-sized drop surface inside their
+   draggable/placeholder box. Keep its target state on that surface so an
+   insertion line follows the row rather than the enclosing subtree. */
+.drag-sort__target {
+  position: relative;
+}
+
+.drag-sort__target-wrap {
+  width: 100%;
+  min-width: 0;
+}
+
+/* A delayed inside move gets a real, in-flow child slot so the release
+   destination stays visible underneath the pointer overlay. */
+.drag-sort__inside-slot {
+  box-sizing: border-box;
+  width: calc(100% - var(--spacing-md));
+  height: var(--drag-sort-inside-slot-height);
+  margin: var(--spacing-2xs) var(--spacing-xs) var(--spacing-2xs) var(--spacing-md);
+  border-radius: var(--radius-control);
+  background: var(--drag-sort-target-indicator);
+  box-shadow: var(--shadow-sm);
+  opacity: var(--drag-sort-placeholder-opacity);
+  pointer-events: none;
+}
+
+.drag-sort__item.is-disabled {
+  cursor: default;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true']:not(
+    :has(.drag-sort__target)
+  ).is-target::after,
+.drag-sort__target[data-drag-sort-target-indicator='true'].is-target::after {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: var(--drag-sort-target-indicator-width);
+  content: '';
+  background: var(--drag-sort-target-indicator);
+  opacity: var(--drag-sort-overlay-opacity);
+  pointer-events: none;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true']:not(
+    :has(.drag-sort__target)
+  )[data-drag-sort-placement='before']::after,
+.drag-sort__target[data-drag-sort-target-indicator='true'][data-drag-sort-placement='before']::after {
+  top: 0;
+  bottom: auto;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true']:not(
+    :has(.drag-sort__target)
+  )[data-drag-sort-axis='horizontal'][data-drag-sort-placement='before']::after,
+.drag-sort__item[data-drag-sort-target-indicator='true']:not(
+    :has(.drag-sort__target)
+  )[data-drag-sort-axis='horizontal'][data-drag-sort-placement='after']::after,
+.drag-sort__target[data-drag-sort-target-indicator='true'][data-drag-sort-axis='horizontal'][data-drag-sort-placement='before']::after,
+.drag-sort__target[data-drag-sort-target-indicator='true'][data-drag-sort-axis='horizontal'][data-drag-sort-placement='after']::after {
+  inset-block: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--drag-sort-target-indicator-width);
+  height: auto;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true']:not(
+    :has(.drag-sort__target)
+  )[data-drag-sort-axis='horizontal'][data-drag-sort-placement='before']::after,
+.drag-sort__target[data-drag-sort-target-indicator='true'][data-drag-sort-axis='horizontal'][data-drag-sort-placement='before']::after {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true']:not(
+    :has(.drag-sort__target)
+  )[data-drag-sort-axis='horizontal'][data-drag-sort-placement='after']::after {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
+.drag-sort__target[data-drag-sort-target-indicator='true'][data-drag-sort-axis='horizontal'][data-drag-sort-placement='after']::after {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
+.drag-sort__item[data-drag-sort-target-indicator='true']:not(
+    :has(.drag-sort__target)
+  ).is-invalid-target::after,
+.drag-sort__target[data-drag-sort-target-indicator='true'].is-invalid-target::after {
+  background: var(--accent-error);
+}
+
+/* The projected slot is the drop affordance. Render it behind the pointer
+   overlay at the active item's destination so the user can read the whole
+   row-sized area as one target. It is a filled slot, not an insertion divider;
+   dividers stay on the target row's edge marker above. */
+.drag-sort__placeholder {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-drag-sort-placeholder);
+  box-sizing: border-box;
+  width: var(--drag-sort-placeholder-width);
+  height: var(--drag-sort-placeholder-height);
+  pointer-events: none;
+  background: var(--drag-sort-target-indicator);
+  opacity: var(--drag-sort-placeholder-opacity);
+  border: 0;
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-sm);
+  transform: translate3d(var(--drag-sort-placeholder-x), var(--drag-sort-placeholder-y), 0);
+  transition:
+    transform var(--drag-sort-reorder-transition),
+    opacity var(--drag-sort-reorder-transition);
+  will-change: transform;
+}
+
+.drag-sort__handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--size-icon-button);
+  height: var(--size-icon-button);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: grab;
+}
+
+.drag-sort__handle:hover:not(:disabled),
+.drag-sort__handle:focus-visible {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.drag-sort__handle:focus-visible {
+  outline: none;
+}
+
+.drag-sort__handle:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.drag-sort__handle:disabled {
+  opacity: var(--button-disabled-opacity);
+  cursor: default;
+}
+
+/* Hover-revealed handles stay mounted so keyboard users can always reach them.
+   The item may deliberately open a compact inline slot for this variant;
+   opacity, scale, and blur remain separate so the reveal is interruptible
+   without affecting the sortable row's transform transition. */
+.drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+  width: 0;
+  min-width: 0;
+  inline-size: 0;
+  min-inline-size: 0;
+  flex-basis: 0;
+  overflow: hidden;
+  opacity: 0;
+  filter: blur(var(--space-04));
+  transform: scale(0.25);
+  transform-origin: left center;
+  transition-property: opacity, transform, filter, width, inline-size, flex-basis;
+  transition-duration: var(--duration-slow);
+  transition-timing-function: var(--ease-icon-swap);
+}
+
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true']):hover
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'][data-drag-sort-handle-reveal-on='item'],
+.drag-sort__item:not([data-drag-sort-hover-reveal-blocked='true']):focus-within
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'][data-drag-sort-handle-reveal-on='item'],
+.drag-sort__item:has(:focus-visible)
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'][data-drag-sort-handle-reveal-on='item'] {
+  width: var(--size-icon-button);
+  inline-size: var(--size-icon-button);
+  flex-basis: var(--size-icon-button);
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+.drag-sort__overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-drag-sort-overlay);
+  box-sizing: border-box;
+  width: var(--drag-sort-overlay-width);
+  height: var(--drag-sort-overlay-height);
+  opacity: var(--drag-sort-overlay-opacity);
+  pointer-events: none;
+  background: var(--surface-panel);
+  border-radius: var(--radius-control);
+  box-shadow: var(--drag-sort-overlay-shadow);
+  transform: translate3d(var(--drag-sort-overlay-x), var(--drag-sort-overlay-y), 0);
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.drag-sort__overlay[hidden] {
+  display: none;
+}
+
+.drag-sort__overlay[data-drag-sort-phase='dropping'],
+.drag-sort__overlay[data-drag-sort-phase='cancelling'] {
+  transition: transform var(--drag-sort-settle-transition);
+}
+
+.drag-sort__instructions,
+.drag-sort__live-region {
+  position: fixed;
+  width: var(--drag-sort-overlay-border-width);
+  height: var(--drag-sort-overlay-border-width);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drag-sort__item,
+  .drag-sort__overlay,
+  .drag-sort__handle[data-drag-sort-handle-visibility='hover'] {
+    transition: none;
+  }
+}

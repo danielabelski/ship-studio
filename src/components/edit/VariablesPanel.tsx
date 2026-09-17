@@ -68,6 +68,7 @@ export function VariablesPanel({
           onDeleteVariable={(variable, impact) =>
             variablesState.deleteVariable(variable.name, variable.value, impact)
           }
+          onReorderVariables={variablesState.reorderVariables}
         />
       </div>
     </div>

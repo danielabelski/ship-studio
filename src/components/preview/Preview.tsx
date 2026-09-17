@@ -1970,6 +1970,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                   ? {
                       selectAndRun: structure.selectAndRun,
                       insert: (position, kind) => void structure.insert(position, kind),
+                      move: (sourceNodeId, targetNodeId, position) =>
+                        structure.move(sourceNodeId, targetNodeId, position),
                       duplicate: () => void structure.duplicate(),
                       remove: () => void structure.remove(),
                       copy: () => void structure.copy(),
@@ -1977,6 +1979,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                       paste: () => void structure.paste(),
                       hasClipboard: structure.hasClipboard,
                       clipboardSourceNodeId: structure.clipboardSourceNodeId,
+                      busy: structure.busy,
                     }
                   : undefined
               }

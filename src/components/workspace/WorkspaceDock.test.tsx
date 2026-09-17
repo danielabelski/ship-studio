@@ -1,45 +1,56 @@
-/**
- * The rail, end to end: a panel's placeholder finds its slot, a header drag
- * moves it, and a release writes the arrangement down.
- *
- * These render a real `DockablePanel` inside a real `PanelDockProvider` rather
- * than mocking the seam between them, because the seam *is* the feature — the
- * whole design rests on a placeholder being portaled into a slot it does not
- * know about.
- *
- * jsdom reports every rect as zero, so the geometry a drag resolves against is
- * stubbed per test. That is the honest boundary: `dropTargetAt` is tested
- * against real numbers in `dockDrag.test.ts`; what these check is the wiring.
- */
-
 import { render, screen, act } from '@testing-library/react';
+import { useEffect } from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceDock } from './WorkspaceDock';
 import { DockablePanel } from '../primitives/DockablePanel';
 import {
   PanelDockProvider,
-  usePanelDock,
   usePanelDockBinding,
+  usePanelDock,
 } from '../../contexts/PanelDockContext';
-import { PANEL_META, PREVIEW, isDocked, type PanelId } from '../../lib/workspaceLayout';
+import { type PanelId } from '../../lib/workspaceLayout';
 import { readProjectLayout } from '../../lib/workspaceLayoutStore';
 
 const PROJECT = '/Users/dev/ShipStudio/site';
+const resizeObserverInstances: ResizeObserverMock[] = [];
 
-/**
- * A panel with nothing in it but a draggable header.
- *
- * Takes `docked` from the layout exactly as the real panels do, so a test can
- * never put the two in a state the app cannot reach.
- */
-function TestPanel({ panel }: { panel: PanelId }) {
+class ResizeObserverMock {
+  readonly observed: Element[] = [];
+  constructor(private readonly callback: ResizeObserverCallback) {
+    resizeObserverInstances.push(this);
+  }
+
+  observe = vi.fn((element: Element) => {
+    this.observed.push(element);
+  });
+
+  disconnect = vi.fn();
+
+  trigger() {
+    this.callback([], this as unknown as ResizeObserver);
+  }
+}
+
+function TestPanel({
+  panel,
+  visible = true,
+  defaultWidth,
+}: {
+  panel: PanelId;
+  visible?: boolean;
+  defaultWidth?: number;
+}) {
   const dock = usePanelDockBinding(panel);
   const { layout } = usePanelDock();
-  const docked = isDocked(layout, panel);
+  const docked = !layout.floating.includes(panel);
+  useEffect(() => {
+    dock?.setDefaultWidth(defaultWidth);
+  }, [defaultWidth, dock]);
   return (
     <DockablePanel
       dock={dock}
       docked={docked}
+      visible={visible}
       ariaLabel={`${panel} panel`}
       positionKey={`${panel}.pos`}
       sizeKey={`${panel}.size`}
@@ -55,20 +66,31 @@ function TestPanel({ panel }: { panel: PanelId }) {
   );
 }
 
-/** How wide the rail thinks it is, for the width-ceiling tests. */
-function stubRailWidth(width: number) {
-  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
-    configurable: true,
-    get(this: HTMLElement) {
-      return this.classList.contains('workspace-dock') ? width : 0;
-    },
-  });
+function v2Layout(columns: unknown[], floating: PanelId[] = []) {
+  const known = new Set<PanelId>();
+  for (const column of columns) {
+    if (!column || typeof column !== 'object' || !('panels' in column)) continue;
+    for (const placement of (column as { panels?: unknown[] }).panels ?? []) {
+      if (placement && typeof placement === 'object' && 'panel' in placement) {
+        known.add((placement as { panel: PanelId }).panel);
+      }
+    }
+  }
+  const missing = (['agent', 'navigator', 'variables', 'editor', 'team'] as PanelId[]).filter(
+    (panel) => !known.has(panel)
+  );
+  return {
+    version: 2,
+    columns: [
+      ...columns,
+      ...missing.map((panel) => ({ kind: 'panels', panels: [{ panel, weight: 1 }] })),
+    ],
+    floating,
+  };
 }
 
-function renderRail(panels: PanelId[], layout?: unknown, previewHidden = false) {
-  if (layout) {
-    localStorage.setItem(`shipstudio.layout.project:${PROJECT}`, JSON.stringify(layout));
-  }
+function renderRail(panels: PanelId[], layout: unknown, previewHidden = false) {
+  localStorage.setItem(`shipstudio.layout.project:${PROJECT}`, JSON.stringify(layout));
   return render(
     <PanelDockProvider projectPath={PROJECT}>
       <WorkspaceDock previewHidden={previewHidden} preview={<div data-testid="preview" />}>
@@ -80,50 +102,11 @@ function renderRail(panels: PanelId[], layout?: unknown, previewHidden = false) 
   );
 }
 
-/** Rail items left to right, read off the DOM the way `measure` does. */
-function visualOrder(): string[] {
-  return [...document.querySelectorAll<HTMLElement>('[data-rail-item]')]
-    .map((node) => ({
-      item: node.dataset.railItem!,
-      order: Number(getComputedStyle(node).order || 0),
-    }))
-    .sort((a, b) => a.order - b.order)
-    .map((entry) => entry.item);
-}
-
-/**
- * Give the rail a geometry, since jsdom has none.
- *
- * Agent 0–300, preview 300–900, editor 900–1200, in a rail 100px from the top.
- */
-function stubGeometry() {
-  const rects: Record<string, [number, number]> = {
-    agent: [0, 300],
-    [PREVIEW]: [300, 900],
-    editor: [900, 1200],
-  };
-  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-    const item = (this as HTMLElement).dataset?.railItem;
-    const [left, right] = item ? (rects[item] ?? [0, 0]) : [0, 1200];
-    return {
-      left,
-      right,
-      top: 100,
-      bottom: 800,
-      width: right - left,
-      height: 700,
-      x: left,
-      y: 100,
-      toJSON: () => ({}),
-    } as DOMRect;
-  });
-}
-
 function dragHeader(panel: PanelId, to: { x: number; y: number }) {
   const header = screen.getByTestId(`${panel}-header`);
   act(() => {
     header.dispatchEvent(
-      new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 10, clientY: 400 })
+      new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 10, clientY: 200 })
     );
   });
   act(() => {
@@ -138,10 +121,14 @@ function dragHeader(panel: PanelId, to: { x: number; y: number }) {
   });
 }
 
-/**
- * jsdom has no `PointerEvent`, and a pointer drag is what this file is about.
- * A MouseEvent carrying a `pointerId` is everything the handlers read.
- */
+function ApplyLayout({ layout }: { layout: unknown }) {
+  const { setLayout } = usePanelDock();
+  useEffect(() => {
+    setLayout(layout as Parameters<typeof setLayout>[0]);
+  }, [layout, setLayout]);
+  return null;
+}
+
 class TestPointerEvent extends MouseEvent {
   readonly pointerId: number;
   constructor(type: string, init: MouseEventInit & { pointerId?: number } = {}) {
@@ -152,293 +139,448 @@ class TestPointerEvent extends MouseEvent {
 
 beforeAll(() => {
   vi.stubGlobal('PointerEvent', TestPointerEvent);
-  // jsdom has no ResizeObserver, and `DockablePanel` measures its dock slot
-  // with one. Nothing here depends on it firing — the rects are stubbed per
-  // test — so a constructor that does nothing is the whole stub.
-  vi.stubGlobal(
-    'ResizeObserver',
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-  );
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 });
 
 beforeEach(() => {
   localStorage.clear();
+  resizeObserverInstances.length = 0;
   vi.restoreAllMocks();
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    const element = this as HTMLElement;
+    const item = element.dataset.railPanel ?? element.dataset.preview;
+    const rects: Record<string, [number, number, number, number]> = {
+      agent: [0, 300, 100, 450],
+      navigator: [0, 300, 450, 800],
+      editor: [900, 1200, 100, 800],
+      true: [300, 900, 100, 800],
+    };
+    const [left, right, top, bottom] = rects[item ?? ''] ?? [0, 1200, 100, 800];
+    return {
+      left,
+      right,
+      top,
+      bottom,
+      width: right - left,
+      height: bottom - top,
+      x: left,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect;
+  });
 });
 
-describe('the rail', () => {
-  it('gives a docked panel a slot and puts its placeholder in it', () => {
-    // The seam the whole design rests on. Without it a panel is wherever it
-    // happens to be written in the tree, which is what it was before.
-    renderRail(['agent'], { order: ['agent', PREVIEW], floating: [] });
-
-    const slot = document.querySelector('.workspace-dock__slot[data-panel="agent"]');
-    expect(slot).not.toBeNull();
-    expect(slot!.querySelector('.dockable-panel__placeholder')).not.toBeNull();
-  });
-
-  it('gives a floating panel no slot at all', () => {
-    // A column with nothing in it is the failure mode of a portaled surface.
-    renderRail(['agent'], { order: ['agent', PREVIEW], floating: ['agent'] });
-    expect(document.querySelector('.workspace-dock__slot[data-panel="agent"]')).toBeNull();
-    // It is still rendered, just as a window rather than a column.
-    expect(document.querySelector('.dockable-panel__surface--floating')).not.toBeNull();
-  });
-
-  it('orders the rail without moving anything in the DOM', () => {
-    // Position is the flex `order` property, never the tree: an iframe reloads
-    // when it is moved in the DOM, and the preview is one.
-    renderRail(['agent', 'editor'], {
-      order: ['editor', PREVIEW, 'agent'],
-      floating: [],
-    });
-    expect(visualOrder()).toEqual(['editor', PREVIEW, 'agent']);
-
-    const domOrder = [...document.querySelectorAll<HTMLElement>('[data-rail-item]')].map(
-      (node) => node.dataset.railItem
+describe('stacked rendering', () => {
+  it('renders multiple panels in one column with one horizontal divider', async () => {
+    renderRail(
+      ['agent', 'navigator', 'editor'],
+      v2Layout([
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'agent', weight: 0.5 },
+            { panel: 'navigator', weight: 0.5 },
+          ],
+        },
+        { kind: 'preview' },
+        { kind: 'panels', panels: [{ panel: 'editor', weight: 1 }] },
+      ])
     );
-    expect(domOrder).toEqual(['agent', 'editor', PREVIEW]);
+    await act(async () => Promise.resolve());
+    const columns = document.querySelectorAll('.workspace-dock__column');
+    expect(columns).toHaveLength(2);
+    expect(columns[0].querySelectorAll('[data-rail-panel]')).toHaveLength(2);
+    expect(columns[0].querySelectorAll('[aria-orientation="horizontal"]')).toHaveLength(1);
   });
 
-  it('docks the agent for focus mode even when the layout floats it', () => {
-    // Putting the preview away with a floating agent would otherwise leave an
-    // empty workspace with a window over it.
-    renderRail(['agent'], { order: ['agent', PREVIEW], floating: ['agent'] }, true);
-    expect(document.querySelector('.workspace-dock__slot[data-panel="agent"]')).not.toBeNull();
+  it('supports three-panel stacks with two shared dividers', async () => {
+    renderRail(
+      ['agent', 'navigator', 'variables'],
+      v2Layout([
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'agent', weight: 1 / 3 },
+            { panel: 'navigator', weight: 1 / 3 },
+            { panel: 'variables', weight: 1 / 3 },
+          ],
+        },
+        { kind: 'preview' },
+      ])
+    );
+    await act(async () => Promise.resolve());
+    expect(document.querySelectorAll('.workspace-dock__slot')).toHaveLength(3);
+    expect(document.querySelectorAll('[aria-orientation="horizontal"]')).toHaveLength(2);
   });
 
-  it('does not reserve a column for a panel that is not there', () => {
-    renderRail(['agent'], { order: ['agent', 'editor', PREVIEW], floating: [] });
-    expect(document.querySelector('.workspace-dock__slot[data-panel="editor"]')).toBeNull();
-    expect(document.querySelector('.workspace-dock__slot[data-panel="agent"]')).not.toBeNull();
+  it('starts a stack at the widest member default width', async () => {
+    renderRail(
+      ['navigator', 'team'],
+      v2Layout([
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'navigator', weight: 0.5 },
+            { panel: 'team', weight: 0.5 },
+          ],
+        },
+        { kind: 'preview' },
+      ])
+    );
+    await act(async () => Promise.resolve());
+    const column = document.querySelector<HTMLElement>(
+      '.workspace-dock__column[data-column-index="0"]'
+    );
+    expect(column?.style.width).toBe('420px');
+  });
+
+  it('honors a dynamic panel width preference when no column width was committed', async () => {
+    localStorage.setItem(
+      `shipstudio.layout.project:${PROJECT}`,
+      JSON.stringify(
+        v2Layout([
+          { kind: 'panels', panels: [{ panel: 'navigator', weight: 1 }] },
+          { kind: 'preview' },
+        ])
+      )
+    );
+    render(
+      <PanelDockProvider projectPath={PROJECT}>
+        <WorkspaceDock preview={<div data-testid="preview" />}>
+          <TestPanel panel="navigator" defaultWidth={460} />
+        </WorkspaceDock>
+      </PanelDockProvider>
+    );
+    await act(async () => Promise.resolve());
+    const column = document.querySelector<HTMLElement>(
+      '.workspace-dock__column[data-column-index="0"]'
+    );
+    expect(column?.style.width).toBe('460px');
+  });
+
+  it('omits floating and closed members without changing source structure', async () => {
+    renderRail(
+      ['agent', 'navigator'],
+      v2Layout(
+        [
+          {
+            kind: 'panels',
+            panels: [
+              { panel: 'agent', weight: 0.5 },
+              { panel: 'navigator', weight: 0.5 },
+            ],
+          },
+          { kind: 'preview' },
+        ],
+        ['navigator']
+      )
+    );
+    await act(async () => Promise.resolve());
+    expect(document.querySelectorAll('[data-rail-panel]')).toHaveLength(1);
+    expect(document.querySelector('.workspace-dock__column')).not.toBeNull();
+  });
+
+  it('fills a column when a stacked panel floats without changing its saved weight', async () => {
+    renderRail(
+      ['agent', 'navigator'],
+      v2Layout(
+        [
+          {
+            kind: 'panels',
+            panels: [
+              { panel: 'agent', weight: 0.25 },
+              { panel: 'navigator', weight: 0.75 },
+            ],
+          },
+          { kind: 'preview' },
+        ],
+        ['agent']
+      )
+    );
+    await act(async () => Promise.resolve());
+
+    const slot = document.querySelector<HTMLElement>('[data-rail-panel="navigator"]');
+    expect(slot?.style.flex).toBe('1 1 0px');
+    expect(readProjectLayout(PROJECT).columns[0]).toMatchObject({
+      panels: [
+        { panel: 'agent', weight: 0.25 },
+        { panel: 'navigator', weight: 0.75 },
+      ],
+    });
   });
 });
 
-describe('resizing a panel', () => {
-  it('holds the new width locally while dragging and commits it on release', () => {
-    // Writing every pointer move into the shared layout would re-render the
-    // whole workspace at the display refresh rate, for a value one element uses.
-    renderRail(['agent'], { order: ['agent', PREVIEW], floating: [], widths: { agent: 400 } });
-    stubGeometry();
-
-    const handle = screen.getByRole('separator', { name: 'Resize Agent panel' });
+describe('vertical resizing', () => {
+  it('keeps weight changes local until the horizontal divider is released', async () => {
+    renderRail(
+      ['agent', 'navigator'],
+      v2Layout([
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'agent', weight: 0.5 },
+            { panel: 'navigator', weight: 0.5 },
+          ],
+        },
+        { kind: 'preview' },
+      ])
+    );
+    await act(async () => Promise.resolve());
+    const handle = screen.getByRole('separator', { name: 'Resize Agent and Elements panels' });
     act(() => {
       handle.dispatchEvent(
-        new PointerEvent('pointerdown', { bubbles: true, pointerId: 2, clientX: 400, clientY: 400 })
+        new PointerEvent('pointerdown', { bubbles: true, pointerId: 2, clientY: 450 })
       );
     });
     act(() => {
       handle.dispatchEvent(
-        new PointerEvent('pointermove', { bubbles: true, pointerId: 2, clientX: 320, clientY: 400 })
+        new PointerEvent('pointermove', { bubbles: true, pointerId: 2, clientY: 300 })
       );
     });
-    // Nothing written yet — the drag is still in the slot's own hands.
-    expect(readProjectLayout(PROJECT).widths.agent).toBe(400);
-
+    expect(readProjectLayout(PROJECT).columns[0]).toMatchObject({
+      panels: [{ weight: 0.5 }, { weight: 0.5 }],
+    });
     act(() => {
       handle.dispatchEvent(
-        new PointerEvent('pointerup', { bubbles: true, pointerId: 2, clientX: 320, clientY: 400 })
+        new PointerEvent('pointerup', { bubbles: true, pointerId: 2, clientY: 300 })
       );
     });
-    expect(readProjectLayout(PROJECT).widths.agent).toBe(320);
+    const saved = readProjectLayout(PROJECT).columns[0];
+    expect(saved).toMatchObject({ kind: 'panels' });
+    if (saved.kind === 'panels') expect(saved.panels[0].weight).not.toBe(0.5);
   });
+});
 
-  it('never lets the docked panels take the whole rail from the preview', () => {
-    // The canvas column also carries the preview toolbar, so a panel wide
-    // enough to starve it collapses the toolbar's controls into each other
-    // long before the canvas itself becomes useless.
-    renderRail(['agent'], { order: ['agent', PREVIEW], floating: [], widths: {} });
-    stubGeometry();
-    stubRailWidth(600);
-
-    const handle = screen.getByRole('separator', { name: 'Resize Agent panel' });
+describe('two-dimensional dragging', () => {
+  it('reorders a panel within a stack when released below another panel', async () => {
+    renderRail(
+      ['agent', 'navigator'],
+      v2Layout([
+        {
+          kind: 'panels',
+          panels: [
+            { panel: 'agent', weight: 0.5 },
+            { panel: 'navigator', weight: 0.5 },
+          ],
+        },
+        { kind: 'preview' },
+      ])
+    );
+    await act(async () => Promise.resolve());
+    const header = screen.getByTestId('agent-header');
+    const surface = screen.getByLabelText('agent panel');
     act(() => {
-      handle.dispatchEvent(
-        new PointerEvent('pointerdown', { bubbles: true, pointerId: 3, clientX: 300, clientY: 400 })
-      );
-    });
-    act(() => {
-      handle.dispatchEvent(
-        new PointerEvent('pointermove', {
+      header.dispatchEvent(
+        new PointerEvent('pointerdown', {
           bubbles: true,
-          pointerId: 3,
-          clientX: 4000,
-          clientY: 400,
+          pointerId: 1,
+          clientX: 10,
+          clientY: 200,
         })
       );
-    });
-    act(() => {
-      handle.dispatchEvent(
-        new PointerEvent('pointerup', { bubbles: true, pointerId: 3, clientX: 4000, clientY: 400 })
-      );
-    });
-
-    // Three quarters of a 600px rail, not the panel's own 900px maximum.
-    expect(readProjectLayout(PROJECT).widths.agent).toBe(450);
-    expect(readProjectLayout(PROJECT).widths.agent).toBeLessThan(PANEL_META.agent.maxWidth);
-  });
-
-  it('gives a stretched panel no handle — there is nothing beside it to size against', () => {
-    renderRail(['agent'], { order: ['agent', PREVIEW], floating: [] }, true);
-    expect(screen.queryByRole('separator', { name: 'Resize Agent panel' })).toBeNull();
-  });
-});
-
-describe('dragging a floating panel onto the rail', () => {
-  it('docks it where the indicator says', () => {
-    // The other half of the loop. Docked → float is one gesture; this is the
-    // way back, and without it floating is a one-way door with the pin button
-    // as its only undo.
-    renderRail(['agent', 'editor'], {
-      order: ['agent', PREVIEW, 'editor'],
-      floating: ['editor'],
-      widths: {},
-    });
-    stubGeometry();
-    expect(document.querySelector('.workspace-dock__slot[data-panel="editor"]')).toBeNull();
-
-    // Release on the seam at the preview's left edge.
-    dragHeader('editor', { x: 305, y: 400 });
-
-    const saved = readProjectLayout(PROJECT);
-    expect(saved.floating).not.toContain('editor');
-    expect(saved.order.indexOf('editor')).toBeLessThan(saved.order.indexOf(PREVIEW));
-    expect(document.querySelector('.workspace-dock__slot[data-panel="editor"]')).not.toBeNull();
-  });
-
-  it('leaves it floating when it is dropped away from the rail', () => {
-    renderRail(['agent', 'editor'], {
-      order: ['agent', PREVIEW, 'editor'],
-      floating: ['editor'],
-      widths: {},
-    });
-    stubGeometry();
-
-    dragHeader('editor', { x: 600, y: 400 });
-
-    expect(readProjectLayout(PROJECT).floating).toContain('editor');
-  });
-});
-
-describe('dragging a docked panel', () => {
-  it('moves it across the preview and remembers it', () => {
-    renderRail(['agent', 'editor'], { order: ['agent', PREVIEW, 'editor'], floating: [] });
-    stubGeometry();
-
-    // Release near the rail's right end — past the preview, past the editor.
-    dragHeader('agent', { x: 1195, y: 400 });
-
-    expect(visualOrder()).toEqual([PREVIEW, 'editor', 'agent']);
-
-    // Written down, and written down as a *move* — the panels this render does
-    // not mount are still in the order, in the places they had.
-    const saved = readProjectLayout(PROJECT).order;
-    expect(saved.indexOf('agent')).toBe(saved.length - 1);
-    expect(saved.indexOf('agent')).toBeGreaterThan(saved.indexOf(PREVIEW));
-  });
-
-  it('floats it when released away from every seam', () => {
-    renderRail(['agent', 'editor'], { order: ['agent', PREVIEW, 'editor'], floating: [] });
-    stubGeometry();
-
-    // The middle of the canvas: no boundary within the snap distance.
-    dragHeader('agent', { x: 600, y: 400 });
-
-    const saved = readProjectLayout(PROJECT);
-    expect(saved.floating).toContain('agent');
-    // Its place is kept, so re-docking returns it here rather than to an end.
-    expect(saved.order.indexOf('agent')).toBeLessThan(saved.order.indexOf(PREVIEW));
-    expect(document.querySelector('.workspace-dock__slot[data-panel="agent"]')).toBeNull();
-  });
-
-  it('shows what releasing now would do, while you are still holding it', () => {
-    renderRail(['agent', 'editor'], { order: ['agent', PREVIEW, 'editor'], floating: [] });
-    stubGeometry();
-
-    const header = screen.getByTestId('agent-header');
-    act(() => {
-      header.dispatchEvent(
-        new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 10, clientY: 400 })
-      );
-    });
-    act(() => {
-      header.dispatchEvent(
-        new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 890, clientY: 400 })
-      );
-    });
-
-    expect(screen.getByRole('status')).toHaveTextContent('Agent');
-    expect(screen.getByRole('status')).toHaveTextContent('Before Edit');
-
-    // Bounded by the rail, not by the window. The line is `position: fixed` so
-    // it can sit above the portaled panel surfaces, and it was drawing straight
-    // up through the workspace header and the titlebar above them.
-    const line = document.querySelector<HTMLElement>('.workspace-dock__drop-line');
-    expect(line).not.toBeNull();
-    expect(line!.style.top).toBe('100px');
-    expect(line!.style.height).toBe('700px');
-  });
-
-  it('does nothing at all when the header is merely clicked', () => {
-    // Releasing resolves a drop at the pointer, and the middle of a wide
-    // panel's header is further from any seam than the snap distance — so
-    // before the drag threshold, clicking the agent's title floated it.
-    renderRail(['agent', 'editor'], { order: ['agent', PREVIEW, 'editor'], floating: [] });
-    stubGeometry();
-
-    const header = screen.getByTestId('agent-header');
-    act(() => {
-      header.dispatchEvent(
-        new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 150, clientY: 400 })
-      );
-    });
-    act(() => {
-      // A pixel of tremor, as a real click has.
-      header.dispatchEvent(
-        new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 151, clientY: 400 })
-      );
-    });
-    act(() => {
-      header.dispatchEvent(
-        new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 151, clientY: 400 })
-      );
-    });
-
-    expect(readProjectLayout(PROJECT).floating).not.toContain('agent');
-    expect(visualOrder()).toEqual(['agent', PREVIEW, 'editor']);
-    expect(screen.queryByRole('status')).toBeNull();
-  });
-
-  it('changes nothing when the gesture is cancelled', () => {
-    // A lost pointer is not a drop.
-    renderRail(['agent', 'editor'], { order: ['agent', PREVIEW, 'editor'], floating: [] });
-    stubGeometry();
-
-    const header = screen.getByTestId('agent-header');
-    act(() => {
-      header.dispatchEvent(
-        new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 10, clientY: 400 })
-      );
-    });
-    act(() => {
       header.dispatchEvent(
         new PointerEvent('pointermove', {
           bubbles: true,
           pointerId: 1,
-          clientX: 1195,
+          clientX: 150,
+          clientY: 792,
+        })
+      );
+    });
+
+    expect(surface).toHaveClass('dockable-panel__surface--dragging');
+    expect(surface).toHaveStyle({ left: '140px', top: '692px' });
+
+    act(() => {
+      header.dispatchEvent(
+        new PointerEvent('pointerup', {
+          bubbles: true,
+          pointerId: 1,
+          clientX: 150,
+          clientY: 792,
+        })
+      );
+    });
+    const saved = readProjectLayout(PROJECT).columns[0];
+    expect(saved).toMatchObject({
+      kind: 'panels',
+      panels: [{ panel: 'navigator' }, { panel: 'agent' }],
+    });
+  });
+
+  it('leaves a docked panel at its release position when dropped away from a rail target', async () => {
+    localStorage.setItem('agent.pos', JSON.stringify({ left: 40, top: 40 }));
+    renderRail(
+      ['agent'],
+      v2Layout([{ kind: 'panels', panels: [{ panel: 'agent', weight: 1 }] }, { kind: 'preview' }])
+    );
+    await act(async () => Promise.resolve());
+
+    const header = screen.getByTestId('agent-header');
+    const surface = screen.getByLabelText('agent panel');
+    act(() => {
+      header.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          pointerId: 1,
+          clientX: 10,
+          clientY: 200,
+        })
+      );
+      header.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          pointerId: 1,
+          clientX: 600,
+          clientY: 400,
+        })
+      );
+      header.dispatchEvent(
+        new PointerEvent('pointerup', {
+          bubbles: true,
+          pointerId: 1,
+          clientX: 600,
           clientY: 400,
         })
       );
     });
-    act(() => {
-      header.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 1 }));
+
+    expect(readProjectLayout(PROJECT).floating).toContain('agent');
+    expect(surface).toHaveClass('dockable-panel__surface--floating');
+    expect(surface).toHaveStyle({ left: '590px', top: '300px' });
+    expect(localStorage.getItem('agent.pos')).toBe('{"left":590,"top":300}');
+  });
+});
+
+describe('focus and body portals', () => {
+  it('stretches the agent temporarily without changing the saved layout', async () => {
+    renderRail(
+      ['agent', 'navigator'],
+      v2Layout(
+        [{ kind: 'panels', panels: [{ panel: 'agent', weight: 1 }] }, { kind: 'preview' }],
+        ['agent']
+      ),
+      true
+    );
+    await act(async () => Promise.resolve());
+    expect(screen.getByTestId('preview').parentElement).toHaveAttribute('hidden');
+    expect(screen.queryByRole('separator', { name: 'Resize Agent column' })).toBeNull();
+    expect(document.querySelectorAll('[data-rail-panel]')).toHaveLength(1);
+    const saved = readProjectLayout(PROJECT);
+    dragHeader('agent', { x: 150, y: 700 });
+    expect(readProjectLayout(PROJECT)).toEqual(saved);
+    expect(readProjectLayout(PROJECT).floating).toContain('agent');
+  });
+
+  it('remeasures docked surfaces when the rail moves without changing slot size', async () => {
+    let panelLeft = 0;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const element = this as HTMLElement;
+      const item =
+        element.dataset.railPanel ??
+        element.dataset.preview ??
+        element.closest<HTMLElement>('[data-rail-panel]')?.dataset.railPanel;
+      const rects: Record<string, [number, number, number, number]> = {
+        agent: [panelLeft, panelLeft + 100, 100, 800],
+        true: [300, 900, 100, 800],
+      };
+      const [left, right, top, bottom] = rects[item ?? ''] ?? [0, 1200, 100, 800];
+      return {
+        left,
+        right,
+        top,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+        x: left,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
     });
 
-    expect(visualOrder()).toEqual(['agent', PREVIEW, 'editor']);
-    expect(document.querySelector('.workspace-dock__drop-line')).toBeNull();
+    renderRail(
+      ['agent'],
+      v2Layout([{ kind: 'panels', panels: [{ panel: 'agent', weight: 1 }] }, { kind: 'preview' }])
+    );
+    await act(async () => Promise.resolve());
+
+    const railObserver = resizeObserverInstances.find((observer) =>
+      observer.observed.some((element) =>
+        (element as HTMLElement).classList.contains('workspace-dock')
+      )
+    );
+    expect(railObserver).toBeDefined();
+
+    panelLeft = 174;
+    act(() => railObserver?.trigger());
+
+    expect(screen.getByLabelText('agent panel')).toHaveStyle({ left: '174px' });
+  });
+
+  it('keeps the preview DOM node stable while column layout changes', async () => {
+    const preview = <div data-testid="preview" />;
+    const { rerender } = render(
+      <PanelDockProvider projectPath={PROJECT}>
+        <WorkspaceDock preview={preview}>
+          <TestPanel panel="agent" />
+          <TestPanel panel="editor" />
+        </WorkspaceDock>
+      </PanelDockProvider>
+    );
+    await act(async () => Promise.resolve());
+    const previewNode = screen.getByTestId('preview');
+    rerender(
+      <PanelDockProvider projectPath={PROJECT}>
+        <WorkspaceDock preview={preview}>
+          <TestPanel panel="editor" />
+          <TestPanel panel="agent" />
+        </WorkspaceDock>
+      </PanelDockProvider>
+    );
+    expect(screen.getByTestId('preview')).toBe(previewNode);
+  });
+
+  it('keeps preview sibling order stable while changing its visual flex order', async () => {
+    const initial = v2Layout([
+      { kind: 'panels', panels: [{ panel: 'agent', weight: 1 }] },
+      { kind: 'preview' },
+      { kind: 'panels', panels: [{ panel: 'editor', weight: 1 }] },
+    ]);
+    const next = v2Layout([
+      { kind: 'preview' },
+      { kind: 'panels', panels: [{ panel: 'agent', weight: 1 }] },
+      { kind: 'panels', panels: [{ panel: 'editor', weight: 1 }] },
+    ]);
+    const previewFrame = <iframe title="preview" />;
+    localStorage.setItem(`shipstudio.layout.project:${PROJECT}`, JSON.stringify(initial));
+    const view = render(
+      <PanelDockProvider projectPath={PROJECT}>
+        <WorkspaceDock preview={previewFrame}>
+          <TestPanel panel="agent" />
+          <TestPanel panel="editor" />
+        </WorkspaceDock>
+      </PanelDockProvider>
+    );
+    await act(async () => Promise.resolve());
+    const rail = view.container.querySelector('.workspace-dock')!;
+    const beforeChildren = [...rail.children];
+    const preview = rail.querySelector('[data-preview="true"]')!;
+    const beforeIndex = beforeChildren.indexOf(preview);
+    const beforeVisualOrder = getComputedStyle(preview).order;
+    view.rerender(
+      <PanelDockProvider projectPath={PROJECT}>
+        <WorkspaceDock preview={previewFrame}>
+          <TestPanel panel="agent" />
+          <TestPanel panel="editor" />
+        </WorkspaceDock>
+        <ApplyLayout layout={next} />
+      </PanelDockProvider>
+    );
+    await act(async () => Promise.resolve());
+    const afterChildren = [...rail.children];
+    expect(afterChildren[beforeIndex]).toBe(preview);
+    expect(getComputedStyle(preview).order).not.toBe(beforeVisualOrder);
   });
 });

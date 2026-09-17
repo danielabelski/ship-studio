@@ -24,6 +24,19 @@
   overflow: hidden;
 }
 
+/* Docked surfaces sit over flex slots. Let the panel root shrink with that
+   slot so its own body can become the scroll container when a stack is tight. */
+.dockable-panel__surface--docked {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.dockable-panel__surface--docked > * {
+  min-width: 0;
+  min-height: 0;
+}
+
 .dockable-panel__surface.is-hidden {
   /* Keep stateful contents laid out so terminals retain usable dimensions.
      Opacity hides the complete subtree even when a descendant (such as the
@@ -33,7 +46,16 @@
 }
 
 .dockable-panel__surface--floating {
-  border: var(--stroke-1) solid var(--border-subtle);
+  border: var(--border-width-default) solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-window);
+}
+
+/* A docked panel keeps its contents mounted while its header drag lifts the
+   real surface out of the rail. Give that transient surface the same depth as
+   a floating window without changing its docked feature styles. */
+.dockable-panel__surface--dragging {
+  border: var(--border-width-default) solid var(--border-subtle);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-window);
 }
@@ -62,13 +84,13 @@
 }
 
 .dockable-panel__surface > .dockable-panel__resize-handle--width {
-  width: var(--stroke-1);
+  width: var(--border-width-default);
   height: auto;
 }
 
 .dockable-panel__surface > .dockable-panel__resize-handle--height {
   width: auto;
-  height: var(--stroke-1);
+  height: var(--border-width-default);
 }
 
 .dockable-panel__surface > .dockable-panel__resize-corner {

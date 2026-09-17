@@ -24,6 +24,16 @@ function layout(order: string[], floating: string[], widths: Record<string, numb
   return JSON.stringify({ order, floating, widths });
 }
 
+function stackedLayout(
+  columns: Array<
+    | { kind: 'preview' }
+    | { kind: 'panels'; width?: number; panels: Array<{ panel: string; weight: number }> }
+  >,
+  floating: string[] = []
+) {
+  return JSON.stringify({ version: 2, columns, floating });
+}
+
 /** Team's panel needs its snapshot, and it must be open to occupy a column. */
 const teamOpen = {
   [`shipstudio.team.panelOpen:${WORKSPACE_PROJECT}`]: '1',
@@ -31,6 +41,30 @@ const teamOpen = {
 const teamCommands = { get_team_snapshot: teamSnapshotCommand };
 
 export const layoutScenarios: Scenario[] = [
+  {
+    id: 'layout-agent-elements-stacked',
+    title: 'Flexible panels — Agent and Elements stacked in one column',
+    looksRightWhen:
+      'Agent and Elements share one column beside the preview. Both panel surfaces are visible, the horizontal divider can be dragged, and the two panels keep their 50/50 balance while the preview remains a separate locked column.',
+    project: WORKSPACE_PROJECT,
+    storage: {
+      [LAYOUT_KEY]: stackedLayout([
+        {
+          kind: 'panels',
+          width: 420,
+          panels: [
+            { panel: 'agent', weight: 1 },
+            { panel: 'navigator', weight: 1 },
+          ],
+        },
+        { kind: 'preview' },
+        { kind: 'panels', panels: [{ panel: 'editor', weight: 1 }] },
+      ]),
+    },
+    requires: '.workspace-dock__slot[data-panel="agent"]',
+    commands: workspaceCommands,
+  },
+
   {
     id: 'layout-agent-on-the-right',
     title: 'Flexible panels — the agent moved to the right of the preview',

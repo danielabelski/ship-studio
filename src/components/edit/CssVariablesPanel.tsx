@@ -5,11 +5,14 @@
  * grouped by their scope, so the panel stays truthful about where each is defined.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { MoreHorizontalIcon, PlusIcon, TrashIcon } from '@/components/icons';
 import { useAsyncState } from '../../hooks/useAsyncState';
 import type { CssVariableDeleteImpact } from '../../lib/edit-css';
+import type { DragSortMove } from '../../lib/drag-sort/types';
+import { cssVariableId, type VariableRow } from '../../hooks/useCssVariables';
 import { Button } from '../primitives/Button';
+import { DragSortHandle, DragSortItem, DragSortScope } from '../primitives/DragSort';
 import { Dropdown, DropdownItem } from '../primitives/Dropdown';
 import { IconButton } from '../primitives/IconButton';
 import { ModalFrame } from '../primitives/ModalFrame';
@@ -19,7 +22,6 @@ import { EditPopover } from './EditPopover';
 import { CssValueText } from './CssValueText';
 import { hasColorTransparency } from '../../lib/color';
 import { colorSwatch } from '../../lib/cssProperties';
-import type { VariableRow } from '../../hooks/useCssVariables';
 
 interface Props {
   variables: VariableRow[];
@@ -32,6 +34,8 @@ interface Props {
     variable: VariableRow,
     impact: CssVariableDeleteImpact
   ) => Promise<CssVariableDeleteImpact>;
+  /** Persist a projected order within one exact `:root` source rule. */
+  onReorderVariables?: (ordered: VariableRow[]) => Promise<void>;
 }
 
 export function CssVariablesPanel({
@@ -42,6 +46,7 @@ export function CssVariablesPanel({
   onAddVariable,
   onAnalyzeDelete,
   onDeleteVariable,
+  onReorderVariables,
 }: Props) {
   const [deleteTarget, setDeleteTarget] = useState<VariableRow | null>(null);
   const deleteImpact = useAsyncState(onAnalyzeDelete);
@@ -66,6 +71,36 @@ export function CssVariablesPanel({
     }
     return [...map.entries()];
   }, [variables]);
+
+  const rootGroupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const variable of rootVars) {
+      const key = variableSourceKey(variable);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [rootVars]);
+  const canSortRoot =
+    Boolean(onReorderVariables) && [...rootGroupCounts.values()].some((count) => count > 1);
+  const rootIds = useMemo(
+    () =>
+      rootVars
+        .filter((variable) => (rootGroupCounts.get(variableSourceKey(variable)) ?? 0) > 1)
+        .map(cssVariableId),
+    [rootGroupCounts, rootVars]
+  );
+  const handleRootMove = useCallback(
+    async (move: DragSortMove) => {
+      if (!onReorderVariables || !move.projectedOrder) return;
+      const byId = new Map(rootVars.map((variable) => [cssVariableId(variable), variable]));
+      const ordered = move.projectedOrder
+        .map((id) => byId.get(String(id)))
+        .filter((variable): variable is VariableRow => variable !== undefined);
+      if (ordered.length !== move.projectedOrder.length) return;
+      await onReorderVariables(ordered);
+    },
+    [onReorderVariables, rootVars]
+  );
 
   const requestDelete = (variable: VariableRow) => {
     setDeleteTarget(variable);
@@ -97,11 +132,41 @@ export function CssVariablesPanel({
 
       {rootVars.length === 0 ? (
         <p className="ss-cascade-empty">No variables defined on :root yet.</p>
+      ) : canSortRoot ? (
+        <DragSortScope
+          axis="vertical"
+          items={rootIds}
+          label=":root variables"
+          onMove={handleRootMove}
+        >
+          <div className="ss-vars__list">
+            {rootVars.map((v, index) => (
+              <EditableVarRow
+                key={cssVariableId(v)}
+                variable={v}
+                variableNames={variableNames}
+                sortable={(rootGroupCounts.get(variableSourceKey(v)) ?? 0) > 1}
+                sortGroup={variableSourceKey(v)}
+                sortIndex={
+                  rootVars
+                    .slice(0, index)
+                    .filter(
+                      (candidate) =>
+                        variableSourceKey(candidate) === variableSourceKey(v) &&
+                        (rootGroupCounts.get(variableSourceKey(candidate)) ?? 0) > 1
+                    ).length
+                }
+                onSetValue={(val) => onSetValue(v, val)}
+                onRequestDelete={() => requestDelete(v)}
+              />
+            ))}
+          </div>
+        </DragSortScope>
       ) : (
         <div className="ss-vars__list">
           {rootVars.map((v) => (
             <EditableVarRow
-              key={v.name}
+              key={cssVariableId(v)}
               variable={v}
               variableNames={variableNames}
               onSetValue={(val) => onSetValue(v, val)}
@@ -239,11 +304,17 @@ function EditableVarRow({
   variableNames,
   onSetValue,
   onRequestDelete,
+  sortable = false,
+  sortGroup,
+  sortIndex = 0,
 }: {
   variable: VariableRow;
   variableNames: string[];
   onSetValue: (value: string) => void;
   onRequestDelete: () => void;
+  sortable?: boolean;
+  sortGroup?: string;
+  sortIndex?: number;
 }) {
   const [editing, setEditing] = useState<
     null | { kind: 'value' } | { kind: 'color'; anchor: HTMLElement }
@@ -259,8 +330,17 @@ function EditableVarRow({
     [variableNames, variable.name]
   );
 
-  return (
+  const row = (
     <div className="ss-var-row">
+      {sortable && (
+        <DragSortHandle
+          className="ss-var-row__drag-handle"
+          visibility="hover"
+          revealOn="row"
+          label={`Move ${variable.name} variable`}
+          onClick={(event) => event.stopPropagation()}
+        />
+      )}
       <span className="ss-var-row__name">
         <VariableValueMarker value={variable.value} />
         <code>{variable.name}</code>
@@ -330,6 +410,23 @@ function EditableVarRow({
       )}
     </div>
   );
+
+  if (!sortable) return row;
+  return (
+    <DragSortItem
+      id={cssVariableId(variable)}
+      group={sortGroup}
+      index={sortIndex}
+      label={`Move ${variable.name} variable`}
+      className="ss-var-sort-item"
+    >
+      {row}
+    </DragSortItem>
+  );
+}
+
+function variableSourceKey(variable: Pick<VariableRow, 'file' | 'selector' | 'line'>): string {
+  return `${variable.file}\0${variable.selector}\0${variable.line}`;
 }
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {

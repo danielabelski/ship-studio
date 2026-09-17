@@ -64,6 +64,7 @@ import {
 import { useAppCommands } from './commands/useAppCommands';
 import { useWorkflowCommands } from './commands/useWorkflowCommands';
 import { useProjectNumberShortcuts } from './hooks/useProjectNumberShortcuts';
+import { PinnedProjectCommandHost } from './commands/usePinnedProjectCommands';
 import { useWorkspaceNumberShortcuts } from './hooks/useWorkspaceNumberShortcuts';
 import { TooltipProvider } from './components/primitives/Tooltip';
 import { DevDesignSystemTools } from './components/design-system/DevDesignSystemTools';
@@ -512,19 +513,22 @@ function AppContents({ initialProjectPath }: AppProps) {
     [currentProject, restartDevServer, showToast, setDevServerPort]
   );
 
-  // Register palette commands with real handlers — see src/commands/useAppCommands.tsx
-  // `pinnedPaths` is passed after the rail hook runs; done below.
-
-  const { pinnedProjects, handleTogglePin, handleRailClick, handleRailUnpin } = useProjectRail({
+  const {
+    pinnedProjects,
+    handleTogglePin,
+    handleRailClick,
+    handleRailUnpin,
+    handleReorderProjects,
+  } = useProjectRail({
     currentProjectPath: currentProject?.path ?? null,
     handleSelectProject,
     showToast,
   });
 
-  const pinnedPaths = useMemo(
-    () => pinnedProjects.rows.map((r) => r.projectPath),
-    [pinnedProjects.rows]
-  );
+  // The rail can show an optimistic reorder while its persistence request is
+  // in flight. Global navigation must use the last canonical order instead,
+  // so Cmd+number and palette actions never switch to an unconfirmed slot.
+  const confirmedPinnedPaths = pinnedProjects.confirmedPaths;
   const refreshPinnedProjects = pinnedProjects.refresh;
 
   const openPalette = useOpenPalette();
@@ -548,7 +552,7 @@ function AppContents({ initialProjectPath }: AppProps) {
   );
 
   // Cmd/Ctrl+1..9 → jump to Nth sidebar project (pinned first, then active).
-  useProjectNumberShortcuts({ pinnedPaths, handleSelectProject });
+  useProjectNumberShortcuts({ pinnedPaths: confirmedPinnedPaths, handleSelectProject });
 
   const { activeAccount, accounts } = useActiveAccount(currentProject?.path ?? null);
   const handleSelectWorkspaceShortcut = useCallback(
@@ -575,7 +579,7 @@ function AppContents({ initialProjectPath }: AppProps) {
   // Palette commands with real handlers — see src/commands/useAppCommands.tsx
   useAppCommands({
     currentProject,
-    pinnedPaths,
+    pinnedPaths: confirmedPinnedPaths,
     handleSelectProject,
     handleBackToProjects,
     handleCreateProject,
@@ -1085,6 +1089,7 @@ function AppContents({ initialProjectPath }: AppProps) {
       onUnpinProject: handleRailUnpin,
       onRenameProject: handleRenameProject,
       onTogglePinProject: handleTogglePin,
+      onReorderProjects: handleReorderProjects,
       onSelectProjectTab: handleSelectProjectTab,
       isProjectDevServerRunning: isServerRunning,
       onStopDevServer: handleStopDevServer,
@@ -1102,6 +1107,7 @@ function AppContents({ initialProjectPath }: AppProps) {
       handleRailUnpin,
       handleRenameProject,
       handleTogglePin,
+      handleReorderProjects,
       handleSelectProjectTab,
       isServerRunning,
       handleStopDevServer,
@@ -1242,6 +1248,7 @@ function AppContents({ initialProjectPath }: AppProps) {
     onUnpinProject: handleRailUnpin,
     onRenameProject: handleRenameProject,
     onTogglePinProject: handleTogglePin,
+    onReorderProjects: handleReorderProjects,
     onStopDevServer: handleStopDevServer,
     onSelectProjectTab: handleSelectProjectTab,
     onGoHome: handleBackToProjects,
@@ -1261,26 +1268,33 @@ function AppContents({ initialProjectPath }: AppProps) {
   };
 
   return (
-    <AppViewRouter
-      view={view}
-      isCompact={isCompact}
-      compactWorkspaceToolbarEnabled={compactWorkspaceToolbarEnabled}
-      bootProgress={bootProgress}
-      onOnboardingComplete={() => void handleOnboardingComplete()}
-      accountSelectProps={accountSelectProps}
-      homeSidebarProps={homeSidebarProps}
-      projectsViewProps={projectsViewProps}
-      workspaceViewProps={workspaceViewProps}
-      currentProject={currentProject}
-      pendingMonorepoPick={pendingMonorepoPick}
-      onSelectMonorepoPick={handleSelectMonorepoPick}
-      onConfirmMonorepoPick={() => void handleConfirmMonorepoPick()}
-      onCancelMonorepoPick={() => void handleCancelMonorepoPick()}
-      thumbnailConsentProps={thumbnailConsentProps}
-      toasts={toasts}
-      onDismissToast={dismissToast}
-      quitConfirmModal={quitConfirmModal}
-    />
+    <>
+      <PinnedProjectCommandHost
+        pinnedPaths={confirmedPinnedPaths}
+        currentProjectPath={currentProject?.path ?? null}
+        onReorderProjects={handleReorderProjects}
+      />
+      <AppViewRouter
+        view={view}
+        isCompact={isCompact}
+        compactWorkspaceToolbarEnabled={compactWorkspaceToolbarEnabled}
+        bootProgress={bootProgress}
+        onOnboardingComplete={() => void handleOnboardingComplete()}
+        accountSelectProps={accountSelectProps}
+        homeSidebarProps={homeSidebarProps}
+        projectsViewProps={projectsViewProps}
+        workspaceViewProps={workspaceViewProps}
+        currentProject={currentProject}
+        pendingMonorepoPick={pendingMonorepoPick}
+        onSelectMonorepoPick={handleSelectMonorepoPick}
+        onConfirmMonorepoPick={() => void handleConfirmMonorepoPick()}
+        onCancelMonorepoPick={() => void handleCancelMonorepoPick()}
+        thumbnailConsentProps={thumbnailConsentProps}
+        toasts={toasts}
+        onDismissToast={dismissToast}
+        quitConfirmModal={quitConfirmModal}
+      />
+    </>
   );
 }
 

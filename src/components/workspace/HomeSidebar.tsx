@@ -29,6 +29,7 @@ interface HomeSidebarProps {
   onSelectProject: (projectPath: string) => void;
   onCloseProject: (projectPath: string) => void;
   onUnpinProject?: (projectPath: string) => void;
+  onReorderProjects?: (orderedPaths: string[]) => Promise<void> | void;
   onRenameProject?: (projectPath: string, newName: string) => Promise<void>;
   onTogglePinProject?: (projectPath: string, shouldPin: boolean) => void | Promise<void>;
   onSelectProjectTab: (projectPath: string, tabSessionId: string) => void;
@@ -50,6 +51,7 @@ export function HomeSidebar({
   onSelectProject,
   onCloseProject,
   onUnpinProject,
+  onReorderProjects,
   onRenameProject,
   onTogglePinProject,
   onSelectProjectTab,
@@ -76,6 +78,7 @@ export function HomeSidebar({
       onSelectProject={onSelectProject}
       onCloseProject={onCloseProject}
       onUnpinProject={onUnpinProject}
+      onReorderProjects={onReorderProjects}
       onRenameProject={onRenameProject}
       onTogglePinProject={onTogglePinProject}
       onSelectProjectTab={onSelectProjectTab}

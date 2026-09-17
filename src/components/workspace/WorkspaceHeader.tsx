@@ -515,7 +515,6 @@ export function WorkspaceHeader({
         data-workspace-panel="assets"
         leftIcon={<ImageIcon size={16} />}
       />
-      {layoutMenu}
       {headerExtras}
       {teamPresence}
     </div>
@@ -585,6 +584,7 @@ export function WorkspaceHeader({
             onToggleSidebar={onToggleSidebar}
           />
           {projectTitle}
+          <div className="workspace-titlebar-actions">{layoutMenu}</div>
         </WorkspaceTitlebar>
       ),
       toolbar: (
@@ -623,7 +623,10 @@ export function WorkspaceHeader({
         <div className="workspace-titlebar-center">
           <div className="workspace-titlebar-modes">{modes}</div>
         </div>
-        <div className="workspace-titlebar-actions">{publishingActions}</div>
+        <div className="workspace-titlebar-actions">
+          {publishingActions}
+          {layoutMenu}
+        </div>
       </WorkspaceTitlebar>
     ),
     toolbar: null,

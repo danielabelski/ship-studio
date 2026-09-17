@@ -372,6 +372,8 @@ export interface WorkspaceViewProps {
   /** Unpin a project from the sidebar (used for rows without a live session,
    *  including pins whose folder no longer exists — issue #366). */
   onUnpinProject?: (projectPath: string) => void;
+  /** Persist a reordered pinned-project list through the feature adapter. */
+  onReorderProjects?: (orderedPaths: string[]) => Promise<void> | void;
   /** Predicate: is a dev server currently tracked for the given project path?
    *  Used by the sidebar to populate background projects' Commands section. */
   isProjectDevServerRunning: (projectPath: string) => boolean;
@@ -429,6 +431,7 @@ const WorkspaceViewInner = memo(function WorkspaceViewInner({
   homeNav,
   onSwitchAccount,
   onUnpinProject,
+  onReorderProjects,
   onOpenProjectPicker,
   isProjectDevServerRunning,
   isSidebarHidden,
@@ -1203,6 +1206,7 @@ const WorkspaceViewInner = memo(function WorkspaceViewInner({
               projects={projectRows}
               onCloseProject={onCloseProject}
               onUnpinProject={onUnpinProject}
+              onReorderProjects={onReorderProjects}
               onRenameProject={onRenameProject}
               onTogglePinProject={onTogglePinProject}
               onStopDevServer={onStopDevServer}

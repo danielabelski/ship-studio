@@ -21,6 +21,7 @@ import {
 import { createPortal } from 'react-dom';
 
 interface ContextMenuPosition {
+  align?: 'left' | 'right';
   x: number;
   y: number;
 }
@@ -111,7 +112,11 @@ export function ContextMenu({ children }: ContextMenuProps) {
 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && target.closest('[data-context-menu-content]')) return;
+      if (
+        target instanceof Element &&
+        target.closest('[data-context-menu-content], [data-context-menu-trigger]')
+      )
+        return;
       close();
     };
     window.addEventListener('pointerdown', onPointerDown, true);
@@ -128,6 +133,7 @@ export function ContextMenu({ children }: ContextMenuProps) {
 interface ContextMenuTriggerProps extends HTMLAttributes<HTMLElement> {
   asChild?: boolean;
   children: ReactElement;
+  openOnClick?: boolean;
   onContextMenu?: MouseEventHandler<HTMLElement>;
 }
 
@@ -135,10 +141,18 @@ interface ContextMenuTriggerProps extends HTMLAttributes<HTMLElement> {
 export function ContextMenuTrigger({
   asChild = false,
   children,
+  openOnClick = false,
+  onClick,
   onContextMenu,
   ...props
 }: ContextMenuTriggerProps) {
   const { openAt } = useContextMenuContext('ContextMenuTrigger');
+
+  const openFromClick = (event: MouseEvent<HTMLElement>) => {
+    if (event.defaultPrevented || !openOnClick) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    openAt({ align: 'right', x: rect.right, y: rect.bottom });
+  };
 
   const handleContextMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
@@ -149,6 +163,7 @@ export function ContextMenuTrigger({
 
   if (asChild) {
     type TriggerChildProps = {
+      onClick?: MouseEventHandler<HTMLElement>;
       onContextMenu?: MouseEventHandler<HTMLElement>;
       [key: string]: unknown;
     };
@@ -157,8 +172,15 @@ export function ContextMenuTrigger({
       throw new Error('ContextMenuTrigger with asChild requires a valid React element');
     }
     const childOnContextMenu = child.props.onContextMenu;
+    const childOnClick = child.props.onClick;
     return cloneElement(child, {
       ...props,
+      'data-context-menu-trigger': true,
+      onClick: (event: MouseEvent<HTMLElement>) => {
+        childOnClick?.(event);
+        onClick?.(event);
+        openFromClick(event);
+      },
       onContextMenu: (event: MouseEvent<HTMLElement>) => {
         childOnContextMenu?.(event);
         handleContextMenu(event);
@@ -168,7 +190,15 @@ export function ContextMenuTrigger({
 
   return createElement(
     'div',
-    { ...props, 'data-context-menu-trigger': true, onContextMenu: handleContextMenu },
+    {
+      ...props,
+      'data-context-menu-trigger': true,
+      onClick: (event: MouseEvent<HTMLElement>) => {
+        onClick?.(event);
+        openFromClick(event);
+      },
+      onContextMenu: handleContextMenu,
+    },
     children
   );
 }
@@ -191,8 +221,9 @@ export function ContextMenuContent({
   const reposition = useCallback(() => {
     if (!position || !menuRef.current) return;
     const rect = menuRef.current.getBoundingClientRect();
+    const x = position.align === 'right' ? position.x - rect.width : position.x;
     setMenuPosition({
-      x: clampPosition(position.x, rect.width, window.innerWidth),
+      x: clampPosition(x, rect.width, window.innerWidth),
       y: clampPosition(position.y, rect.height, window.innerHeight),
     });
   }, [position]);

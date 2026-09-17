@@ -46,9 +46,37 @@ function zIndexOf(css, selector) {
 }
 
 describe('workspace chrome stacking ladder', () => {
+  const dockCss = readCss('src/styles/features/workspace/dock.css');
+  const dockedPanel = tokenValue('--z-dropdown');
   const separator = tokenValue('--z-pane-separator');
   const previewToolbar = tokenValue('--z-preview-toolbar');
   const header = tokenValue('--z-workspace-header');
+  const previewFullscreen = tokenValue('--z-preview-fullscreen');
+  const dockDropIndicator = tokenValue('--z-dock-drop-indicator');
+  const floatingPanel = tokenValue('--z-floating-panel');
+
+  it('keeps the dock drop indicator between pinned and floating panels', () => {
+    assert.equal(
+      zIndexOf(dockCss, '.workspace-dock__drop-line'),
+      'var(--z-dock-drop-indicator)'
+    );
+    assert.ok(
+      dockedPanel < dockDropIndicator,
+      `--z-dock-drop-indicator (${dockDropIndicator}) must sit above pinned panels (${dockedPanel})`
+    );
+    assert.ok(
+      header < dockDropIndicator,
+      `--z-dock-drop-indicator (${dockDropIndicator}) must sit above fixed chrome (${header})`
+    );
+    assert.ok(
+      previewFullscreen < dockDropIndicator,
+      `--z-dock-drop-indicator (${dockDropIndicator}) must sit above fullscreen chrome (${previewFullscreen})`
+    );
+    assert.ok(
+      dockDropIndicator < floatingPanel,
+      `--z-dock-drop-indicator (${dockDropIndicator}) must sit below floating panels (${floatingPanel})`
+    );
+  });
 
   it('orders pane separators below the preview toolbar below header chrome', () => {
     assert.ok(
